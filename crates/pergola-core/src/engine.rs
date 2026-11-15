@@ -10,6 +10,11 @@ pub struct LayoutEngine {
     pub gap: f64,
     /// Smallest share a tile may be squeezed to when dragging a gap.
     pub minimum_share: f64,
+    /// Share of the space the desktop leaf keeps when a window is docked
+    /// beside it. 0 means the docked window takes the whole space and the
+    /// desktop becomes a zero-width floating layer, which is what a tiling
+    /// desktop expects; raise it to keep a visible desktop strip.
+    pub desktop_share: f64,
 }
 
 impl Default for LayoutEngine {
@@ -17,6 +22,7 @@ impl Default for LayoutEngine {
         Self {
             gap: 8.0,
             minimum_share: 0.05,
+            desktop_share: 0.0,
         }
     }
 }
@@ -26,7 +32,14 @@ impl LayoutEngine {
         Self {
             gap: gap.max(0.0),
             minimum_share: minimum_share.clamp(0.001, 0.49),
+            desktop_share: 0.0,
         }
+    }
+
+    /// Keep `share` of the space for the desktop leaf when docking beside it.
+    pub fn with_desktop_share(mut self, share: f64) -> Self {
+        self.desktop_share = share.clamp(0.0, 0.9);
+        self
     }
 
     // MARK: geometry
@@ -53,24 +66,39 @@ impl LayoutEngine {
         if s.children.is_empty() {
             return;
         }
-        let count = s.children.len();
+        // A zero-weight child (a collapsed desktop leaf) takes no space and no
+        // gap: otherwise docking beside the desktop would leave a black strip.
+        let visible = s
+            .children
+            .iter()
+            .zip(s.weights.iter())
+            .filter(|(_, w)| **w > 0.0)
+            .count();
         let total = match s.axis {
             Axis::X => frame.w,
             Axis::Y => frame.h,
         };
-        let usable = (total - self.gap * (count as f64 - 1.0)).max(0.0);
+        let usable = (total - self.gap * (visible.saturating_sub(1)) as f64).max(0.0);
         let mut cursor = match s.axis {
             Axis::X => frame.x,
             Axis::Y => frame.y,
         };
+        let mut placed = 0;
         for (i, child) in s.children.iter().enumerate() {
-            let length = usable * s.weights.get(i).copied().unwrap_or(0.0);
+            let weight = s.weights.get(i).copied().unwrap_or(0.0);
+            let length = usable * weight;
             let child_frame = match s.axis {
                 Axis::X => Rect::new(cursor, frame.y, length, frame.h),
                 Axis::Y => Rect::new(frame.x, cursor, frame.w, length),
             };
             self.place(child, child_frame, out);
-            cursor += length + self.gap;
+            if weight > 0.0 {
+                placed += 1;
+                cursor += length;
+                if placed < visible {
+                    cursor += self.gap;
+                }
+            }
         }
     }
 
@@ -169,18 +197,26 @@ impl LayoutEngine {
         }
 
         if node.id() == target_id {
-            // Never dock *into* the desktop; put the panel beside it.
+            // Never dock *into* the desktop; put the panel beside it. The
+            // desktop keeps `desktop_share` of the space (0 by default, so the
+            // docked window takes it all and no black strip appears).
+            let share = self.desktop_share;
             let pair = if edge.is_negative() {
                 vec![new, node.clone()]
             } else {
                 vec![node.clone(), new]
+            };
+            let weights = if edge.is_negative() {
+                vec![1.0 - share, share]
+            } else {
+                vec![share, 1.0 - share]
             };
             return (
                 LayoutNode::Split(Split::with_weights(
                     self.fresh_split_id(root),
                     edge.axis(),
                     pair,
-                    vec![0.5, 0.5],
+                    weights,
                 )),
                 true,
             );
@@ -565,6 +601,26 @@ mod tests {
         let LayoutNode::Split(inner) = &s.children[0] else { panic!() };
         assert_eq!(inner.axis, Axis::Y);
         assert_eq!(inner.children[1].id(), "p-c");
+    }
+
+    #[test]
+    fn dock_beside_desktop_takes_the_space_by_default() {
+        let e = LayoutEngine::default();
+        let out = e
+            .inserting(panel("a"), "desktop", Direction::Left, &LayoutNode::desktop())
+            .unwrap();
+        let LayoutNode::Split(s) = &out else { panic!() };
+        assert_eq!(s.weights, vec![1.0, 0.0]);
+        let r = e.rects(&out, frame());
+        let a = r.iter().find(|(id, _)| id == "p-a").unwrap().1;
+        assert!((a.w - 1000.0).abs() < 1e-9, "the docked window takes the whole frame");
+        // A configured share keeps a visible desktop strip.
+        let e2 = LayoutEngine::default().with_desktop_share(0.25);
+        let out2 = e2
+            .inserting(panel("a"), "desktop", Direction::Left, &LayoutNode::desktop())
+            .unwrap();
+        let LayoutNode::Split(s2) = &out2 else { panic!() };
+        assert!((s2.weights[1] - 0.25).abs() < 1e-9);
     }
 
     #[test]

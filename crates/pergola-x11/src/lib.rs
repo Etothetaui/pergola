@@ -70,6 +70,8 @@ struct Atoms {
     net_wm_state: u32,
     net_wm_state_hidden: u32,
     net_frame_extents: u32,
+    net_workarea: u32,
+    net_current_desktop: u32,
     net_moveresize_window: u32,
     utf8_string: u32,
     wm_class: u32,
@@ -92,9 +94,26 @@ impl X11 {
         })
     }
 
+    /// The whole display: always starts at 0,0 and ignores panels.
     pub fn screen_rect(&self) -> Result<IRect> {
         let g = self.conn.get_geometry(self.root)?.reply()?;
         Ok(IRect::new(0, 0, g.width as i32, g.height as i32))
+    }
+
+    /// The area the window manager leaves for managed windows: `_NET_WORKAREA`
+    /// for the current desktop, so panels and docks are not tiled over. Falls
+    /// back to [`Self::screen_rect`] when the property is missing or degenerate.
+    pub fn workarea_rect(&self) -> Result<IRect> {
+        let screen = self.screen_rect()?;
+        let desktop = self
+            .cardinal_prop(self.root, self.atoms.net_current_desktop)
+            .and_then(|v| v.first().copied())
+            .unwrap_or(0) as usize;
+        Ok(pick_workarea(
+            self.cardinal_prop(self.root, self.atoms.net_workarea),
+            desktop,
+            screen,
+        ))
     }
 
     /// EWMH `_NET_CLIENT_LIST`, in stacking order.
@@ -294,57 +313,45 @@ impl X11 {
 
     // MARK: overlay
 
-    /// Draw a border around each rectangle. `accent` gets a thicker, brighter
-    /// frame. Overlay windows are override-redirect, so no WM manages them.
-    pub fn overlay_show(&mut self, rects: &[(IRect, bool)]) -> Result<()> {
+    /// Draw filled bars (each with its own colour). The daemon uses this for
+    /// split lines that live in the gaps and for the viewport frame, so the
+    /// overlay never covers a window's own decorations.
+    pub fn overlay_show(&mut self, bars: &[(IRect, u32)]) -> Result<()> {
         self.overlay_hide()?;
         let screen = &self.conn.setup().roots[self.screen];
         let root_visual = screen.root_visual;
         let depth = screen.root_depth;
         let mut ids = Vec::new();
-        for (rect, accent) in rects {
-            let (thickness, color) = if *accent {
-                (4u16, 0x00e8b04bu32)
-            } else {
-                (2u16, 0x004f7a8cu32)
-            };
-            let bars = [
-                IRect::new(rect.x, rect.y, rect.w, thickness as i32),
-                IRect::new(rect.x, rect.y + rect.h - thickness as i32, rect.w, thickness as i32),
-                IRect::new(rect.x, rect.y, thickness as i32, rect.h),
-                IRect::new(rect.x + rect.w - thickness as i32, rect.y, thickness as i32, rect.h),
-            ];
-            for bar in bars {
-                if bar.w <= 0 || bar.h <= 0 {
-                    continue;
-                }
-                let wid = self.conn.generate_id()?;
-                self.conn.create_window(
-                    depth,
-                    wid,
-                    self.root,
-                    bar.x as i16,
-                    bar.y as i16,
-                    bar.w as u16,
-                    bar.h as u16,
-                    0,
-                    WindowClass::INPUT_OUTPUT,
-                    root_visual,
-                    &CreateWindowAux::new()
-                        .background_pixel(color)
-                        .override_redirect(1)
-                        .event_mask(EventMask::EXPOSURE),
-                )?;
-                self.conn.map_window(wid)?;
-                // Override-redirect windows are unmanaged, so the WM will not
-                // restack them; raise them explicitly to sit above the tiles.
-                self.conn.configure_window(
-                    wid,
-                    &ConfigureWindowAux::new()
-                        .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
-                )?;
-                ids.push(wid);
+        for (bar, color) in bars {
+            if bar.w <= 0 || bar.h <= 0 {
+                continue;
             }
+            let wid = self.conn.generate_id()?;
+            self.conn.create_window(
+                depth,
+                wid,
+                self.root,
+                bar.x as i16,
+                bar.y as i16,
+                bar.w as u16,
+                bar.h as u16,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                root_visual,
+                &CreateWindowAux::new()
+                    .background_pixel(*color)
+                    .override_redirect(1)
+                    .event_mask(EventMask::EXPOSURE),
+            )?;
+            self.conn.map_window(wid)?;
+            // Override-redirect windows are unmanaged, so the WM will not
+            // restack them; raise them explicitly to sit above the tiles.
+            self.conn.configure_window(
+                wid,
+                &ConfigureWindowAux::new()
+                    .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+            )?;
+            ids.push(wid);
         }
         self.conn.flush()?;
         self.overlay = ids;
@@ -422,6 +429,16 @@ impl X11 {
 
     // MARK: helpers
 
+    fn cardinal_prop(&self, win: u32, atom: u32) -> Option<Vec<u32>> {
+        let reply = self
+            .conn
+            .get_property(false, win, atom, AtomEnum::CARDINAL, 0, 64)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some(reply.value32().map(|it| it.collect()).unwrap_or_default())
+    }
+
     fn atom_list(&self, win: u32, atom: u32) -> Result<Vec<u32>> {
         let reply = self
             .conn
@@ -493,12 +510,35 @@ impl Atoms {
             net_wm_state: intern("_NET_WM_STATE")?,
             net_wm_state_hidden: intern("_NET_WM_STATE_HIDDEN")?,
             net_frame_extents: intern("_NET_FRAME_EXTENTS")?,
+            net_workarea: intern("_NET_WORKAREA")?,
+            net_current_desktop: intern("_NET_CURRENT_DESKTOP")?,
             net_moveresize_window: intern("_NET_MOVERESIZE_WINDOW")?,
             utf8_string: intern("UTF8_STRING")?,
             wm_class: AtomEnum::WM_CLASS.into(),
             type_skip,
         })
     }
+}
+
+/// Pick the work-area quad for `desktop` out of an `_NET_WORKAREA` value, or the
+/// whole display when the property is missing, short, or degenerate.
+fn pick_workarea(values: Option<Vec<u32>>, desktop: usize, screen: IRect) -> IRect {
+    let Some(values) = values else { return screen };
+    let Some(quad) = values
+        .chunks(4)
+        .nth(desktop)
+        .or_else(|| values.chunks(4).next())
+    else {
+        return screen;
+    };
+    if quad.len() < 4 {
+        return screen;
+    }
+    let rect = IRect::new(quad[0] as i32, quad[1] as i32, quad[2] as i32, quad[3] as i32);
+    if rect.w <= 0 || rect.h <= 0 {
+        return screen;
+    }
+    rect
 }
 
 /// Modifier masks used by the default bindings.
@@ -755,4 +795,34 @@ pub fn doctor() -> Result<Vec<String>> {
         ));
     }
     Ok(notes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SCREEN: IRect = IRect { x: 0, y: 0, w: 1600, h: 900 };
+
+    #[test]
+    fn workarea_uses_the_current_desktop_quad() {
+        // Two desktops: only the second has a top panel.
+        let values = vec![0, 0, 1600, 900, 0, 27, 1600, 873];
+        assert_eq!(
+            pick_workarea(Some(values.clone()), 1, SCREEN),
+            IRect::new(0, 27, 1600, 873)
+        );
+        assert_eq!(pick_workarea(Some(values), 0, SCREEN), SCREEN);
+    }
+
+    #[test]
+    fn workarea_falls_back_to_the_display() {
+        assert_eq!(pick_workarea(None, 0, SCREEN), SCREEN);
+        assert_eq!(pick_workarea(Some(vec![]), 0, SCREEN), SCREEN);
+        assert_eq!(pick_workarea(Some(vec![1, 2, 0, 5]), 0, SCREEN), SCREEN);
+        // Out-of-range desktop falls back to the first quad, not a panic.
+        assert_eq!(
+            pick_workarea(Some(vec![0, 27, 1600, 873]), 4, SCREEN),
+            IRect::new(0, 27, 1600, 873)
+        );
+    }
 }

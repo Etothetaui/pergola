@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use pergola_core::{
-    Camera, CameraAction, Command, Direction, FloatingWindow, IRect, LayoutEngine, LayoutFile,
+    Axis, Camera, CameraAction, Command, Direction, FloatingWindow, IRect, LayoutEngine, LayoutFile,
     LayoutNode, Rect, SeatRecord,
 };
 use pergola_x11::{binding_plan, command_for_key, describe, KeyBinding, WindowInfo, X11};
@@ -59,18 +59,17 @@ impl Daemon {
             }),
             Err(_) => LayoutFile::default(),
         };
-        let engine = LayoutEngine::new(config.gap, config.minimum_share);
+        let engine = LayoutEngine::new(config.gap, config.minimum_share)
+            .with_desktop_share(config.desktop_share);
         let camera = file.camera();
         let seats = file
             .pergola
             .as_ref()
             .map(|p| p.seats.clone())
             .unwrap_or_default();
-        let overlay_on = file
-            .pergola
-            .as_ref()
-            .and_then(|p| p.overlay)
-            .unwrap_or(config.overlay);
+        // The config is the default; a toggle only lasts for the session, so a
+        // persisted `overlay` value must not override a config edit.
+        let overlay_on = config.overlay;
         let bindings: Vec<(KeyBinding, &'static str)> = Vec::new();
         let keymap = build_keymap(&x)?;
         let mut daemon = Self {
@@ -198,7 +197,7 @@ impl Daemon {
     // MARK: applying geometry
 
     fn apply(&mut self) -> Result<()> {
-        let screen = self.x.screen_rect()?;
+        let screen = self.x.workarea_rect()?;
         let world = screen.to_rect();
         let rects = self.engine.rects(&self.file.doc.root, world);
         let framed = if self.camera.framed != self.file.doc.root.id() {
@@ -275,14 +274,33 @@ impl Daemon {
         self.place_floating = false;
 
         if self.overlay_on {
-            let mut borders: Vec<(IRect, bool)> = Vec::new();
-            for (id, rect) in &rects {
-                if id == self.file.doc.root.id() {
-                    continue;
-                }
-                borders.push((tf(*rect).to_irect(), id == &self.camera.framed));
-            }
-            self.x.overlay_show(&borders)?;
+            let framed_id = if self.camera.framed == self.file.doc.root.id() {
+                None
+            } else {
+                Some(self.camera.framed.as_str())
+            };
+            let bars: Vec<(IRect, u32)> = overlay_bars(
+                &self.file.doc.root,
+                &rects,
+                framed_id,
+                self.engine.gap,
+                world,
+            )
+            .into_iter()
+            .map(|(bar, color)| {
+                let r = tf(bar.to_rect());
+                (
+                    IRect::new(
+                        r.x.round() as i32,
+                        r.y.round() as i32,
+                        r.w.round().max(1.0) as i32,
+                        r.h.round().max(1.0) as i32,
+                    ),
+                    color,
+                )
+            })
+            .collect();
+            self.x.overlay_show(&bars)?;
         } else {
             self.x.overlay_hide()?;
         }
@@ -358,7 +376,7 @@ impl Daemon {
     }
 
     fn camera_command(&mut self, cmd: Command) -> Result<String> {
-        let screen = self.x.screen_rect()?.to_rect();
+        let screen = self.x.workarea_rect()?.to_rect();
         let focused = self.focused_panel();
         let action = cmd
             .camera_action(focused.as_deref(), screen)
@@ -381,7 +399,7 @@ impl Daemon {
     }
 
     fn status(&self) -> Result<String> {
-        let screen = self.x.screen_rect()?;
+        let screen = self.x.workarea_rect()?;
         let panels = self
             .file
             .doc
@@ -413,7 +431,7 @@ impl Daemon {
     /// Current geometry: every panel's *frame* rectangle after the camera
     /// transform. Handy for scripts and for checking the daemon against itself.
     fn rects(&self, args: &[String]) -> Result<String> {
-        let screen = self.x.screen_rect()?.to_rect();
+        let screen = self.x.workarea_rect()?.to_rect();
         let rects = self.engine.rects(&self.file.doc.root, screen);
         let framed = if self.camera.framed != self.file.doc.root.id() {
             rects
@@ -537,7 +555,7 @@ impl Daemon {
             .clone();
         let rect = self
             .engine
-            .rect_of(&self.file.doc.root, self.x.screen_rect()?.to_rect(), &seat.panel)
+            .rect_of(&self.file.doc.root, self.x.workarea_rect()?.to_rect(), &seat.panel)
             .unwrap_or_else(|| Rect::new(80.0, 80.0, 800.0, 500.0));
         if self.file.doc.root.node(&seat.panel).is_some() {
             let tree = self.engine.removing(&seat.panel, &self.file.doc.root)?;
@@ -584,7 +602,7 @@ impl Daemon {
     }
 
     fn float_all(&mut self) -> Result<String> {
-        let screen = self.x.screen_rect()?.to_rect();
+        let screen = self.x.workarea_rect()?.to_rect();
         let rects = self.engine.rects(&self.file.doc.root, screen);
         let mut moved = 0;
         for node in self.file.doc.root.flatten() {
@@ -618,7 +636,8 @@ impl Daemon {
             .ok_or_else(|| anyhow!("usage: pergola gap <pixels>"))?
             .parse()
             .map_err(|_| anyhow!("gap must be a number"))?;
-        self.engine = LayoutEngine::new(gap, self.engine.minimum_share);
+        self.engine = LayoutEngine::new(gap, self.engine.minimum_share)
+            .with_desktop_share(self.engine.desktop_share);
         self.config.gap = gap;
         self.apply()?;
         self.save()?;
@@ -655,7 +674,8 @@ impl Daemon {
 
     fn reload(&mut self) -> Result<String> {
         self.config = Config::load();
-        self.engine = LayoutEngine::new(self.config.gap, self.config.minimum_share);
+        self.engine = LayoutEngine::new(self.config.gap, self.config.minimum_share)
+            .with_desktop_share(self.config.desktop_share);
         self.apply()?;
         Ok("config reloaded".to_string())
     }
@@ -871,12 +891,94 @@ fn transform(rect: Rect, framed: Option<Rect>, screen: Rect) -> Rect {
     // window behaves like maximising it, and everything else moves with it.
     let sx = screen.w / f.w;
     let sy = screen.h / f.h;
+    // The framed node fills the *work area*, so a work area that does not start
+    // at 0,0 (a top panel) lands where the window manager expects it.
     Rect::new(
-        (rect.x - f.x) * sx,
-        (rect.y - f.y) * sy,
+        screen.x + (rect.x - f.x) * sx,
+        screen.y + (rect.y - f.y) * sy,
         rect.w * sx,
         rect.h * sy,
     )
+}
+
+/// Ids on the path from the root to `target`, inclusive.
+fn ancestors<'a>(root: &'a LayoutNode, target: &str) -> Vec<&'a str> {
+    fn walk<'a>(node: &'a LayoutNode, target: &str, acc: &mut Vec<&'a str>) -> bool {
+        acc.push(node.id());
+        if node.id() == target {
+            return true;
+        }
+        for child in node.children() {
+            if walk(child, target, acc) {
+                return true;
+            }
+        }
+        acc.pop();
+        false
+    }
+    let mut acc = Vec::new();
+    if walk(root, target, &mut acc) {
+        acc
+    } else {
+        Vec::new()
+    }
+}
+
+/// Bars that visualise the tree: one 2 px line per split boundary, centred in
+/// the gap, plus a 3 px frame around the viewport when a node is framed.
+///
+/// Lines live in the gaps, so the overlay never covers a window's title bar or
+/// border — the previous design drew a border around every tile, which read as
+/// a debug artefact on top of the decorations.
+fn overlay_bars(
+    root: &LayoutNode,
+    rects: &[(String, Rect)],
+    framed: Option<&str>,
+    gap: f64,
+    viewport: Rect,
+) -> Vec<(IRect, u32)> {
+    const LINE: u32 = 0x00505f6b;
+    const ACCENT: u32 = 0x00e8b04b;
+    let path = framed.map(|f| ancestors(root, f)).unwrap_or_default();
+    let mut bars = Vec::new();
+    for node in root.flatten() {
+        let LayoutNode::Split(split) = node else { continue };
+        let Some((_, rect)) = rects.iter().find(|(id, _)| id == &split.id) else {
+            continue;
+        };
+        let accent = framed.is_some() && path.contains(&split.id.as_str());
+        let color = if accent { ACCENT } else { LINE };
+        for i in 0..split.children.len().saturating_sub(1) {
+            let Some((_, child)) = rects.iter().find(|(id, _)| id == split.children[i].id()) else {
+                continue;
+            };
+            match split.axis {
+                Axis::X => {
+                    let x = child.max_x() + gap / 2.0 - 1.0;
+                    bars.push((
+                        IRect::new(x.round() as i32, rect.y.round() as i32, 2, rect.h.round() as i32),
+                        color,
+                    ));
+                }
+                Axis::Y => {
+                    let y = child.max_y() + gap / 2.0 - 1.0;
+                    bars.push((
+                        IRect::new(rect.x.round() as i32, y.round() as i32, rect.w.round() as i32, 2),
+                        color,
+                    ));
+                }
+            }
+        }
+    }
+    if framed.is_some() {
+        let t = 3;
+        let v = viewport.to_irect();
+        bars.push((IRect::new(v.x, v.y, v.w, t), ACCENT));
+        bars.push((IRect::new(v.x, v.y + v.h - t, v.w, t), ACCENT));
+        bars.push((IRect::new(v.x, v.y, t, v.h), ACCENT));
+        bars.push((IRect::new(v.x + v.w - t, v.y, t, v.h), ACCENT));
+    }
+    bars
 }
 
 fn same_rect(a: Rect, b: Rect) -> bool {
@@ -902,8 +1004,8 @@ fn into_screen(rect: Rect, desk: Option<Rect>, world: Rect) -> Rect {
     let sx = d.w / world.w;
     let sy = d.h / world.h;
     Rect::new(
-        d.x + rect.x * sx,
-        d.y + rect.y * sy,
+        d.x + (rect.x - world.x) * sx,
+        d.y + (rect.y - world.y) * sy,
         rect.w * sx,
         rect.h * sy,
     )
@@ -925,8 +1027,8 @@ fn into_world(rect: Rect, desk: Option<Rect>, world: Rect) -> Rect {
     let sx = world.w / d.w;
     let sy = world.h / d.h;
     Rect::new(
-        (rect.x - d.x) * sx,
-        (rect.y - d.y) * sy,
+        world.x + (rect.x - d.x) * sx,
+        world.y + (rect.y - d.y) * sy,
         rect.w * sx,
         rect.h * sy,
     )
@@ -980,6 +1082,29 @@ mod tests {
     }
 
     #[test]
+    fn transform_fills_the_work_area_not_the_display() {
+        // 1600x900 display with a 27 px top panel: the tile must land at y=27
+        // and be 873 tall, or the bottom of every window sits off-screen.
+        let work = Rect::new(0.0, 27.0, 1600.0, 873.0);
+        let framed = Rect::new(0.0, 27.0, 800.0, 873.0);
+        let out = transform(framed, Some(framed), work);
+        assert!((out.y - 27.0).abs() < 1e-9);
+        assert!((out.h - 873.0).abs() < 1e-9);
+        let right = Rect::new(808.0, 27.0, 800.0, 873.0);
+        let out = transform(right, Some(framed), work);
+        assert!((out.x - 1616.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn desktop_mapping_round_trips_in_an_offset_work_area() {
+        let world = Rect::new(0.0, 27.0, 1600.0, 873.0);
+        let desk = Rect::new(0.0, 27.0, 1600.0, 873.0);
+        let rect = Rect::new(100.0, 200.0, 400.0, 300.0);
+        assert_eq!(into_screen(rect, Some(desk), world), rect);
+        assert_eq!(into_world(rect, Some(desk), world), rect);
+    }
+
+    #[test]
     fn transform_fills_both_axes() {
         let screen = Rect::new(0.0, 0.0, 1000.0, 500.0);
         let framed = Rect::new(100.0, 100.0, 200.0, 100.0);
@@ -1011,6 +1136,55 @@ mod tests {
         let rect = Rect::new(10.0, 20.0, 30.0, 40.0);
         assert_eq!(into_screen(rect, Some(world), world), rect);
         assert_eq!(into_world(rect, Some(world), world), rect);
+    }
+
+    #[test]
+    fn overlay_lines_sit_in_the_gaps() {
+        let engine = LayoutEngine::new(8.0, 0.05);
+        let tree = LayoutNode::split(
+            "root",
+            Axis::X,
+            vec![
+                LayoutNode::panel("p-a", vec!["s-a".into()]),
+                LayoutNode::panel("p-b", vec!["s-b".into()]),
+            ],
+        );
+        let world = Rect::new(0.0, 0.0, 1000.0, 500.0);
+        let rects = engine.rects(&tree, world);
+        let bars = overlay_bars(&tree, &rects, None, 8.0, world);
+        assert_eq!(bars.len(), 1, "one boundary for two children");
+        let (bar, _) = bars[0];
+        // a is 0..496, the gap is 496..504, so the line is centred at 500.
+        assert_eq!(bar.x, 499);
+        assert_eq!(bar.w, 2);
+        assert_eq!(bar.h, 500);
+        // No bar may overlap a tile: the line is inside the gap.
+        assert!(bar.x >= 496 && bar.x + bar.w <= 504);
+    }
+
+    #[test]
+    fn overlay_marks_the_framed_path_and_the_viewport() {
+        let engine = LayoutEngine::new(8.0, 0.05);
+        let inner = LayoutNode::split(
+            "inner",
+            Axis::Y,
+            vec![
+                LayoutNode::panel("p-b", vec!["s-b".into()]),
+                LayoutNode::panel("p-c", vec!["s-c".into()]),
+            ],
+        );
+        let tree = LayoutNode::split(
+            "root",
+            Axis::X,
+            vec![LayoutNode::panel("p-a", vec!["s-a".into()]), inner],
+        );
+        let world = Rect::new(0.0, 0.0, 1000.0, 500.0);
+        let rects = engine.rects(&tree, world);
+        let bars = overlay_bars(&tree, &rects, Some("p-c"), 8.0, world);
+        // root boundary + inner boundary + 4 viewport edges
+        assert_eq!(bars.len(), 6);
+        let accent = bars.iter().filter(|(_, c)| *c == 0x00e8b04b).count();
+        assert_eq!(accent, 6, "both splits are on the path, plus the frame");
     }
 
     #[test]

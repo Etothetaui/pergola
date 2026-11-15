@@ -3,6 +3,30 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.2.0-dev] — 2026-11-14
+
+### Fixed
+
+* Tiles use the work area (`_NET_WORKAREA` for the current desktop) instead of the whole display,
+  so a top panel no longer pushes the bottom of every tile off-screen. The camera transform, and
+  the desktop-to-world mapping for floating windows, now respect a work area that does not start
+  at `0,0`; `pergola rects` reports frame coordinates that `pergola-health` can compare directly.
+* A zero-weight child (a collapsed desktop leaf) no longer reserves a gap, so docking beside the
+  desktop leaves no black strip at the screen edge.
+* `pergola-health` tolerates a client's own resize increments (terminals snap to a character grid)
+  instead of reporting them as drift.
+
+### Changed
+
+* **The overlay is a divider, not a border.** It now draws one 2 px line per split boundary,
+  centred in the gap, plus a 3 px amber frame around the viewport when a node is framed. The old
+  design drew a border around every tile, which sat on top of title bars and read as a debug
+  artefact. Default is **off**; `overlay on` or `everything` shows it.
+* Default gap 8 → **6 px**.
+* Docking beside the desktop gives the docked window the whole space by default
+  (`desktop_share = 0`); set `desktop_share` in the config to keep a visible desktop strip.
+* The persisted `overlay` flag no longer overrides the config on startup.
+
 ## [0.1.0-dev] — 2026-11-14
 
 ### Added

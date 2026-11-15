@@ -71,6 +71,14 @@ is gone are removed (a split with one child collapses into that child), new
 windows become floating panels or are auto-docked, and titles are refreshed. It
 runs on demand and every two seconds in the event loop.
 
+## Drawing the tree
+
+The overlay is a *divider*, not a border: one 2 px line per split boundary, centred in the gap
+between the two children, plus a 3 px amber frame around the work area when a node is framed. Lines
+live in the gap, so they never cover a title bar or a window border — the earlier design drew a
+border around every tile and read as a debug artefact. It is off by default; `overlay on` (or
+`everything`) shows it, and the lines are drawn as override-redirect windows raised above the tiles.
+
 ## Failure behaviour
 
 | Situation | Behaviour |
@@ -84,10 +92,10 @@ runs on demand and every two seconds in the event loop.
 
 ## Testing
 
-* `cargo test` — 37 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 44 unit tests over geometry, weights, docking, removal, gap
   clamping, neighbours, camera history, saved views, command URLs, document
   round-trips and repair of malformed weights.
 * `scripts/e2e.sh` — starts Xvfb + xfwm4 + three xterms, runs the real daemon,
   and asserts the geometry the X server reports against `pergola rects` after
-  dock, zoom, arrange, gap changes, float and a daemon restart (~78 assertions).
+  dock, zoom, arrange, gap changes, float and a daemon restart (75 assertions).
   It never touches the live session.

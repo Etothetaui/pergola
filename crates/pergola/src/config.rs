@@ -26,10 +26,12 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            gap: 8.0,
+            gap: 6.0,
             minimum_share: 0.05,
             auto_dock: false,
-            overlay: true,
+            // The overlay is a debugging aid, not decoration: lines in the gaps
+            // and a viewport frame, off unless asked for (or `everything`).
+            overlay: false,
             desktop_share: 0.0,
             terminal: std::env::var("TERMINAL").unwrap_or_else(|_| "xfce4-terminal".to_string()),
             hotkeys: true,

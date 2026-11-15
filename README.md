@@ -78,7 +78,7 @@ pergola rects            # every panel's current frame rectangle
 | `arrange` / `float-all` | tile everything / float everything |
 | `split-terminal` | split the focused window with a new terminal |
 | `gap <px>` | gap between tiles |
-| `overlay [on\|off\|toggle]` | draw the tree's boundaries |
+| `overlay [on\|off\|toggle]` | draw split lines in the gaps (off by default) |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
 | `reload` `save` `stop` | daemon control |
 
@@ -150,8 +150,8 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
   tile.
 * Dialogs and transient windows are treated as ordinary panels when docked.
 * Tab groups are modelled (`views.len() > 1`) but there is no drag-to-tab UI yet.
-* The overlay is drawn with 2–4 px override-redirect rectangles; there is no
-  dimming without a compositor.
+* The overlay is drawn with 2–3 px override-redirect rectangles inside the gaps
+  and around the viewport; there is no dimming without a compositor.
 * Only one instance per display (one Unix socket).
 
 ## Development
@@ -173,7 +173,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.1.0-dev` — pre-stable, no compatibility promises.
+`0.2.0-dev` — pre-stable, no compatibility promises.
 
 ## License
 

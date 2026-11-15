@@ -33,10 +33,10 @@ install -m 0755 "$ROOT/scripts/health.sh" "$BINDIR/pergola-health"
 if [ ! -f "$CONFIG_DIR/config.json" ]; then
   cat >"$CONFIG_DIR/config.json" <<'JSON'
 {
-  "gap": 8.0,
+  "gap": 6.0,
   "minimum_share": 0.05,
   "auto_dock": false,
-  "overlay": true,
+  "overlay": false,
   "desktop_share": 0.0,
   "terminal": "xfce4-terminal",
   "hotkeys": true

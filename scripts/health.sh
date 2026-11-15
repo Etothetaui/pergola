@@ -149,16 +149,25 @@ if command -v xdotool >/dev/null && command -v xprop >/dev/null; then
     read -r px py <<<"$pos"; read -r sw sh <<<"$size"; read -r l r t b <<<"${ext:-0 0 0 0}"
     fx=$((px-l)); fy=$((py-t)); fw=$((sw+l+r)); fh=$((sh+t+b))
     # Only assert tiles that are fully on screen: parked tiles are clamped by the WM.
-    if [ "$x" -lt 0 ] || [ "$y" -lt 0 ] || $((x+w)) -gt "$SCREEN_W" || $((y+h)) -gt "$SCREEN_H"; then
+    if [ "$x" -lt 0 ] || [ "$y" -lt 0 ] || [ $((x+w)) -gt "$SCREEN_W" ] || [ $((y+h)) -gt "$SCREEN_H" ]; then
       continue
     fi
-    for d in "$((fx-x))" "$((fy-y))" "$((fw-w))" "$((fh-h))"; do
-      if [ "${d#-}" -gt 2 ]; then
-        DRIFT_COUNT=$((DRIFT_COUNT+1))
-        DRIFT="$DRIFT $id(expected $x,$y ${w}x$h got $fx,$fy ${fw}x$fh)"
-        break
-      fi
+    # A client with a character grid (every terminal) snaps its size to
+    # WM_NORMAL_HINTS resize increments, so the honest tolerance for a tile's
+    # width/height is its own increment, never less than 2 px.
+    inc=$(xprop -id "$win" WM_NORMAL_HINTS 2>/dev/null | sed -n 's/.*resize increment: \([0-9]*\) by \([0-9]*\).*/\1 \2/p')
+    read -r iw ih <<<"${inc:-0 0}"
+    [ "${iw:-0}" -gt 2 ] || iw=2
+    [ "${ih:-0}" -gt 2 ] || ih=2
+    failed=0
+    for pair in "$((fx-x)):2" "$((fy-y)):2" "$((fw-w)):$iw" "$((fh-h)):$ih"; do
+      d="${pair%:*}"; tol="${pair##*:}"
+      if [ "${d#-}" -gt "$tol" ]; then failed=1; fi
     done
+    if [ "$failed" -eq 1 ]; then
+      DRIFT_COUNT=$((DRIFT_COUNT+1))
+      DRIFT="$DRIFT $id(expected $x,$y ${w}x$h got $fx,$fy ${fw}x$fh)"
+    fi
   done < /tmp/pergola-health-rects.$$
   rm -f /tmp/pergola-health-rects.$$
   if [ "$DRIFT_COUNT" -eq 0 ]; then
