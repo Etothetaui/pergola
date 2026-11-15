@@ -124,6 +124,32 @@ fn keys(socket: &PathBuf, args: &[String]) -> Result<()> {
         return Ok(());
     }
     if args.iter().any(|a| a == "--check") {
+        // A running daemon already owns its grabs. Probing from a fresh client
+        // would collide with the daemon itself and report every live chord as
+        // TAKEN, which is a lie about a working setup. Ask the daemon what it
+        // actually bound first, and only probe when nothing is running.
+        if let Ok(response) = ipc::call(socket, &["keys".to_string()]) {
+            if response.ok {
+                // The daemon prints `<label padded to 24> <command>`, and a
+                // command may contain a space ("dock left"), so match the tail.
+                let is_bound = |command: &str| {
+                    let needle = format!(" {command}");
+                    response
+                        .message
+                        .lines()
+                        .any(|line| line.trim_end().ends_with(&needle))
+                };
+                for (command, specs) in pergola_x11::binding_plan() {
+                    if is_bound(command) {
+                        println!("bound {:<20} {}", specs[0], command);
+                    } else {
+                        println!("NONE  {:<20} {}", command, specs.join(" / "));
+                    }
+                }
+                println!("\n(the daemon is running; these are its live grabs)");
+                return Ok(());
+            }
+        }
         let x = pergola_x11::X11::connect()?;
         let (bound, failures) = x.install_bindings(&pergola_x11::binding_plan())?;
         for (binding, command) in &bound {

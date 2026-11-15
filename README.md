@@ -244,7 +244,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.3.2-dev` — pre-stable, no compatibility promises.
+`0.3.3-dev` — pre-stable, no compatibility promises.
 
 ## License
 

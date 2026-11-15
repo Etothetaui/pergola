@@ -3,6 +3,18 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.3.3-dev] — 2026-11-15
+
+### Fixed
+
+* **`pergola keys --check` said every chord was taken while the daemon ran.** The
+  probe connected as a fresh client and tried to grab each chord itself, so it
+  collided with the daemon's own grabs and reported `TAKEN` for a setup that was
+  working. It now asks the running daemon what it actually bound (`keys` over
+  IPC) and falls back to the live probe only when no daemon is up. Verified
+  against the live daemon: `keys --check` prints `bound` for every chord and says
+  it is reporting the daemon's grabs.
+
 ## [0.3.2-dev] — 2026-11-14
 
 ### Fixed
