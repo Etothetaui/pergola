@@ -69,6 +69,11 @@ check_eq() { # expected actual label
   if [ "$1" = "$2" ]; then ok "$3 ($2)"; else bad "$3: expected [$1] got [$2]"; fi
 }
 check_near() { # expected actual tolerance label
+  # An empty operand means the geometry lookup returned nothing; a bare `$(( ))`
+  # on that prints "arithmetic syntax error" and hides which assertion failed.
+  # Report the missing value as a FAIL instead.
+  case "$1" in ''|*[!0-9-]*) bad "$4: expected $1±$3, got [${2:-<empty>}]"; return;; esac
+  case "$2" in ''|*[!0-9-]*) bad "$4: expected $1±$3, got [<empty>]"; return;; esac
   local d=$(( $1 > $2 ? $1 - $2 : $2 - $1 ))
   if [ "$d" -le "$3" ]; then ok "$4 (expected $1, got $2)"; else bad "$4: expected $1±$3, got $2"; fi
 }
