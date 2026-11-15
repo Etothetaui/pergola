@@ -1037,20 +1037,30 @@ impl Daemon {
     /// Start dragging a split boundary. The tree is snapshotted so that every
     /// motion is absolute, not incremental.
     fn begin_gap_drag(&mut self, window: u32, x: i32, y: i32) -> Result<()> {
-        let Some(handle) = self.band_for_window(window) else {
-            return Ok(());
+        let (first, second, axis, extent) = match self.band_for_window(window) {
+            Some(handle) => (
+                handle.first.clone(),
+                handle.second.clone(),
+                handle.axis,
+                handle.extent.max(1.0),
+            ),
+            None => return Ok(()),
         };
+        // A missed release leaves the previous gesture open; commit it before
+        // starting another so its in-flight layout is not silently dropped.
+        if self.drag.is_some() {
+            self.end_gap_drag()?;
+        }
         if std::env::var_os("PERGOLA_DEBUG").is_some() {
             eprintln!(
-                "pergola: gap drag {}|{} axis {:?} extent {:.0}px",
-                handle.first, handle.second, handle.axis, handle.extent
+                "pergola: gap drag {first}|{second} axis {axis:?} extent {extent:.0}px"
             );
         }
         self.drag = Some(GapDrag {
-            first: handle.first.clone(),
-            second: handle.second.clone(),
-            axis: handle.axis,
-            extent: handle.extent.max(1.0),
+            first,
+            second,
+            axis,
+            extent,
             start: (x, y),
             snapshot: self.file.doc.root.clone(),
         });
@@ -1091,9 +1101,12 @@ impl Daemon {
         if self.drag.take().is_none() {
             return Ok(());
         }
-        self.save()?;
-        self.refresh_gap_bands()?;
-        Ok(())
+        // Rebuild the bands before saving: a failed write must not leave the
+        // pointer without grab areas until the next apply.
+        let bands = self.refresh_gap_bands();
+        let saved = self.save();
+        bands?;
+        saved
     }
 
     /// Track a configure event that may be the user dragging a window. Our own
