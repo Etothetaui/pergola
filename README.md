@@ -223,7 +223,7 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
 
 ```bash
 cargo test               # 59 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 82 assertions against Xvfb + xfwm4 + real xterms
+scripts/e2e.sh           # 84 assertions against Xvfb + xfwm4 + real xterms
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite
 cargo build --release
@@ -239,7 +239,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.3.0-dev` — pre-stable, no compatibility promises.
+`0.3.1-dev` — pre-stable, no compatibility promises.
 
 ## License
 

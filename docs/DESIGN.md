@@ -139,5 +139,5 @@ uses. The action list is static and labelled for people, not for the grammar.
 * `scripts/e2e.sh` — starts Xvfb + xfwm4 + three xterms, runs the real daemon,
   and asserts the geometry the X server reports against `pergola rects` after
   dock, zoom, arrange, gap changes, float, a daemon restart, keyboard docking, a
-  gap drag and an edge drop (82 assertions).
+  gap drag and an edge drop (84 assertions).
   It never touches the live session.

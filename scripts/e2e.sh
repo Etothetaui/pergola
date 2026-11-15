@@ -239,6 +239,18 @@ P overlay off >/dev/null
 say
 say "8. keyboard and mouse tiling"
 P float-all >/dev/null; sleep 0.4
+# A maximised window ignores _NET_MOVERESIZE_WINDOW, so docking has to clear
+# that state first or the tile silently keeps the full-screen geometry.
+wmctrl -i -r "$W1" -b add,maximized_vert,maximized_horz >/dev/null 2>&1; sleep 0.6
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
+xdotool key ctrl+alt+shift+Left; sleep 0.8
+if xprop -id "$W1" _NET_WM_STATE | grep -q MAXIMIZED; then
+  bad "docking a maximised window left it maximised"
+else
+  ok "docking a maximised window clears the state"
+fi
+check_eq "1" "$(P list | grep -c '^docked')" "the maximised window is docked"
+P float-all >/dev/null; sleep 0.4
 xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
 xdotool key ctrl+alt+shift+Left; sleep 0.5
 check_eq "1" "$(P list | grep -c '^docked')" "Ctrl+Alt+Shift+Left docks the focused window"

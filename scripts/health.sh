@@ -175,8 +175,17 @@ if command -v xdotool >/dev/null && command -v xprop >/dev/null; then
     ext=$(xprop -id "$win" _NET_FRAME_EXTENTS 2>/dev/null | sed -n 's/.*= \([0-9]*\), \([0-9]*\), \([0-9]*\), \([0-9]*\)/\1 \2 \3 \4/p')
     read -r px py <<<"$pos"; read -r sw sh <<<"$size"; read -r l r t b <<<"${ext:-0 0 0 0}"
     fx=$((px-l)); fy=$((py-t)); fw=$((sw+l+r)); fh=$((sh+t+b))
-    # Only assert tiles that are fully on screen: parked tiles are clamped by the WM.
-    if [ "$x" -lt 0 ] || [ "$y" -lt 0 ] || [ $((x+w)) -gt "$SCREEN_W" ] || [ $((y+h)) -gt "$SCREEN_H" ]; then
+    # Only assert tiles that are fully on screen: parked tiles are clamped by
+    # the WM. Compare against the *work area* when it is known: rects live in
+    # work-area coordinates, so with a top panel y starts at wy and y+h equals
+    # wy+wh — a display-height check would call every full-height tile off-screen
+    # and silently skip the drift it exists to catch.
+    if [ -n "${ww:-}" ] && [ "${ww:-0}" -gt 0 ]; then
+      if [ "$x" -lt "${wx:-0}" ] || [ "$y" -lt "${wy:-0}" ] \
+         || [ $((x+w)) -gt $(( ${wx:-0} + ww )) ] || [ $((y+h)) -gt $(( ${wy:-0} + wh )) ]; then
+        continue
+      fi
+    elif [ "$x" -lt 0 ] || [ "$y" -lt 0 ] || [ $((x+w)) -gt "$SCREEN_W" ] || [ $((y+h)) -gt "$SCREEN_H" ]; then
       continue
     fi
     # A client with a character grid (every terminal) snaps its size to
@@ -186,8 +195,16 @@ if command -v xdotool >/dev/null && command -v xprop >/dev/null; then
     read -r iw ih <<<"${inc:-0 0}"
     [ "${iw:-0}" -gt 2 ] || iw=2
     [ "${ih:-0}" -gt 2 ] || ih=2
+    # Compare the four edges, not the origin: a resize-increment client can be
+    # snapped to a size one increment larger, and the WM then anchors it at the
+    # requested client position, so the frame origin moves by up to one
+    # increment while the tile still covers its area. Edge tolerance = the
+    # client's own increment keeps that honest and still catches real drift
+    # (a maximised window is off by the whole tile width).
     failed=0
-    for pair in "$((fx-x)):2" "$((fy-y)):2" "$((fw-w)):$iw" "$((fh-h)):$ih"; do
+    for pair in \
+        "$((fx-x)):$iw" "$((fy-y)):$ih" \
+        "$(((fx+fw)-(x+w))):$iw" "$(((fy+fh)-(y+h))):$ih"; do
       d="${pair%:*}"; tol="${pair##*:}"
       if [ "${d#-}" -gt "$tol" ]; then failed=1; fi
     done

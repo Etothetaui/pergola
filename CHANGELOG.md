@@ -3,6 +3,24 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.3.1-dev] — 2026-11-14
+
+### Fixed
+
+* Docking a **maximised** window silently did nothing: the WM ignores
+  `_NET_MOVERESIZE_WINDOW` for a maximised window, so the tile kept the
+  full-screen geometry while the tree recorded the tile. It now clears
+  `_NET_WM_STATE_MAXIMIZED_{HORZ,VERT}` before the move; `scripts/e2e.sh`
+  maximises a window, docks it by chord and asserts the state is gone.
+* `pergola-health` geometry drift was wrong in both directions: full-height tiles
+  were skipped (`y+h` compared against the work-area height instead of the work
+  area's real bottom edge) so a maximised tile could drift unnoticed, and a client
+  with resize increments (a terminal) was compared by its frame origin, which the
+  WM is free to shift by one increment. It now skips against the work-area
+  rectangle and compares the four tile edges with the client's own increment.
+  Verified against the live case that prompted the fix.
+* Test counts are the measured values (59 unit, 84 e2e).
+
 ## [0.3.0-dev] — 2026-11-14
 
 ### Added

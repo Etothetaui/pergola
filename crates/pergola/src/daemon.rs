@@ -265,6 +265,12 @@ impl Daemon {
             let target = park_if_outside(tf(*rect).to_irect(), screen, framed.is_some());
             for view in &panel.views {
                 if let Some(seat) = self.seats.iter().find(|s| &s.seat == view) {
+                    // A maximized window ignores `_NET_MOVERESIZE_WINDOW`: the
+                    // tile would keep the full-screen geometry and the tree
+                    // would lie. Drop the state, then move.
+                    if self.x.maximized(seat.window) {
+                        let _ = self.x.unmaximize(seat.window);
+                    }
                     let _ = self.x.move_resize(seat.window, target);
                     self.applied.insert(seat.window, target);
                 }

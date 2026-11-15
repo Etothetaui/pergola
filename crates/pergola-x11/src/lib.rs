@@ -76,6 +76,8 @@ struct Atoms {
     net_wm_window_type: u32,
     net_wm_state: u32,
     net_wm_state_hidden: u32,
+    net_wm_state_maximized_horz: u32,
+    net_wm_state_maximized_vert: u32,
     net_frame_extents: u32,
     net_workarea: u32,
     net_current_desktop: u32,
@@ -301,6 +303,37 @@ impl X11 {
     pub fn activate(&self, win: u32) -> Result<()> {
         let data = [2u32, 0, 0, 0, 0]; // source = pager, CurrentTime
         let event = ClientMessageEvent::new(32, win, self.atoms.net_active_window, data);
+        self.conn.send_event(
+            false,
+            self.root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event,
+        )?;
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    /// Whether the WM has the window maximized. A maximized window ignores
+    /// `_NET_MOVERESIZE_WINDOW`, so docking it silently does nothing.
+    pub fn maximized(&self, win: u32) -> bool {
+        let Ok(states) = self.atom_list(win, self.atoms.net_wm_state) else {
+            return false;
+        };
+        states.contains(&self.atoms.net_wm_state_maximized_horz)
+            || states.contains(&self.atoms.net_wm_state_maximized_vert)
+    }
+
+    /// Ask the WM to drop the maximized state, so a following move takes.
+    pub fn unmaximize(&self, win: u32) -> Result<()> {
+        // EWMH `_NET_WM_STATE` client message: action 0 = remove, 2 properties.
+        let data = [
+            0u32,
+            self.atoms.net_wm_state_maximized_horz,
+            self.atoms.net_wm_state_maximized_vert,
+            2u32,
+            0u32,
+        ];
+        let event = ClientMessageEvent::new(32, win, self.atoms.net_wm_state, data);
         self.conn.send_event(
             false,
             self.root,
@@ -604,6 +637,8 @@ impl Atoms {
             net_wm_window_type: intern("_NET_WM_WINDOW_TYPE")?,
             net_wm_state: intern("_NET_WM_STATE")?,
             net_wm_state_hidden: intern("_NET_WM_STATE_HIDDEN")?,
+            net_wm_state_maximized_horz: intern("_NET_WM_STATE_MAXIMIZED_HORZ")?,
+            net_wm_state_maximized_vert: intern("_NET_WM_STATE_MAXIMIZED_VERT")?,
             net_frame_extents: intern("_NET_FRAME_EXTENTS")?,
             net_workarea: intern("_NET_WORKAREA")?,
             net_current_desktop: intern("_NET_CURRENT_DESKTOP")?,
