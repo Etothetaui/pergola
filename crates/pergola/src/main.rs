@@ -132,18 +132,22 @@ fn keys(socket: &PathBuf, args: &[String]) -> Result<()> {
             if response.ok {
                 // The daemon prints `<label padded to 24> <command>`, and a
                 // command may contain a space ("dock left"), so match the tail.
-                let is_bound = |command: &str| {
+                // Print the label the daemon actually bound, not the plan's
+                // primary chord: when the desktop owns the primary, the daemon
+                // binds the fallback (`Super+Up`), and echoing the plan would
+                // claim a chord the user cannot use.
+                let bound_label = |command: &str| -> Option<String> {
                     let needle = format!(" {command}");
-                    response
-                        .message
-                        .lines()
-                        .any(|line| line.trim_end().ends_with(&needle))
+                    response.message.lines().find_map(|line| {
+                        line.trim_end()
+                            .strip_suffix(&needle)
+                            .map(|label| label.trim_end().to_string())
+                    })
                 };
                 for (command, specs) in pergola_x11::binding_plan() {
-                    if is_bound(command) {
-                        println!("bound {:<20} {}", specs[0], command);
-                    } else {
-                        println!("NONE  {:<20} {}", command, specs.join(" / "));
+                    match bound_label(command) {
+                        Some(label) => println!("bound {:<20} {}", label, command),
+                        None => println!("NONE  {:<20} {}", command, specs.join(" / ")),
                     }
                 }
                 println!("\n(the daemon is running; these are its live grabs)");

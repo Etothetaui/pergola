@@ -1186,6 +1186,22 @@ impl Daemon {
                         failure.tried.join(", ")
                     );
                 }
+                // Say when a command fell back to its secondary chord because
+                // the desktop owns the primary one. The README promises this
+                // report; without it the user learns about the fallback only
+                // by pressing a chord the desktop intercepts.
+                for (binding, command) in &self.bindings {
+                    if let Some((_, specs)) = binding_plan().iter().find(|(c, _)| c == command) {
+                        if let Some(primary) = specs.first() {
+                            if binding.label != *primary {
+                                eprintln!(
+                                    "pergola: '{}' bound to {} ({} is owned by the desktop)",
+                                    command, binding.label, primary
+                                );
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => eprintln!("pergola: cannot grab hotkeys: {e}"),
         }
