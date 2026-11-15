@@ -1310,6 +1310,15 @@ impl Daemon {
             (i32::from(event.width) + l + r) as f64,
             (i32::from(event.height) + t + b) as f64,
         );
+        if std::env::var_os("PERGOLA_DEBUG").is_some() {
+            eprintln!(
+                "pergola: configure 0x{:x} rect={:?} applied={:?} seat={}",
+                event.window,
+                rect,
+                self.applied.get(&event.window).map(|r| r.to_rect()),
+                self.seat_for_window(event.window).is_some(),
+            );
+        }
         if let Some(applied) = self.applied.get(&event.window) {
             if same_rect(applied.to_rect(), rect) {
                 return Ok(());
@@ -1352,6 +1361,17 @@ impl Daemon {
         let now = Instant::now();
         let mut ready = Vec::new();
         for (window, watch) in &self.moves {
+            if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                eprintln!(
+                    "pergola: move-watch 0x{:x} moves={} rect={:?} start={:?} age={:?} drag={}",
+                    window,
+                    watch.moves,
+                    watch.rect,
+                    watch.start,
+                    now.duration_since(watch.at),
+                    is_drag(watch),
+                );
+            }
             if now.duration_since(watch.at) >= Duration::from_millis(300) && is_drag(watch) {
                 ready.push((*window, watch.rect));
             }

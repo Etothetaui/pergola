@@ -133,7 +133,7 @@ uses. The action list is static and labelled for people, not for the grammar.
 
 ## Testing
 
-* `cargo test` — 64 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 66 unit tests over geometry, weights, docking, removal, gap
   clamping, neighbours, camera history, saved views, command URLs, document
   round-trips and repair of malformed weights.
 * `scripts/e2e.sh` — starts Xvfb + xfwm4 + three xterms, runs the real daemon,

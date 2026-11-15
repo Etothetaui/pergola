@@ -3,6 +3,39 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.3.4-dev] — 2026-11-15
+
+### Fixed
+
+* **`pergola tree` kept a window's old title after a rename.** The `PropertyNotify`
+  handler updated the daemon's own seat records but not the document metadata
+  that `tree` serialises, so a title change only reached the tree view after the
+  next 2 s reconcile or an `arrange`. `sync_meta()` now copies the live seats into
+  the document before both `tree` and `save` (`herbstluftwm#35`, `bspwm#50`).
+  Verified live: `xdotool set_window --name` then `pergola tree` shows the new
+  title immediately.
+* **A single-report WM drag is a drag.** Edge docking required three
+  `ConfigureNotify` events, which xfwm4 emits and openbox does not (openbox sends
+  one ICCCM-synthetic event at the drop position). `MoveWatch` now tracks the last
+  applied rect as the drag baseline and treats one event that travelled >= 40 px
+  from it as a drag, so a WM that reports only the drop position still docks.
+  Two unit tests: `a_single_report_that_travelled_is_a_drag`,
+  `a_placement_at_the_edge_is_not_a_drag`.
+
+### Changed
+
+* **`scripts/e2e.sh` takes `--wm xfwm4|openbox|i3`** (or `PERGOLA_TEST_WM`). The
+  "any EWMH desktop" claim is now measurable: the 1.0.0 gate wants every command
+  under two window managers. The sandbox refuses to run on a display that already
+  has a server, so a kept sandbox cannot masquerade as a product bug. The edge-dock
+  test now performs a real pointer drag instead of `wmctrl -e` geometry pokes,
+  because each WM coalesces those differently.
+* **`scripts/health.sh --e2e` records live-only failures as warnings.** When two
+  sessions tile the same live display, the soak's cpu/drift/orphan observations
+  fail for reasons that are not the code's. With `--e2e`, those live-only
+  observations are written to `health.jsonl` as `warnings` and no longer fail the
+  exit code; the 12-hour soak runs without `--e2e` and keeps the strict verdict.
+
 ## [0.3.3-dev] — 2026-11-15
 
 ### Fixed

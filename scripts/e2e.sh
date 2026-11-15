@@ -1,19 +1,53 @@
 #!/usr/bin/env bash
-# End-to-end test: a real X server (Xvfb), a real window manager (xfwm4), three
-# real xterm windows, and the pergola daemon on top. Every assertion is made
-# against geometry that the X server reports, not against the daemon's own
-# bookkeeping alone.
+# End-to-end test: a real X server (Xvfb), a real window manager, three real
+# xterm windows, and the pergola daemon on top. Every assertion is made against
+# geometry that the X server reports, not against the daemon's own bookkeeping
+# alone.
 #
-#   scripts/e2e.sh            uses target/release/pergola if present
+#   scripts/e2e.sh                 uses target/release/pergola if present
+#   scripts/e2e.sh --wm openbox    any of xfwm4 (default), openbox, i3
 #   PERGOLA_BIN=... scripts/e2e.sh
+#
+# The WM is a parameter because the "any EWMH desktop" claim must be measured,
+# not asserted: the 1.0.0 gate wants every command run under two window managers
+# (docs/VERSIONING.md), and the summary line names the one that actually ran.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WM="${PERGOLA_TEST_WM:-xfwm4}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --wm) WM="${2:-}"; shift 2 ;;
+    --wm=*) WM="${1#--wm=}"; shift ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    *) echo "e2e: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+case "$WM" in
+  xfwm4)   WM_CMD=(xfwm4 --compositor=off) ;;
+  openbox) WM_CMD=(openbox) ;;
+  i3)      WM_CMD=(i3 --no-config --shmlog-size 0) ;;
+  *) echo "e2e: unknown window manager '$WM' (xfwm4|openbox|i3)" >&2; exit 2 ;;
+esac
+command -v "$WM" >/dev/null || { echo "e2e: $WM is not installed" >&2; exit 2; }
 BIN="${PERGOLA_BIN:-$ROOT/target/release/pergola}"
 [ -x "$BIN" ] || BIN="$ROOT/target/debug/pergola"
 [ -x "$BIN" ] || { echo "build pergola first (cargo build)"; exit 1; }
 
 DISP="${PERGOLA_TEST_DISPLAY:-:99}"
+# A KEPT sandbox (PERGOLA_E2E_KEEP=1) or a stray daemon on the same display makes
+# the next run fail in ways that look exactly like product bugs (measured
+# 2026-11-15: half the geometry checks failed and blamed the engine, because a
+# previous sandbox still owned :99). Refuse loudly instead.
+x_alive() {
+  if command -v xset >/dev/null; then xset -display "$DISP" q >/dev/null 2>&1; return $?; fi
+  [ -S "/tmp/.X11-unix/X${DISP##*:}" ]
+}
+if [ -z "${PERGOLA_E2E_KEEP:-}" ] && x_alive; then
+  echo "e2e: display $DISP is already in use (a KEPT sandbox?) — clean /tmp/pergola-e2e.*" >&2
+  echo "     or run with PERGOLA_TEST_DISPLAY=:9x" >&2
+  exit 2
+fi
 W=1600
 H=900
 TMP="$(mktemp -d /tmp/pergola-e2e.XXXXXX)"
@@ -58,10 +92,10 @@ trap cleanup EXIT
 
 # ---------------------------------------------------------------- sandbox ----
 say "pergola e2e: $BIN"
-say "sandbox: Xvfb $DISP ${W}x${H} + xfwm4 + 3 xterms"
+say "sandbox: Xvfb $DISP ${W}x${H} + $WM + 3 xterms"
 Xvfb "$DISP" -screen 0 "${W}x${H}x24" >"$TMP/xvfb.log" 2>&1 & PIDS+=($!)
 sleep 1
-xfwm4 --compositor=off >"$TMP/xfwm4.log" 2>&1 & PIDS+=($!)
+"${WM_CMD[@]}" >"$TMP/wm.log" 2>&1 & PIDS+=($!)
 sleep 2
 XPIDS=()
 for i in 1 2 3; do
@@ -291,11 +325,22 @@ xdotool mouseup 1; sleep 0.5
 NEW_W1=$(P rects | awk 'NR==1 {print $4}')
 if [ "$NEW_W1" -gt $((GW1+80)) ]; then ok "dragging the gap resizes the split ($GW1 -> $NEW_W1)"; else bad "gap drag did not resize ($GW1 -> $NEW_W1)"; fi
 
-# Mouse tiling: drop a floating window on the left screen edge.
+# Mouse tiling: *drag* a floating window to the left screen edge and let go.
+# The gesture, not a geometry poke: wmctrl -e is interpreted per WM (openbox
+# coalesces it into one ConfigureNotify where xfwm4 emits a stream, and it
+# re-places the window at 0,0 — the top-left corner — which the daemon then
+# reads as a real drag to the left edge and docks before the gesture starts).
+# The daemon's edge detection exists for a real drag, so the test must be one,
+# starting from wherever the window already floats.
 P float --window "$W3" >/dev/null 2>&1; sleep 0.4
-for x in 140 70 0; do wmctrl -i -r "$W3" -e "0,$x,220,320,240" >/dev/null 2>&1; sleep 0.12; done
-sleep 1.2
-if P list | grep -q "^docked.*$W3"; then ok "a window dropped on the left edge is docked"; else bad "edge drop did not dock $W3"; fi
+eval "$(xdotool getwindowgeometry --shell "$W3")"   # X, Y, WIDTH, HEIGHT
+xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.3
+xdotool mousemove $((X + WIDTH / 2)) $((Y + 12)) sleep 0.15 \
+  keydown alt sleep 0.1 mousedown 1 sleep 0.15
+for x in 700 500 300 120 20 2; do xdotool mousemove "$x" $((Y + 12)); sleep 0.08; done
+xdotool mouseup 1 sleep 0.1 keyup alt
+sleep 1.5
+if P list | grep -q "^docked.*$W3"; then ok "a window dragged to the left edge is docked"; else bad "edge drag did not dock $W3"; fi
 # Pulling that tile back off the screen edge floats it where it was dropped.
 for x in 320 400 480; do wmctrl -i -r "$W3" -e "0,$x,220,320,240" >/dev/null 2>&1; sleep 0.15; done
 sleep 1.2
@@ -345,5 +390,5 @@ say "10. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say
-printf 'e2e: %d passed, %d failed\n' "$PASS" "$FAIL"
+printf 'e2e: %d passed, %d failed (wm=%s)\n' "$PASS" "$FAIL" "$WM"
 [ "$FAIL" -eq 0 ]

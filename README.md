@@ -227,7 +227,7 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 64 unit tests: geometry, tree, camera, commands, document
+cargo test               # 66 unit tests: geometry, tree, camera, commands, document
 scripts/e2e.sh           # 43 assertions against Xvfb + xfwm4 + real xterms
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite
@@ -244,7 +244,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.3.3-dev` — pre-stable, no compatibility promises.
+`0.3.4-dev` — pre-stable, no compatibility promises.
 
 ## License
 
