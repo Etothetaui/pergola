@@ -9,13 +9,14 @@
 use anyhow::{anyhow, Context, Result};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, CreateWindowAux,
-    EventMask, GrabMode, ModMask, PropMode, Window, WindowClass,
+    AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConfigureWindowAux,
+    ConnectionExt as _, CreateWindowAux, Cursor, EventMask, GrabMode, ModMask, PropMode, Window,
+    WindowClass,
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
-use pergola_core::{IRect, Rect};
+use pergola_core::{Axis, IRect, Rect};
 
 /// A managed top-level window, as Pergola sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +60,12 @@ pub struct X11 {
     pub root: Window,
     atoms: Atoms,
     overlay: Vec<Window>,
+    /// Invisible input-only windows that turn each split gap into a pointer
+    /// drag target. Kept so a layout change can replace them as a set.
+    bands: Vec<Window>,
+    /// Resize cursors for horizontal and vertical boundaries, when the X
+    /// server has the standard `cursor` font.
+    cursors: (Cursor, Cursor),
 }
 
 struct Atoms {
@@ -85,12 +92,15 @@ impl X11 {
         )?;
         let root = conn.setup().roots[screen].root;
         let atoms = Atoms::new(&conn)?;
+        let cursors = make_resize_cursors(&conn).unwrap_or((0, 0));
         Ok(Self {
             conn,
             screen,
             root,
             atoms,
             overlay: Vec::new(),
+            bands: Vec::new(),
+            cursors,
         })
     }
 
@@ -370,6 +380,91 @@ impl X11 {
         !self.overlay.is_empty()
     }
 
+    // MARK: pointer grab areas in the gaps
+
+    /// Replace the pointer grab areas with one input-only window per gap band.
+    ///
+    /// These are invisible: they exist so the user can drag a split boundary
+    /// with the mouse. They are created on top and are input-only, so they
+    /// never cover a tile's pixels; each carries the matching resize cursor.
+    /// Returns the window ids in the same order as `bands`.
+    pub fn grab_bands_show(&mut self, bands: &[(IRect, Axis)]) -> Result<Vec<Window>> {
+        self.grab_bands_hide()?;
+        let (cursor_h, cursor_v) = self.cursors;
+        let mut ids = Vec::new();
+        for (rect, axis) in bands {
+            if rect.w <= 0 || rect.h <= 0 {
+                continue;
+            }
+            let wid = self.conn.generate_id()?;
+            let cursor = match axis {
+                Axis::X => cursor_h,
+                Axis::Y => cursor_v,
+            };
+            let mut aux = CreateWindowAux::new()
+                .override_redirect(1)
+                .event_mask(
+                    EventMask::BUTTON_PRESS
+                        | EventMask::BUTTON_RELEASE
+                        | EventMask::BUTTON_MOTION
+                        | EventMask::ENTER_WINDOW
+                        | EventMask::LEAVE_WINDOW,
+                );
+            if cursor != 0 {
+                aux = aux.cursor(cursor);
+            }
+            // InputOnly windows have no depth and no visual (0 = CopyFromParent).
+            self.conn.create_window(
+                0,
+                wid,
+                self.root,
+                rect.x as i16,
+                rect.y as i16,
+                rect.w as u16,
+                rect.h as u16,
+                0,
+                WindowClass::INPUT_ONLY,
+                0,
+                &aux,
+            )?;
+            self.conn.map_window(wid)?;
+            self.conn.configure_window(
+                wid,
+                &ConfigureWindowAux::new()
+                    .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+            )?;
+            ids.push(wid);
+        }
+        self.conn.flush()?;
+        self.bands = ids.clone();
+        Ok(ids)
+    }
+
+    /// Remove every gap grab area (e.g. a layout with no splittable boundary).
+    pub fn grab_bands_hide(&mut self) -> Result<()> {
+        for wid in self.bands.drain(..) {
+            let _ = self.conn.destroy_window(wid);
+        }
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    /// One pending event without blocking, for callers that drain the queue.
+    pub fn poll_event(&self) -> Result<Option<Event>> {
+        Ok(self.conn.poll_for_event()?)
+    }
+
+    /// Ask for a managed window's structure events. The WM's synthetic
+    /// `ConfigureNotify` (root coordinates, ICCCM) is how the daemon notices
+    /// that the user moved a window — including a drag it cannot see.
+    pub fn watch_window(&self, win: u32) -> Result<()> {
+        self.conn.change_window_attributes(
+            win,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY),
+        )?;
+        Ok(())
+    }
+
     // MARK: hotkeys
 
     /// Grab `bindings` on the root window. Returns the labels that could not be
@@ -570,6 +665,25 @@ pub mod keysym {
 /// The key map: each command has a primary binding (matching the TrellisWM
 /// guide's `⌃⌥` shortcuts) and a `Super` fallback for desktops that already own
 /// the `Ctrl+Alt` combination — xfwm4 does, for workspace switching.
+/// Cursors for a draggable boundary: the standard `cursor` font's
+/// `sb_h_double_arrow` (108) and `sb_v_double_arrow` (116), each followed by
+/// its mask glyph. Falls back to `None` on a server without core fonts.
+fn make_resize_cursors(conn: &RustConnection) -> Result<(Cursor, Cursor)> {
+    let font = conn.generate_id()?;
+    conn.open_font(font, b"cursor")?;
+    let glyph = |conn: &RustConnection, source: u16| -> Result<Cursor> {
+        let id = conn.generate_id()?;
+        // fg white, bg black: legible on light and dark tiles.
+        conn.create_glyph_cursor(id, font, font, source, source + 1, 65535, 65535, 65535, 0, 0, 0)?;
+        Ok(id)
+    };
+    let h = glyph(conn, 108)?;
+    let v = glyph(conn, 116)?;
+    conn.close_font(font)?;
+    conn.flush()?;
+    Ok((h, v))
+}
+
 pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
     vec![
         ("everything", vec!["Ctrl+Alt+Space", "Super+Space"]),
@@ -577,8 +691,6 @@ pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
         ("zoom-in", vec!["Ctrl+Alt+Down", "Super+Down"]),
         ("neighbour?dir=left", vec!["Ctrl+Alt+Left", "Super+Left"]),
         ("neighbour?dir=right", vec!["Ctrl+Alt+Right", "Super+Right"]),
-        ("neighbour?dir=up", vec!["Ctrl+Alt+Shift+Up", "Super+Shift+Up"]),
-        ("neighbour?dir=down", vec!["Ctrl+Alt+Shift+Down", "Super+Shift+Down"]),
         ("back", vec!["Ctrl+Alt+[", "Super+["]),
         ("forward", vec!["Ctrl+Alt+]", "Super+]"]),
         ("frame-window", vec!["Ctrl+Alt+Return", "Super+Return"]),
@@ -587,6 +699,14 @@ pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
         ("arrange", vec!["Ctrl+Alt+a", "Super+a"]),
         ("float-all", vec!["Ctrl+Alt+f", "Super+f"]),
         ("overlay", vec!["Ctrl+Alt+o", "Super+o"]),
+        // Mouse-free tiling: the four edges a window can be docked against.
+        ("dock left", vec!["Ctrl+Alt+Shift+Left", "Super+Shift+Left"]),
+        ("dock right", vec!["Ctrl+Alt+Shift+Right", "Super+Shift+Right"]),
+        ("dock up", vec!["Ctrl+Alt+Shift+Up", "Super+Shift+Up"]),
+        ("dock down", vec!["Ctrl+Alt+Shift+Down", "Super+Shift+Down"]),
+        ("float", vec!["Ctrl+Alt+Shift+w", "Super+Shift+w"]),
+        // Discoverability: a menu of the same actions, for the mouse.
+        ("palette", vec!["Ctrl+Alt+m", "Super+m"]),
     ]
 }
 

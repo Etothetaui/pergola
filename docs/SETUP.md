@@ -15,6 +15,7 @@ operational side: install, configure, upgrade, remove, diagnose.
 | An **EWMH-compliant window manager** | Pergola reads `_NET_CLIENT_LIST` and moves windows with `_NET_MOVERESIZE_WINDOW`; measured on **Xfwm4** and **Openbox** |
 | **Rust 1.75+** | only to build; the installed binary links nothing but `libc` and `libgcc_s` |
 | An XDG autostart directory **or** a systemd user manager | to start the daemon at login (both are written by `install.sh`) |
+| `rofi` (recommended), or `zenity`/`yad`/`dmenu` | only for the action palette (`Ctrl+Alt+M`) |
 | `Xvfb`, `xfwm4`, `xterm`, `xdotool`, `wmctrl` | optional, only for `scripts/e2e.sh` |
 
 `pergola doctor` is the authoritative check for the first two: it prints the
@@ -118,6 +119,7 @@ the defaults):
 | `desktop_share` | `0.0` | share of the screen `arrange` gives the desktop leaf; `0` means the desktop gets no strip |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
+| `edge_dock` | `true` | dock a floating window dropped on a screen edge (mouse tiling) |
 
 Notes:
 
@@ -133,6 +135,24 @@ Notes:
 * `pergola keys --check` lists what was actually bound and which planned chords
   the desktop already owns. `pergola keys --probe <chord>…` tests individual
   chords without installing anything.
+
+## Keyboard and mouse
+
+Everything that tiles a window is reachable without a shell:
+
+| To… | Do this |
+|---|---|
+| tile the focused window left/right | `Ctrl+Alt+Shift+←` / `→` |
+| stack it above/below | `Ctrl+Alt+Shift+↑` / `↓` |
+| float it again | `Ctrl+Alt+Shift+W` |
+| choose from a menu | `Ctrl+Alt+M` (needs rofi/zenity/yad/dmenu) |
+| resize a split | drag the gap between the two tiles |
+| tile by mouse | drag a window to a screen edge and let go |
+| untile by mouse | drag the tile away from the edge |
+
+The chords fall back to `Super+…` per command when the desktop owns the
+`Ctrl+Alt` chord — `pergola keys --check` prints what was really bound. The full
+list is in the [README](../README.md#hotkeys).
 
 ## Verify the installation
 
@@ -190,6 +210,9 @@ stopping returns every window to the desktop layer.
 | Windows do not move when docked | the WM ignores `_NET_MOVERESIZE_WINDOW` (tiling WMs that lay themselves out) — only Xfwm4 and Openbox are measured |
 | Tiles sit under the top panel | that is the work-area class of bug: `pergola-health` asserts every tile is inside `_NET_WORKAREA`; upgrade if it fails |
 | Hotkeys do nothing | `pergola keys --check`; the desktop may own the chord; Pergola falls back to `Super` per command and says which ones had no free chord at startup |
+| `Ctrl+Alt+M` does nothing | no menu program: `sudo pacman -S rofi`, or set `PERGOLA_MENU=/path/to/menu` |
+| Dragging a gap does nothing | there must be a gap: set `gap` above 0; the strip is only as wide as the gap |
+| A dropped window landed somewhere nested | edge drops dock against the last focused space by design — drop again on the edge you want, or use `Ctrl+Alt+Shift+arrows` after focusing the target tile |
 | A window peeks at the screen edge when zoomed out | the WM clamps off-screen windows (xfwm4 does); documented limitation |
 | Terminal tiles do not fill the tile exactly | the client's resize hints (a character grid) win; the layout is still the tile |
 | Second daemon will not start | expected: one instance per display, guarded by the Unix socket |

@@ -39,7 +39,8 @@ if [ ! -f "$CONFIG_DIR/config.json" ]; then
   "overlay": false,
   "desktop_share": 0.0,
   "terminal": "xfce4-terminal",
-  "hotkeys": true
+  "hotkeys": true,
+  "edge_dock": true
 }
 JSON
   echo "wrote $CONFIG_DIR/config.json"

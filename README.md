@@ -39,8 +39,8 @@ cd pergola
 ./install.sh            # build, install to ~/.local/bin, autostart, start now
 ```
 
-Requirements: Rust (1.75+), an X11 session, `xdotool`/`wmctrl` only for the
-optional test script. No root, no daemon privileges, no Accessibility-style
+Requirements: Rust (1.75+), an X11 session, `rofi` (or `zenity`/`yad`/`dmenu`) only
+for the action palette, `xdotool`/`wmctrl` only for the optional test script. No root, no daemon privileges, no Accessibility-style
 permission prompt. `install.sh` installs `pergola` and `pergola-health` into
 `~/.local/bin`, writes `~/.config/pergola/config.json` (only if absent), and
 adds a systemd user unit plus an XDG autostart entry so the daemon starts with
@@ -86,6 +86,7 @@ pergola rects            # every panel's current frame rectangle
 | `arrange` / `float-all` | tile everything / float everything |
 | `split-terminal` | split the focused window with a new terminal |
 | `gap <px>` | gap between tiles |
+| `palette` | a menu of the tile actions, for the mouse (rofi/zenity/dmenu) |
 | `overlay [on\|off\|toggle]` | draw split lines in the gaps (off by default) |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
 | `reload` `save` `stop` | daemon control |
@@ -104,18 +105,46 @@ to `Super` for that command and reports it at startup.
 | `Ctrl+Alt+Space` | everything |
 | `Ctrl+Alt+↑` / `↓` | zoom-out / zoom-in |
 | `Ctrl+Alt+←` / `→` | neighbour left / right |
-| `Ctrl+Alt+Shift+↑` / `↓` | neighbour up / down |
 | `Ctrl+Alt+[` / `]` | back / forward |
 | `Ctrl+Alt+Return` | frame-window |
+| `Ctrl+Alt+Shift+←` / `→` | **dock the focused window left / right** |
+| `Ctrl+Alt+Shift+↑` / `↓` | **dock it above / below** |
+| `Ctrl+Alt+Shift+W` | **float the focused window** |
+| `Ctrl+Alt+M` | **action palette** (mouse-friendly menu) |
 | `Ctrl+Alt+D` | toggle-desktop |
 | `Ctrl+Alt+N` | split-terminal |
 | `Ctrl+Alt+A` | arrange |
 | `Ctrl+Alt+F` | float-all |
 | `Ctrl+Alt+O` | overlay |
 
-`Super+…` is the automatic fallback for any chord the desktop already uses.
+**You can tile with three keys and no terminal:** focus a window, `Ctrl+Alt+Shift+←`,
+focus the next one, `Ctrl+Alt+Shift+→`. That is two tiles side by side.
+
+`Super+…` is the automatic fallback for any chord the desktop already uses (xfwm4
+owns `Ctrl+Alt+arrows`, so the camera keys fall back to `Super+arrows` there).
 `pergola keys --check` prints what was actually bound and which chords the
-desktop already owns.
+desktop already owns; the palette (`Ctrl+Alt+M`) lists the same actions by name.
+
+## Mouse
+
+No pointer interaction needs a command line:
+
+* **Drag a split boundary** — the gap between two tiles is a 6 px grab strip with
+  a resize cursor. Drag it to change the split's weights (both neighbours move,
+  never below `minimum_share`). It works while zoomed, and the pointer keeps the
+  grab even though the boundary moves under it.
+* **Drag a window to a screen edge** — let go within 14 px of the left, right, top
+  or bottom of the work area and it docks to that edge. Drop a second window on
+  the opposite edge and you have two tiles.
+* **Drag a tile away from the edge** — it floats again where you dropped it, so
+  the mouse can undo a tile without a command.
+* **`Ctrl+Alt+M` or `pergola palette`** — a menu of the actions with human names
+  ("Tile this window right", "Arrange all windows"); it needs `rofi` (recommended)
+  or `zenity`/`yad`/`dmenu`, and is mouse-clickable as well as type-to-filter.
+
+Docking is resolved against the last focused space, so in a nested layout a drop
+joins the tile you were last working in. `edge_dock: false` in the config turns
+the edge behaviour off if a drag should never tile.
 
 ## Configuration
 
@@ -130,6 +159,7 @@ desktop already owns.
 | `desktop_share` | `0.0` | desktop strip `arrange` keeps; `0` gives it none |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
+| `edge_dock` | `true` | dock a window dropped on a screen edge (mouse tiling) |
 
 `pergola reload` re-reads the file; `overlay` and `hotkeys` apply on daemon
 restart. The `gap` and `overlay` commands change the running session only. See
@@ -178,6 +208,13 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
   tile.
 * Dialogs and transient windows are treated as ordinary panels when docked.
 * Tab groups are modelled (`views.len() > 1`) but there is no drag-to-tab UI yet.
+* A split's ratio can be changed by dragging its gap, not by a command; there is
+  no `pergola ratio`. With `gap: 0` there is no strip to grab at all.
+* The palette is a fixed list of actions, not a context-aware one (it offers
+  "Float this window" even for a window that is already floating).
+* Edge docking targets the last focused space; in a deep tree the landing spot may
+  be nested rather than at the root, which reads as "it went where I was working".
+  Aim at the edge you want, not at an empty region of the screen.
 * The overlay is drawn with 2–3 px override-redirect rectangles inside the gaps
   and around the viewport; there is no dimming without a compositor.
 * Only one instance per display (one Unix socket).
@@ -185,8 +222,8 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
 ## Development
 
 ```bash
-cargo test               # 46 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 76 assertions against Xvfb + xfwm4 + real xterms
+cargo test               # 59 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # 82 assertions against Xvfb + xfwm4 + real xterms
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite
 cargo build --release
@@ -194,14 +231,15 @@ cargo build --release
 
 `install.sh` also installs `pergola-health`, the same soak check under a stable name, so a
 scheduler or a timer can run it unattended and act on the exit code. `BACKLOG.md` is the
-development queue: every item names what is done when.
+development queue: every item names what is done when. Human-interface pain points — with a
+severity and a proposed fix each — are recorded in [docs/UX-NOTES.md](docs/UX-NOTES.md).
 
 The end-to-end script starts its own X server, window manager and windows, so it
 does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.2.1-dev` — pre-stable, no compatibility promises.
+`0.3.0-dev` — pre-stable, no compatibility promises.
 
 ## License
 

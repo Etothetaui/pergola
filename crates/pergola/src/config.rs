@@ -21,6 +21,8 @@ pub struct Config {
     pub terminal: String,
     /// Grab the default hotkeys on the root window.
     pub hotkeys: bool,
+    /// Dock a floating window dropped against a screen edge (mouse tiling).
+    pub edge_dock: bool,
 }
 
 impl Default for Config {
@@ -35,6 +37,7 @@ impl Default for Config {
             desktop_share: 0.0,
             terminal: std::env::var("TERMINAL").unwrap_or_else(|_| "xfce4-terminal".to_string()),
             hotkeys: true,
+            edge_dock: true,
         }
     }
 }

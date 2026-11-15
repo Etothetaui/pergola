@@ -13,7 +13,7 @@ pub mod node;
 pub use camera::{Camera, CameraAction, CameraState};
 pub use command::{Command, SettingsPane};
 pub use document::{fractal_tree, FloatingWindow, LayoutDocument, LayoutFile, PergolaMeta, SeatRecord};
-pub use engine::LayoutEngine;
+pub use engine::{GapHandle, LayoutEngine};
 pub use geom::{Axis, Direction, IRect, Rect, Size};
 pub use node::{normalize_weights, Desktop, LayoutError, LayoutNode, Panel, Split};
 

@@ -79,6 +79,47 @@ live in the gap, so they never cover a title bar or a window border — the earl
 border around every tile and read as a debug artefact. It is off by default; `overlay on` (or
 `everything`) shows it, and the lines are drawn as override-redirect windows raised above the tiles.
 
+## The human interface: pointer and palette
+
+The engine has no idea whether a command came from a keyboard, a socket, or a
+mouse. Two thin layers make that possible, and neither can change the tree on its
+own:
+
+### Keyboard
+
+`binding_plan()` in `pergola-x11` maps chords to the same argv the CLI sends
+(`"dock left"` is dispatched as `["dock", "left"]`), so a hotkey cannot bypass a
+validation the CLI has. A chord the desktop already owns is skipped and the
+`Super` alternative is tried; `pergola keys --check` reports the result.
+
+### Pointer
+
+* `LayoutEngine::gap_handles()` is the pointer-facing view of the tree: one hit
+  rectangle per gap between adjacent, non-zero siblings, plus the split length a
+  pixel delta is divided by. This is pure geometry and unit-tested with the
+  engine.
+* `X11::grab_bands_show()` turns those rectangles into *input-only*
+  override-redirect windows — invisible, no pixels covered, each with the
+  matching resize cursor. X's implicit pointer grab means a `ButtonPress` on the
+  band keeps the `MotionNotify` stream even though the boundary moves under the
+  cursor. The band set is rebuilt on every `apply()`, except during a drag, when
+  replacing the window under the pointer would abort it.
+* A drag re-derives the tree from the snapshot taken at `ButtonPress`, so the
+  result is absolute and cannot accumulate rounding error.
+* Dragging a *window* is not visible to an external process; the WM's synthetic
+  `ConfigureNotify` (ICCCM, root coordinates) is. The daemon watches every
+  managed window, filters its own moves (the rectangle it asked for, within a
+  wake window), and waits for three geometry changes followed by 300 ms of quiet.
+  A settle within 14 px of a work-area edge docks; anywhere else floats. This
+  keeps an application opening at `0,51` from tiling itself.
+
+### Palette
+
+`pergola palette` spawns a detached `palette-run` process (the daemon's event
+loop and the CLI must both return immediately) which runs the desktop's menu
+program and then calls `pergola <action>`, i.e. the same socket path a hotkey
+uses. The action list is static and labelled for people, not for the grammar.
+
 ## Failure behaviour
 
 | Situation | Behaviour |
@@ -88,14 +129,15 @@ border around every tile and read as a debug artefact. It is off by default; `ov
 | Hotkey already owned by the desktop | try the `Super` fallback; report the ones with no free chord at startup |
 | Malformed `layout.json` | start from a bare desktop, keep the file untouched |
 | Window closes while docked | panel removed, split collapsed, layout re-applied |
-| Two daemons | the second fails to bind the socket |
+| Two daemons | the second refuses: the socket accepts a connection, so it is a live daemon |
 
 ## Testing
 
-* `cargo test` — 46 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 59 unit tests over geometry, weights, docking, removal, gap
   clamping, neighbours, camera history, saved views, command URLs, document
   round-trips and repair of malformed weights.
 * `scripts/e2e.sh` — starts Xvfb + xfwm4 + three xterms, runs the real daemon,
   and asserts the geometry the X server reports against `pergola rects` after
-  dock, zoom, arrange, gap changes, float and a daemon restart (76 assertions).
+  dock, zoom, arrange, gap changes, float, a daemon restart, keyboard docking, a
+  gap drag and an edge drop (82 assertions).
   It never touches the live session.

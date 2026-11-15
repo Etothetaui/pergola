@@ -1,7 +1,7 @@
 //! The daemon: owns the tree, reconciles it with the live X11 client list, and
 //! applies geometry through the running desktop's window manager.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -11,15 +11,40 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use pergola_core::{
-    Axis, Camera, CameraAction, Command, Direction, FloatingWindow, IRect, LayoutEngine, LayoutFile,
-    LayoutNode, Rect, SeatRecord,
+    Axis, Camera, CameraAction, Command, Direction, FloatingWindow, GapHandle, IRect, LayoutEngine,
+    LayoutFile, LayoutNode, Rect, SeatRecord,
 };
 use pergola_x11::{binding_plan, command_for_key, describe, KeyBinding, WindowInfo, X11};
 use x11rb::connection::Connection as _;
+use x11rb::protocol::xproto::ConfigureNotifyEvent;
 use x11rb::protocol::Event;
 
 use crate::config::{self, Config};
 use crate::ipc::{Request, Response};
+
+/// A pointer drag in progress on a split boundary.
+struct GapDrag {
+    first: String,
+    second: String,
+    axis: Axis,
+    /// Split length along `axis` in screen pixels: divide the pointer delta by
+    /// it to get a weight delta.
+    extent: f64,
+    /// Pointer position at ButtonPress, in root coordinates.
+    start: (i32, i32),
+    /// Tree when the drag began. Every motion re-derives from this snapshot, so
+    /// a drag can never accumulate rounding drift.
+    snapshot: LayoutNode,
+}
+
+/// A window that may have been dragged by the user, watched for the moment it
+/// stops moving (edge docking: drop a window on a screen edge to tile it).
+struct MoveWatch {
+    /// Consecutive configure events that actually changed the geometry.
+    moves: u32,
+    at: Instant,
+    rect: Rect,
+}
 
 pub struct Daemon {
     x: X11,
@@ -45,6 +70,17 @@ pub struct Daemon {
     last_zoomed: bool,
     running: bool,
     layout_path: PathBuf,
+    /// Split boundaries exposed to the pointer, as (grab window, handle).
+    gap_bands: Vec<(u32, GapHandle)>,
+    /// The gap drag in progress, if any.
+    drag: Option<GapDrag>,
+    /// The frame rectangle we last asked the WM to produce, per window. A
+    /// configure that differs from this is the user moving the window, not us.
+    applied: HashMap<u32, IRect>,
+    /// Windows whose configure stream is being watched for a drop on an edge.
+    moves: HashMap<u32, MoveWatch>,
+    /// When our own apply last ran; edge detection ignores its event wake.
+    last_apply: Instant,
 }
 
 impl Daemon {
@@ -88,6 +124,11 @@ impl Daemon {
             last_zoomed: false,
             running: true,
             layout_path,
+            gap_bands: Vec::new(),
+            drag: None,
+            applied: HashMap::new(),
+            moves: HashMap::new(),
+            last_apply: Instant::now(),
         };
         daemon.reconcile()?;
         daemon.normalize_camera();
@@ -111,6 +152,8 @@ impl Daemon {
             .collect();
         let mut changed = !gone.is_empty();
         for seat in gone {
+            self.applied.remove(&seat.window);
+            self.moves.remove(&seat.window);
             self.seats.retain(|s| s.seat != seat.seat);
             if self.file.doc.root.node(&seat.panel).is_some() {
                 if let Ok(tree) = self.engine.removing(&seat.panel, &self.file.doc.root) {
@@ -151,6 +194,11 @@ impl Daemon {
             } else {
                 self.push_floating(w, panel, seat);
             }
+        }
+        // Watch every managed window for the WM's synthetic ConfigureNotify:
+        // that is the only way to see a drag the daemon did not initiate.
+        for seat in &self.seats {
+            let _ = self.x.watch_window(seat.window);
         }
         Ok(changed)
     }
@@ -218,6 +266,7 @@ impl Daemon {
             for view in &panel.views {
                 if let Some(seat) = self.seats.iter().find(|s| &s.seat == view) {
                     let _ = self.x.move_resize(seat.window, target);
+                    self.applied.insert(seat.window, target);
                 }
             }
             if let Some(visible) = panel.visible() {
@@ -256,12 +305,15 @@ impl Daemon {
                     f.rect.h as i32,
                 );
                 let _ = self.x.move_resize(window, target);
+                self.applied.insert(window, target);
             } else if framed.is_some() {
                 let target = tf(into_screen(f.rect, desk, world)).to_irect();
                 let _ = self.x.move_resize(window, target);
+                self.applied.insert(window, target);
             } else if place {
                 let target = into_screen(f.rect, desk, world).to_irect();
                 let _ = self.x.move_resize(window, target);
+                self.applied.insert(window, target);
             } else if let Ok(Some(info)) = self.x.info(window) {
                 // The desktop space did not move, so the window is where the
                 // user put it: learn the new position instead of snapping back.
@@ -304,7 +356,53 @@ impl Daemon {
         } else {
             self.x.overlay_hide()?;
         }
+        // The pointer-facing boundaries follow every layout change — except
+        // mid-drag, where replacing the windows under the pointer would abort
+        // the drag.
+        if self.drag.is_none() {
+            self.refresh_gap_bands()?;
+        }
+        self.last_apply = Instant::now();
         self.x.conn.flush()?;
+        Ok(())
+    }
+
+    /// Rebuild the invisible grab areas for every draggable split boundary, in
+    /// screen coordinates (so they follow the camera).
+    fn refresh_gap_bands(&mut self) -> Result<()> {
+        let screen = self.x.workarea_rect()?;
+        let world = screen.to_rect();
+        let rects = self.engine.rects(&self.file.doc.root, world);
+        let framed = if self.camera.framed != self.file.doc.root.id() {
+            rects
+                .iter()
+                .find(|(id, _)| id == &self.camera.framed)
+                .map(|(_, r)| *r)
+        } else {
+            None
+        };
+        let tf = |r: Rect| transform(r, framed, world);
+        let mut handles = self.engine.gap_handles(&self.file.doc.root, world);
+        let mut bands = Vec::new();
+        for h in &mut handles {
+            let shown = tf(h.band);
+            // The camera transform is non-uniform, so the pixel→weight
+            // denominator must use the axis the boundary moves on.
+            let scale = axis_scale(h.axis, h.band, shown);
+            h.band = shown;
+            h.extent *= scale;
+            bands.push((
+                IRect::new(
+                    shown.x.round() as i32,
+                    shown.y.round() as i32,
+                    shown.w.round().max(1.0) as i32,
+                    shown.h.round().max(1.0) as i32,
+                ),
+                h.axis,
+            ));
+        }
+        let ids = self.x.grab_bands_show(&bands)?;
+        self.gap_bands = ids.into_iter().zip(handles).collect();
         Ok(())
     }
 
@@ -328,6 +426,12 @@ impl Daemon {
     // MARK: commands
 
     pub fn handle(&mut self, argv: &[String]) -> Result<String> {
+        // A command that arrives mid-drag (a hotkey, an IPC client) ends the
+        // pointer gesture: its tree snapshot would otherwise be reinstated by
+        // the next motion event.
+        if self.drag.is_some() {
+            let _ = self.end_gap_drag();
+        }
         let result = self.dispatch(argv);
         if let Some(panel) = self.focused_panel() {
             self.last_focus = Some(panel);
@@ -362,6 +466,10 @@ impl Daemon {
                 Ok("stopping".to_string())
             }
             "split-terminal" => self.split_terminal(),
+            "palette" => {
+                crate::palette::open()?;
+                Ok("palette opened".to_string())
+            }
             "settings" => Ok("settings are in ~/.config/pergola/config.json".to_string()),
             "url" => {
                 let raw = rest.join(" ");
@@ -497,11 +605,24 @@ impl Daemon {
             .and_then(|v| parse_window(&v))
             .or_else(|| self.x.active_window())
             .ok_or_else(|| anyhow!("no active window to dock"))?;
+        let target = flag(args, "--target");
+        self.dock_window(win, edge, target)
+    }
+
+    /// Dock one window against `target` (or the last focused space). Split out
+    /// from [`Self::dock`] so the pointer path — dropping a window on a screen
+    /// edge — docks exactly the same way the CLI does.
+    fn dock_window(
+        &mut self,
+        win: u32,
+        edge: Direction,
+        target: Option<String>,
+    ) -> Result<String> {
         let seat = self
             .seat_for_window(win)
             .ok_or_else(|| anyhow!("window 0x{win:x} is not managed by pergola"))?
             .clone();
-        let mut target = flag(args, "--target")
+        let mut target = target
             .or_else(|| self.focused_panel())
             .unwrap_or_else(|| self.file.doc.root.id().to_string());
         if target == seat.panel {
@@ -549,13 +670,26 @@ impl Daemon {
             .and_then(|v| parse_window(&v))
             .or_else(|| self.x.active_window())
             .ok_or_else(|| anyhow!("no active window to float"))?;
+        self.float_window(win, None)
+    }
+
+    /// Return one window to the desktop layer. `dropped` is the world-space
+    /// rectangle it was let go at (mouse path); without it the window keeps the
+    /// rectangle its tile had, so `pergola float` does not teleport it.
+    fn float_window(&mut self, win: u32, dropped: Option<Rect>) -> Result<String> {
         let seat = self
             .seat_for_window(win)
             .ok_or_else(|| anyhow!("window 0x{win:x} is not managed by pergola"))?
             .clone();
-        let rect = self
-            .engine
-            .rect_of(&self.file.doc.root, self.x.workarea_rect()?.to_rect(), &seat.panel)
+        let rect = dropped
+            .or_else(|| {
+                self.engine
+                    .rect_of(
+                        &self.file.doc.root,
+                        self.x.workarea_rect().ok()?.to_rect(),
+                        &seat.panel,
+                    )
+            })
             .unwrap_or_else(|| Rect::new(80.0, 80.0, 800.0, 500.0));
         if self.file.doc.root.node(&seat.panel).is_some() {
             let tree = self.engine.removing(&seat.panel, &self.file.doc.root)?;
@@ -791,6 +925,9 @@ impl Daemon {
                 last_reconcile = Instant::now();
                 match self.reconcile() {
                     Ok(true) => {
+                        if self.drag.is_some() {
+                            let _ = self.end_gap_drag();
+                        }
                         self.normalize_camera();
                         let _ = self.apply();
                         let _ = self.save();
@@ -806,31 +943,28 @@ impl Daemon {
                 };
                 let _ = writeln!(stream, "{}", serde_json::to_string(&response)?);
             }
+            let _ = self.settle_moves();
+            // One blocking poll for the idle path, then drain whatever else the
+            // server has queued (a window drag produces a burst of configures,
+            // and the pointer drag stream must not fall behind).
             match self.x.next_event(50) {
-                Ok(Some(Event::KeyPress(key))) => {
-                    let state: u16 = key.state.into();
-                    if std::env::var_os("PERGOLA_DEBUG").is_some() {
-                        eprintln!("pergola: KeyPress detail={} state=0x{state:x}", key.detail);
+                Ok(Some(event)) => {
+                    if let Err(e) = self.on_x_event(event) {
+                        eprintln!("pergola: event: {e:#}");
                     }
-                    let mods = state & (4 | 8 | 1); // Control | Mod1 | Shift
-                    let keysym = self
-                        .keymap
-                        .iter()
-                        .find(|(code, _)| *code == key.detail)
-                        .map(|(_, sym)| *sym);
-                    if let Some(keysym) = keysym {
-                        if let Some(command) =
-                            command_for_key(&self.bindings, mods, keysym)
-                        {
-                            let argv: Vec<String> =
-                                command.split_whitespace().map(str::to_string).collect();
-                            if let Err(e) = self.handle(&argv) {
-                                eprintln!("pergola: {command}: {e:#}");
+                    let mut drained = 0;
+                    while drained < 256 {
+                        match self.x.poll_event() {
+                            Ok(Some(event)) => {
+                                if let Err(e) = self.on_x_event(event) {
+                                    eprintln!("pergola: event: {e:#}");
+                                }
+                                drained += 1;
                             }
+                            _ => break,
                         }
                     }
                 }
-                Ok(Some(_)) => {}
                 Ok(None) => {}
                 Err(e) => {
                     eprintln!("pergola: X connection lost: {e}");
@@ -844,6 +978,249 @@ impl Daemon {
         let _ = std::fs::remove_file(&socket);
         Ok(())
     }
+}
+
+// MARK: pointer and window-move events
+
+impl Daemon {
+    fn on_x_event(&mut self, event: Event) -> Result<()> {
+        match event {
+            Event::KeyPress(key) => {
+                let state: u16 = key.state.into();
+                if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                    eprintln!("pergola: KeyPress detail={} state=0x{state:x}", key.detail);
+                }
+                let mods = state & (4 | 8 | 1); // Control | Mod1 | Shift
+                let keysym = self
+                    .keymap
+                    .iter()
+                    .find(|(code, _)| *code == key.detail)
+                    .map(|(_, sym)| *sym);
+                if let Some(keysym) = keysym {
+                    if let Some(command) = command_for_key(&self.bindings, mods, keysym) {
+                        let argv: Vec<String> =
+                            command.split_whitespace().map(str::to_string).collect();
+                        if let Err(e) = self.handle(&argv) {
+                            eprintln!("pergola: {command}: {e:#}");
+                        }
+                    }
+                }
+            }
+            Event::ButtonPress(press) => {
+                // Only the primary button drags a boundary, and a press
+                // anywhere else means we never saw the previous release.
+                if press.detail != 1 || self.band_for_window(press.event).is_none() {
+                    self.end_gap_drag()?;
+                    return Ok(());
+                }
+                // The implicit pointer grab keeps the motion stream on this
+                // same window until the button is released.
+                self.begin_gap_drag(press.event, press.root_x as i32, press.root_y as i32)?;
+            }
+            Event::MotionNotify(motion) => {
+                self.update_gap_drag(motion.root_x as i32, motion.root_y as i32)?;
+            }
+            Event::ButtonRelease(_) => self.end_gap_drag()?,
+            Event::ConfigureNotify(configure) => self.note_configure(&configure)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn band_for_window(&self, window: u32) -> Option<&GapHandle> {
+        self.gap_bands
+            .iter()
+            .find(|(id, _)| *id == window)
+            .map(|(_, handle)| handle)
+    }
+
+    /// Start dragging a split boundary. The tree is snapshotted so that every
+    /// motion is absolute, not incremental.
+    fn begin_gap_drag(&mut self, window: u32, x: i32, y: i32) -> Result<()> {
+        let Some(handle) = self.band_for_window(window) else {
+            return Ok(());
+        };
+        if std::env::var_os("PERGOLA_DEBUG").is_some() {
+            eprintln!(
+                "pergola: gap drag {}|{} axis {:?} extent {:.0}px",
+                handle.first, handle.second, handle.axis, handle.extent
+            );
+        }
+        self.drag = Some(GapDrag {
+            first: handle.first.clone(),
+            second: handle.second.clone(),
+            axis: handle.axis,
+            extent: handle.extent.max(1.0),
+            start: (x, y),
+            snapshot: self.file.doc.root.clone(),
+        });
+        Ok(())
+    }
+
+    /// Move the dragged boundary: the pointer delta becomes a weight delta
+    /// against the split's displayed length.
+    fn update_gap_drag(&mut self, x: i32, y: i32) -> Result<()> {
+        let Some(drag) = &self.drag else {
+            return Ok(());
+        };
+        let delta_px = match drag.axis {
+            Axis::X => (x - drag.start.0) as f64,
+            Axis::Y => (y - drag.start.1) as f64,
+        };
+        let delta = delta_px / drag.extent;
+        let snapshot = drag.snapshot.clone();
+        let (first, second) = (drag.first.clone(), drag.second.clone());
+        match self.engine.resizing_gap(&first, &second, delta, &snapshot) {
+            Ok(tree) => {
+                self.replace_root(tree);
+                self.normalize_camera();
+                self.apply()?;
+            }
+            Err(e) => {
+                // Clamped at the minimum share: the layout is already as far as
+                // it may go, so this is not an error the user needs to see.
+                if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                    eprintln!("pergola: gap drag: {e}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn end_gap_drag(&mut self) -> Result<()> {
+        if self.drag.take().is_none() {
+            return Ok(());
+        }
+        self.save()?;
+        self.refresh_gap_bands()?;
+        Ok(())
+    }
+
+    /// Track a configure event that may be the user dragging a window. Our own
+    /// moves are ignored (they match what we asked for, and echo right after an
+    /// apply); a drag is a burst of changes followed by silence.
+    fn note_configure(&mut self, event: &ConfigureNotifyEvent) -> Result<()> {
+        if event.override_redirect || self.drag.is_some() {
+            return Ok(());
+        }
+        if self.last_apply.elapsed() < Duration::from_millis(250) {
+            return Ok(());
+        }
+        if self.seat_for_window(event.window).is_none() {
+            return Ok(());
+        }
+        // The WM reports client coordinates; edge snapping is about the frame
+        // the user sees, so add the decorations back.
+        let (l, r, t, b) = self.x.frame_extents(event.window);
+        let rect = Rect::new(
+            (i32::from(event.x) - l) as f64,
+            (i32::from(event.y) - t) as f64,
+            (i32::from(event.width) + l + r) as f64,
+            (i32::from(event.height) + t + b) as f64,
+        );
+        if let Some(applied) = self.applied.get(&event.window) {
+            if same_rect(applied.to_rect(), rect) {
+                return Ok(());
+            }
+        }
+        let watch = self.moves.entry(event.window).or_insert(MoveWatch {
+            moves: 0,
+            at: Instant::now(),
+            rect,
+        });
+        if !same_rect(watch.rect, rect) {
+            watch.moves += 1;
+            watch.rect = rect;
+            watch.at = Instant::now();
+        }
+        Ok(())
+    }
+
+    /// A window that stopped moving after a real drag and sits against a screen
+    /// edge is docked to that edge. This is the mouse path for tiling: drag a
+    /// window to the left, right, top or bottom of the work area and let go.
+    fn settle_moves(&mut self) -> Result<()> {
+        if !self.config.edge_dock {
+            self.moves.clear();
+            return Ok(());
+        }
+        if self.drag.is_some() {
+            return Ok(());
+        }
+        let now = Instant::now();
+        let mut ready = Vec::new();
+        for (window, watch) in &self.moves {
+            if watch.moves >= 3 && now.duration_since(watch.at) >= Duration::from_millis(300) {
+                ready.push((*window, watch.rect));
+            }
+        }
+        if ready.is_empty() {
+            return Ok(());
+        }
+        let screen = self.x.workarea_rect()?.to_rect();
+        let world = screen;
+        let desk = self
+            .engine
+            .rect_of(&self.file.doc.root, world, "desktop")
+            .unwrap_or(world);
+        // The drop rectangle is in screen space; a zoomed view must be undone
+        // before it can be stored as a world position.
+        let rects = self.engine.rects(&self.file.doc.root, world);
+        let framed = if self.camera.framed != self.file.doc.root.id() {
+            rects
+                .iter()
+                .find(|(id, _)| id == &self.camera.framed)
+                .map(|(_, r)| *r)
+        } else {
+            None
+        };
+        for (window, rect) in ready {
+            self.moves.remove(&window);
+            let Some(seat) = self.seat_for_window(window).cloned() else {
+                continue;
+            };
+            if self.file.doc.root.node(&seat.panel).is_some() {
+                // A tile pulled off the tree: float it where it was dropped.
+                if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                    eprintln!("pergola: drag out 0x{window:x} -> floating");
+                }
+                let dropped = into_world(untransform(rect, framed, world), Some(desk), world);
+                if let Err(e) = self.float_window(window, Some(dropped)) {
+                    eprintln!("pergola: drag out: {e:#}");
+                }
+                continue;
+            }
+            let Some(edge) = snap_edge(rect, screen, EDGE_SNAP_PX) else {
+                continue;
+            };
+            if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                eprintln!("pergola: edge drop 0x{window:x} -> {edge:?}");
+            }
+            if let Err(e) = self.dock_window(window, edge, None) {
+                eprintln!("pergola: edge dock: {e:#}");
+            }
+        }
+        Ok(())
+    }
+}
+
+/// How close to a screen edge a dragged window must be dropped to tile.
+const EDGE_SNAP_PX: f64 = 14.0;
+
+/// The screen edge a rectangle is sitting against, if any. Corners go to the
+/// nearer edge; a window in the middle returns `None`.
+fn snap_edge(rect: Rect, screen: Rect, slack: f64) -> Option<Direction> {
+    let candidates = [
+        (rect.x - screen.x, Direction::Left),
+        (screen.max_x() - rect.max_x(), Direction::Right),
+        (rect.y - screen.y, Direction::Up),
+        (screen.max_y() - rect.max_y(), Direction::Down),
+    ];
+    candidates
+        .into_iter()
+        .filter(|(distance, _)| *distance <= slack)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, direction)| direction)
 }
 
 fn parse_command(name: &str, rest: &[String]) -> Result<Command> {
@@ -908,6 +1285,32 @@ fn transform(rect: Rect, framed: Option<Rect>, screen: Rect) -> Rect {
         screen.y + (rect.y - f.y) * sy,
         rect.w * sx,
         rect.h * sy,
+    )
+}
+
+/// How many screen pixels one world pixel became, along the axis a boundary
+/// moves on. The camera transform is non-uniform, so X and Y differ.
+fn axis_scale(axis: Axis, world: Rect, shown: Rect) -> f64 {
+    match axis {
+        Axis::X if world.w > 0.0 => shown.w / world.w,
+        Axis::Y if world.h > 0.0 => shown.h / world.h,
+        _ => 1.0,
+    }
+}
+
+/// The inverse of [`transform`]: a screen rectangle back into world space.
+fn untransform(rect: Rect, framed: Option<Rect>, screen: Rect) -> Rect {
+    let Some(f) = framed else { return rect };
+    if f.w <= 0.0 || f.h <= 0.0 || screen.w <= 0.0 || screen.h <= 0.0 {
+        return rect;
+    }
+    let sx = screen.w / f.w;
+    let sy = screen.h / f.h;
+    Rect::new(
+        f.x + (rect.x - screen.x) / sx,
+        f.y + (rect.y - screen.y) / sy,
+        rect.w / sx,
+        rect.h / sy,
     )
 }
 
@@ -1089,6 +1492,57 @@ fn build_keymap(x: &X11) -> Result<Vec<(u8, u32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_zoomed_boundary_uses_its_own_axis_scale() {
+        // A split 1600x400 on a 1600x800 screen: x is 1:1, y doubles.
+        let world = Rect::new(800.0, 0.0, 6.0, 400.0);
+        let shown = Rect::new(800.0, 0.0, 6.0, 800.0);
+        assert!((axis_scale(Axis::X, world, shown) - 1.0).abs() < 1e-9);
+        assert!((axis_scale(Axis::Y, world, shown) - 2.0).abs() < 1e-9);
+        // Degenerate bands fall back to 1 instead of dividing by zero.
+        assert_eq!(axis_scale(Axis::X, Rect::new(0.0, 0.0, 0.0, 0.0), shown), 1.0);
+    }
+
+    #[test]
+    fn untransform_undoes_the_camera() {
+        let screen = Rect::new(0.0, 27.0, 1600.0, 873.0);
+        let framed = Rect::new(400.0, 200.0, 800.0, 400.0);
+        for rect in [
+            Rect::new(400.0, 200.0, 800.0, 400.0),
+            Rect::new(10.0, 900.0, 120.0, 60.0),
+        ] {
+            let shown = transform(rect, Some(framed), screen);
+            let back = untransform(shown, Some(framed), screen);
+            assert!((back.x - rect.x).abs() < 1e-6, "x {:?}", back);
+            assert!((back.y - rect.y).abs() < 1e-6, "y {:?}", back);
+            assert!((back.w - rect.w).abs() < 1e-6, "w {:?}", back);
+            assert!((back.h - rect.h).abs() < 1e-6, "h {:?}", back);
+        }
+    }
+
+    #[test]
+    fn a_drop_near_an_edge_snaps_to_it() {
+        let screen = Rect::new(0.0, 27.0, 1600.0, 873.0);
+        let left = Rect::new(2.0, 300.0, 400.0, 300.0);
+        let right = Rect::new(1198.0, 300.0, 400.0, 300.0);
+        let top = Rect::new(500.0, 29.0, 400.0, 300.0);
+        let bottom = Rect::new(500.0, 596.0, 400.0, 300.0);
+        let middle = Rect::new(600.0, 300.0, 400.0, 300.0);
+        assert_eq!(snap_edge(left, screen, EDGE_SNAP_PX), Some(Direction::Left));
+        assert_eq!(snap_edge(right, screen, EDGE_SNAP_PX), Some(Direction::Right));
+        assert_eq!(snap_edge(top, screen, EDGE_SNAP_PX), Some(Direction::Up));
+        assert_eq!(snap_edge(bottom, screen, EDGE_SNAP_PX), Some(Direction::Down));
+        assert_eq!(snap_edge(middle, screen, EDGE_SNAP_PX), None);
+    }
+
+    #[test]
+    fn a_corner_drop_picks_the_nearer_edge() {
+        let screen = Rect::new(0.0, 0.0, 1000.0, 800.0);
+        // 3 px from the top, 9 px from the left: the top wins.
+        let rect = Rect::new(9.0, 3.0, 200.0, 200.0);
+        assert_eq!(snap_edge(rect, screen, EDGE_SNAP_PX), Some(Direction::Up));
+    }
 
     #[test]
     fn transform_is_identity_without_a_frame() {

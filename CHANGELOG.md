@@ -3,6 +3,48 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.3.0-dev] — 2026-11-14
+
+### Added
+
+* **Tiling without a terminal.** `Ctrl+Alt+Shift+←/→/↑/↓` docks the focused window
+  left/right/above/below, `Ctrl+Alt+Shift+W` floats it, and `Ctrl+Alt+M` opens an
+  action palette (`pergola palette`) that lists the same actions by human name
+  through `rofi`, `zenity`, `yad` or `dmenu`. Two focused windows and two chords
+  are a side-by-side tiling, with no shell involved.
+* **Mouse tiling.** Every split gap is an invisible input-only grab strip with the
+  matching resize cursor: drag it to move the boundary (clamped by
+  `minimum_share`, exact under the camera transform). Dragging a floating window
+  to a work-area edge docks it there (14 px slack), and dragging a docked tile
+  away from the edge floats it where it was dropped. The edge behaviour is the
+  `edge_dock` config key, default `true`.
+* `LayoutEngine::gap_handles()` — the pointer-facing geometry of the tree: one
+  band and one weight denominator per draggable boundary. Pure and unit-tested,
+  so the daemon never re-derives layout math for the mouse.
+* `scripts/e2e.sh` now covers keyboard docking, a real pointer drag on the gap
+  and an edge drop followed by a drag-out (82 assertions).
+
+### Changed
+
+* `neighbour up` / `neighbour down` are no longer default chords: the
+  `Ctrl+Alt+Shift+arrows` they used are the dock chords now. The command and its
+  URL still work (`pergola neighbour up`).
+
+### Fixed
+
+* A docked window that the user drags is no longer left with the tree and the
+  screen disagreeing: the pointer path floats it at the drop position, which is
+  the inverse of drag-to-tile.
+
+### Documentation
+
+* `docs/UX-NOTES.md` records the human-interface pain points found while building
+  this release, each with a severity and a proposed fix, so the next round starts
+  from evidence instead of guesses.
+* README, `docs/SETUP.md` and `docs/DESIGN.md` describe the keyboard/mouse/palette
+  paths, the new config key and the pointer architecture; test counts are the
+  measured values (59 unit, 82 e2e).
+
 ## [0.2.1-dev] — 2026-11-14
 
 ### Fixed

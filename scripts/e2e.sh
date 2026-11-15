@@ -237,14 +237,44 @@ check_eq "$ROOT" "$FRAMED" "Ctrl+Alt+Space frames everything"
 P overlay off >/dev/null
 
 say
-say "8. config validation and error paths"
+say "8. keyboard and mouse tiling"
+P float-all >/dev/null; sleep 0.4
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
+xdotool key ctrl+alt+shift+Left; sleep 0.5
+check_eq "1" "$(P list | grep -c '^docked')" "Ctrl+Alt+Shift+Left docks the focused window"
+xdotool windowactivate "$W2" >/dev/null 2>&1; sleep 0.4
+xdotool key ctrl+alt+shift+Right; sleep 0.5
+check_eq "2" "$(P list | grep -c '^docked')" "Ctrl+Alt+Shift+Right docks beside it"
+read -r GX GW1 GW2 <<<"$(P rects | awk 'NR==1 {x=$2; w=$4} NR==2 {print x+w+($2-(x+w))/2, w, $4; exit}')"
+[ -n "${GX:-}" ] || fail "no draggable gap between the two tiles"
+check_near "$GW1" "$GW2" 2 "the two tiles split evenly before the drag"
+xdotool mousemove "$GX" 400; sleep 0.2
+xdotool mousedown 1; sleep 0.1
+for x in $((GX+30)) $((GX+70)) $((GX+120)); do xdotool mousemove "$x" 400; sleep 0.05; done
+xdotool mouseup 1; sleep 0.5
+NEW_W1=$(P rects | awk 'NR==1 {print $4}')
+if [ "$NEW_W1" -gt $((GW1+80)) ]; then ok "dragging the gap resizes the split ($GW1 -> $NEW_W1)"; else bad "gap drag did not resize ($GW1 -> $NEW_W1)"; fi
+
+# Mouse tiling: drop a floating window on the left screen edge.
+P float --window "$W3" >/dev/null 2>&1; sleep 0.4
+for x in 140 70 0; do wmctrl -i -r "$W3" -e "0,$x,220,320,240" >/dev/null 2>&1; sleep 0.12; done
+sleep 1.2
+if P list | grep -q "^docked.*$W3"; then ok "a window dropped on the left edge is docked"; else bad "edge drop did not dock $W3"; fi
+# Pulling that tile back off the screen edge floats it where it was dropped.
+for x in 320 400 480; do wmctrl -i -r "$W3" -e "0,$x,220,320,240" >/dev/null 2>&1; sleep 0.15; done
+sleep 1.2
+if P list | grep -q "^floating.*$W3"; then ok "a docked tile dragged away floats again"; else bad "drag-out did not float $W3"; fi
+P arrange >/dev/null; sleep 0.4
+
+say
+say "9. config validation and error paths"
 if "$BIN" --socket "$SOCK" dock sideways >/dev/null 2>&1; then bad "a bad edge is rejected"; else ok "a bad edge is rejected"; fi
 if "$BIN" --socket "$SOCK" view 0 >/dev/null 2>&1; then bad "a bad view slot is rejected"; else ok "a bad view slot is rejected"; fi
 if "$BIN" sim --json | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null; then ok "sim --json is valid JSON"; else bad "sim --json is not valid JSON"; fi
 if P tree | python3 -c 'import json,sys; d=json.load(sys.stdin); d["doc"]["root"]["kind"]' >/dev/null; then ok "tree is valid JSON"; else bad "tree is not valid JSON"; fi
 
 say
-say "9. screenshot"
+say "10. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

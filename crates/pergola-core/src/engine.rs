@@ -27,6 +27,20 @@ impl Default for LayoutEngine {
     }
 }
 
+/// A split boundary the pointer can drag: the gap rectangle plus what a pixel
+/// delta means in weight units.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GapHandle {
+    pub split: String,
+    pub first: String,
+    pub second: String,
+    pub axis: Axis,
+    /// Hit area covering the whole gap between the two children.
+    pub band: Rect,
+    /// Length of the split along `axis` — divide a pixel delta by this.
+    pub extent: f64,
+}
+
 impl LayoutEngine {
     pub fn new(gap: f64, minimum_share: f64) -> Self {
         Self {
@@ -49,6 +63,79 @@ impl LayoutEngine {
     pub fn rects(&self, root: &LayoutNode, frame: Rect) -> Vec<(String, Rect)> {
         let mut out = Vec::new();
         self.place(root, frame, &mut out);
+        out
+    }
+
+    /// The draggable boundaries of the tree: one [`GapHandle`] per gap between
+    /// two adjacent siblings that both have space.
+    ///
+    /// This is the pointer-facing view of a layout, so the daemon does not have
+    /// to re-derive geometry for the mouse: a handle is a hit rectangle in the
+    /// same coordinates as [`Self::rects`], plus the denominator a pixel delta
+    /// is divided by to become a weight delta.
+    pub fn gap_handles(&self, root: &LayoutNode, frame: Rect) -> Vec<GapHandle> {
+        let rects = self.rects(root, frame);
+        let find = |id: &str| {
+            rects
+                .iter()
+                .find(|(nid, _)| nid == id)
+                .map(|(_, r)| *r)
+        };
+        let mut out = Vec::new();
+        for node in root.flatten() {
+            let LayoutNode::Split(split) = node else {
+                continue;
+            };
+            let Some(parent) = find(&split.id) else {
+                continue;
+            };
+            for i in 0..split.children.len().saturating_sub(1) {
+                let first = &split.children[i];
+                let second = &split.children[i + 1];
+                // A zero-weight child is collapsed and has no gap to drag.
+                let wa = split.weights.get(i).copied().unwrap_or(0.0);
+                let wb = split.weights.get(i + 1).copied().unwrap_or(0.0);
+                if wa <= 0.0 || wb <= 0.0 {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (find(first.id()), find(second.id())) else {
+                    continue;
+                };
+                let (band, extent) = match split.axis {
+                    Axis::X => (
+                        Rect::new(
+                            a.max_x(),
+                            parent.y,
+                            (b.x - a.max_x()).max(0.0),
+                            parent.h,
+                        ),
+                        parent.w,
+                    ),
+                    Axis::Y => (
+                        Rect::new(
+                            parent.x,
+                            a.max_y(),
+                            parent.w,
+                            (b.y - a.max_y()).max(0.0),
+                        ),
+                        parent.h,
+                    ),
+                };
+                // With gap 0 there is no band to hit; the user can still resize
+                // by setting a gap first.
+                if band.w < 1.0 || band.h < 1.0 {
+                    continue;
+                }
+                out.push(GapHandle {
+                    split: split.id.clone(),
+                    first: first.id().to_string(),
+                    second: second.id().to_string(),
+                    axis: split.axis,
+                    band,
+                    extent,
+                });
+            }
+        }
         out
     }
 
@@ -566,6 +653,58 @@ mod tests {
         assert!((b.x - 257.5).abs() < 1e-9);
         assert!((b.w - 742.5).abs() < 1e-9);
         assert_eq!(a.h, 600.0);
+    }
+
+    #[test]
+    fn gap_handles_describe_each_draggable_boundary() {
+        let e = LayoutEngine::new(10.0, 0.05);
+        let tree = LayoutNode::split("root", Axis::X, vec![panel("a"), panel("b")]);
+        let handles = e.gap_handles(&tree, frame());
+        assert_eq!(handles.len(), 1);
+        let h = &handles[0];
+        assert_eq!(h.split, "root");
+        assert_eq!((h.first.as_str(), h.second.as_str()), ("p-a", "p-b"));
+        assert_eq!(h.axis, Axis::X);
+        assert_eq!(h.extent, 1000.0);
+        // 1000 px split, 10 px gap: two 495 px tiles, the band is the gap.
+        assert_eq!(h.band, Rect::new(495.0, 0.0, 10.0, 600.0));
+    }
+
+    #[test]
+    fn gap_handles_skip_collapsed_children() {
+        let e = LayoutEngine::new(6.0, 0.05);
+        let tree = LayoutNode::Split(Split::with_weights(
+            "root",
+            Axis::X,
+            vec![panel("a"), panel("b"), LayoutNode::desktop()],
+            vec![0.5, 0.5, 0.0],
+        ));
+        let handles = e.gap_handles(&tree, frame());
+        // a|b is draggable; b|desktop has no space on the desktop side.
+        assert_eq!(handles.len(), 1);
+        assert_eq!(handles[0].second, "p-b");
+    }
+
+    #[test]
+    fn gap_handles_cover_nested_splits_and_both_axes() {
+        let e = LayoutEngine::new(6.0, 0.05);
+        let inner = LayoutNode::split("inner", Axis::Y, vec![panel("b"), panel("c")]);
+        let tree = LayoutNode::split("root", Axis::X, vec![panel("a"), inner]);
+        let handles = e.gap_handles(&tree, frame());
+        assert_eq!(handles.len(), 2);
+        let root = handles.iter().find(|h| h.split == "root").unwrap();
+        let nested = handles.iter().find(|h| h.split == "inner").unwrap();
+        assert_eq!(root.axis, Axis::X);
+        assert_eq!(nested.axis, Axis::Y);
+        // The nested handle spans the inner split's width and sits in its gap.
+        assert!((nested.band.w - (1000.0 - 6.0) / 2.0).abs() < 1e-9);
+        assert!(nested.band.h >= 6.0 - 1e-9);
+    }
+
+    #[test]
+    fn a_single_panel_has_no_gap_to_drag() {
+        let e = LayoutEngine::default();
+        assert!(e.gap_handles(&panel("a"), frame()).is_empty());
     }
 
     #[test]

@@ -6,6 +6,7 @@
 mod config;
 mod daemon;
 mod ipc;
+mod palette;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -44,6 +45,8 @@ fn main() -> ExitCode {
     let result: Result<()> = match command.as_str() {
         "daemon" => run_daemon(&socket),
         "doctor" => doctor(),
+        "palette" => palette::open().map(|()| println!("palette opened — pick an action")),
+        "palette-run" => palette::run(),
         "sim" => sim(&rest[1..]),
         "keys" => keys(&socket, &rest[1..]),
         "version" | "--version" | "-V" => {
@@ -197,6 +200,7 @@ LAYOUT
 
 INSPECTION
   status | tree | list | keys | doctor | sim [--json]
+  palette                        human menu of tile actions (rofi/zenity/dmenu)
   overlay [on|off|toggle]
   reload | save | stop
 
