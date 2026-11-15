@@ -15,6 +15,10 @@ All notable changes to Pergola. Format follows the versioning rules in
   desktop leaves no black strip at the screen edge.
 * `pergola-health` tolerates a client's own resize increments (terminals snap to a character grid)
   instead of reporting them as drift.
+* Rectangles round their **edges**, not their sizes, so a row of tiles can no longer overflow its
+  frame by one pixel (873 px split in two gave 434+6+434 = 874).
+* `pergola-health` now asserts every tile is inside `_NET_WORKAREA` — the executable guard for the
+  "tiled over the panel" class.
 
 ### Changed
 

@@ -34,12 +34,20 @@ impl Rect {
     }
 
     /// Round to whole pixels, never smaller than 1x1.
+    ///
+    /// Edges are rounded, not sizes: two adjacent tiles then share an exact
+    /// boundary and a row of tiles can never overflow its frame by a pixel
+    /// (rounding each width independently does exactly that).
     pub fn to_irect(self) -> IRect {
+        let x0 = self.x.round() as i32;
+        let y0 = self.y.round() as i32;
+        let x1 = (self.x + self.w).round() as i32;
+        let y1 = (self.y + self.h).round() as i32;
         IRect {
-            x: self.x.round() as i32,
-            y: self.y.round() as i32,
-            w: (self.w.round() as i32).max(1),
-            h: (self.h.round() as i32).max(1),
+            x: x0,
+            y: y0,
+            w: (x1 - x0).max(1),
+            h: (y1 - y0).max(1),
         }
     }
 }
@@ -124,6 +132,17 @@ impl Direction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rounding_edges_never_overflows_the_frame() {
+        // 873 px tall work area, two rows and a 6 px gap: 433.5 each. Rounding
+        // each height independently gives 434+434+6 = 874, one pixel too many.
+        let top = Rect::new(0.0, 27.0, 1600.0, 433.5).to_irect();
+        let bottom = Rect::new(0.0, 27.0 + 433.5 + 6.0, 1600.0, 433.5).to_irect();
+        assert_eq!(top.y, 27);
+        assert_eq!(bottom.y + bottom.h, 900);
+        assert_eq!(top.y + top.h + 6, bottom.y);
+    }
 
     #[test]
     fn rounding_never_produces_empty_rects() {

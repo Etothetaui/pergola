@@ -130,6 +130,33 @@ else
   fail "layout invariants: ${INVARIANTS:-checker failed (rc=$INV_RC)}"
 fi
 
+# 3b. tiles stay inside the work area ---------------------------------------
+# The class this guards: laying out in the whole display instead of
+# _NET_WORKAREA, which puts every title bar under a top panel.
+if command -v xprop >/dev/null; then
+  DESKTOP=$(xprop -root _NET_CURRENT_DESKTOP 2>/dev/null | sed -n 's/.*= \([0-9]*\).*/\1/p')
+  WA=$(xprop -root _NET_WORKAREA 2>/dev/null | sed -n 's/.*= //p' | tr ',' '\n' | tr -d ' ' | sed -n "$(( ${DESKTOP:-0} * 4 + 1 )),$(( ${DESKTOP:-0} * 4 + 4 ))p" | tr '\n' ' ')
+  read -r wx wy ww wh <<<"${WA:-0 0 0 0}"
+  if [ "${ww:-0}" -gt 0 ] && [ "${wh:-0}" -gt 0 ]; then
+    OUTSIDE=""
+    while read -r id x y w h; do
+      [ -z "${id:-}" ] && continue
+      if [ "$x" -lt "$wx" ] || [ "$y" -lt "$wy" ] \
+         || [ $((x+w)) -gt $((wx+ww)) ] || [ $((y+h)) -gt $((wy+wh)) ]; then
+        OUTSIDE="$OUTSIDE $id($x,$y ${w}x$h)"
+      fi
+    done < <("$BIN" rects 2>/dev/null)
+    if [ -z "$OUTSIDE" ]; then
+      pass "tiles inside the work area"
+      note "  ok   tiles inside the work area (${wx},${wy} ${ww}x${wh})"
+    else
+      fail "tiles outside the work area (${wx},${wy} ${ww}x${wh}):$OUTSIDE"
+    fi
+  else
+    note "  --   work-area check skipped (no _NET_WORKAREA)"
+  fi
+fi
+
 # 4. geometry drift ----------------------------------------------------------
 DRIFT=""
 DRIFT_COUNT=0
