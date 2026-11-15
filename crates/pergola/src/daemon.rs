@@ -83,6 +83,10 @@ pub struct Daemon {
     moves: HashMap<u32, MoveWatch>,
     /// When our own apply last ran; edge detection ignores its event wake.
     last_apply: Instant,
+    /// The last `KeyRelease` seen: keycode and server timestamp. The server
+    /// auto-repeats a held key by sending a `KeyRelease` and a `KeyPress` with
+    /// the *same* timestamp, so that pair is a repeat and the press is dropped.
+    last_release: Option<(u8, u32)>,
 }
 
 impl Daemon {
@@ -131,6 +135,7 @@ impl Daemon {
             applied: HashMap::new(),
             moves: HashMap::new(),
             last_apply: Instant::now(),
+            last_release: None,
         };
         daemon.reconcile()?;
         daemon.normalize_camera();
@@ -1036,12 +1041,31 @@ impl Daemon {
             Event::KeyPress(key) => {
                 let state: u16 = key.state.into();
                 if std::env::var_os("PERGOLA_DEBUG").is_some() {
-                    eprintln!("pergola: KeyPress detail={} state=0x{state:x}", key.detail);
+                    eprintln!(
+                        "pergola: KeyPress detail={} state=0x{state:x} time={} last_release={:?}",
+                        key.detail, key.time, self.last_release
+                    );
                 }
                 // Mask to the modifiers a binding can name: Caps Lock and
                 // Num Lock are keyboard state, not chords. Matching the raw
                 // state is the classic "shortcuts die with numlock on" bug.
                 let mods = event_mods(state);
+                // A held key auto-repeats: the server sends the same keycode
+                // again and again, so a bound chord would fire ~11 times a
+                // second (measured on xfwm4+Xvfb: 11 presses in a 1 s hold).
+                // Every command here is a discrete action — "back" held for a
+                // second would race through eleven history entries — so the
+                // first press acts and its repeats are swallowed.
+                //
+                // A repeat is exactly "a KeyPress whose timestamp equals the
+                // preceding KeyRelease's" — the server sends the pair with one
+                // timestamp. A deliberate second press always follows a release
+                // with a later timestamp, so it fires. The latch is consumed so
+                // a stale pair cannot swallow a later press.
+                if is_auto_repeat(self.last_release, key.detail, key.time) {
+                    self.last_release = None;
+                    return Ok(());
+                }
                 let keysym = self
                     .keymap
                     .iter()
@@ -1056,6 +1080,25 @@ impl Daemon {
                         }
                     }
                 }
+            }
+            Event::KeyRelease(release) => {
+                // Remember when and which key came up. The next KeyPress with
+                // the same keycode *and* the same timestamp is the server
+                // repeating, not a new press; a real press carries a later
+                // timestamp. Modifier state is deliberately not compared: the
+                // server sends the release of a grabbed key after the modifiers
+                // have gone up when the user lets go of them first (measured
+                // under xfwm4: `Ctrl+Alt+Shift+Left` arrives as shift-up
+                // state=0xd, ctrl-up 0xc, alt-up 0x8, then Left-up state=0x0).
+                if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                    eprintln!(
+                        "pergola: KeyRelease detail={} state=0x{:x} time={}",
+                        release.detail,
+                        u16::from(release.state),
+                        release.time
+                    );
+                }
+                self.last_release = Some((release.detail, release.time));
             }
             Event::ButtonPress(press) => {
                 // Only the primary button drags a boundary, and a press
@@ -1588,6 +1631,19 @@ fn into_world(rect: Rect, desk: Option<Rect>, world: Rect) -> Rect {
     )
 }
 
+/// Is this KeyPress the server repeating a held key?
+///
+/// The server auto-repeats a held key: on this host 11 presses arrive in a
+/// one-second hold. Every command here is a discrete action, so the first press
+/// acts and its repeats are dropped. The server marks a repeat exactly: it
+/// sends a `KeyRelease` and a `KeyPress` carrying the *same* timestamp. So a
+/// press is a repeat when the immediately preceding release has the same
+/// keycode and the same timestamp. A deliberate press always follows a release
+/// with a later timestamp and therefore fires; so does a different key.
+pub fn is_auto_repeat(last_release: Option<(u8, u32)>, code: u8, time: u32) -> bool {
+    last_release == Some((code, time))
+}
+
 fn build_keymap(x: &X11) -> Result<Vec<(u8, u32)>> {
     use x11rb::protocol::xproto::ConnectionExt as _;
     let min = x.conn.setup().min_keycode;
@@ -1607,6 +1663,20 @@ fn build_keymap(x: &X11) -> Result<Vec<(u8, u32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_held_key_is_one_press_not_eleven() {
+        // The server repeats a held key ~11 times a second, each repeat as a
+        // KeyRelease+KeyPress pair sharing one timestamp. A press whose
+        // timestamp equals the preceding release's is that repeat.
+        assert!(is_auto_repeat(Some((113, 92756959)), 113, 92756959));
+        // The real press arrives with no preceding release, so it fires.
+        assert!(!is_auto_repeat(None, 113, 92756919));
+        // A deliberate second press follows a release with a later timestamp.
+        assert!(!is_auto_repeat(Some((113, 92756959)), 113, 92757020));
+        // A different key is never a repeat, even at the same timestamp.
+        assert!(!is_auto_repeat(Some((113, 92756959)), 114, 92756959));
+    }
 
     #[test]
     fn a_zoomed_boundary_uses_its_own_axis_scale() {

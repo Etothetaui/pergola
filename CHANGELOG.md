@@ -7,6 +7,14 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Fixed
 
+* **A held chord fires once, not eleven times.** The X server auto-repeats a
+  held key (~11 presses a second); `back` held for a second would walk eleven
+  history entries. Repeat detection is exact, not a time window: the server
+  sends a `KeyRelease` and a `KeyPress` with the *same* timestamp for every
+  repeat, so a press matching the preceding release's keycode and timestamp is
+  dropped (`awesome#230`). Verified end-to-end by holding `back` for 1.2 s and
+  asserting one step (`scripts/e2e.sh`, `PERGOLA_E2E_KEEP=1` keeps the sandbox
+  for debugging).
 * **A `Super+…` chord no longer dies when Num Lock is on.** The key-event path
   compared the raw modifier state against a mask of `Shift|Control|Mod1`, so a
   grab registered for `Mod4` never matched an event carrying `Mod4|Mod2`. It now
@@ -39,24 +47,25 @@ All notable changes to Pergola. Format follows the versioning rules in
   `_NET_CLIENT_LIST` rather than from the mapped state, so minimising a window no
   longer collapses its tile; `pergola list` reports the seat as `hidden`
   (`i3#718`, `awesome#92`).
-* **A title change is visible immediately.** `watch_window()` subscribes to
-  `STRUCTURE_NOTIFY | PROPERTY_CHANGE` and `PropertyNotify` refreshes title and
-  class instead of waiting for the next geometry pass (`herbstluftwm#35`).
-* **`scripts/e2e.sh` geometry assertions are increment-aware.** The suite
-  compared tile origin and size with a fixed ±2 tolerance, so snapping to a
-  terminal's character grid reported six false failures. It now compares the four
-  edges against the client's own `WM_NORMAL_HINTS` increment, the same rule
-  `scripts/health.sh` already used.
+* **A window title or class change redraws immediately.** `reconcile()` now
+  subscribes to `PROPERTY_CHANGE` and refreshes the title/class on
+  `PropertyNotify`, so a browser tab switch or a terminal `cd` does not leave a
+  stale label (`herbstluftwm#35`).
 
-### Documentation
+### Changed
 
-* `docs/HISTORY-LESSONS.md` — 700 issues filed against i3, awesomewm, bspwm,
-  xmonad, herbstluftwm, qtile and spectrwm (2009–2019), classified into 25
-  failure classes and mapped to the fix that answers each, with the classes
-  Pergola does **not** handle named explicitly.
-* `docs/research/issue-digest.md` and `docs/research/issue-classes.txt` — the raw
-  harvest; `scripts/research-issues.py` regenerates it from the GitHub REST API.
-* Test counts are the measured values (63 unit, 42 e2e).
+* `scripts/e2e.sh` compares tile edges against the client's own resize increment
+  rather than a fixed ±2 px, matching `scripts/health.sh`, so a snapped terminal
+  is not reported as drift. `PERGOLA_E2E_KEEP=1` keeps the sandbox for debugging.
+
+### Added
+
+* `docs/HISTORY-LESSONS.md` — 700 issues from i3, awesomewm, bspwm, xmonad,
+  herbstluftwm, qtile and spectrwm, classified into failure classes and mapped to
+  the fix or the honest gap. `scripts/research-issues.py` regenerates the harvest
+  from the GitHub REST API; `docs/research/` holds the digest and class listing.
+* 22 unit tests (was 21) covering the repeat guard, plus one e2e assertion that a
+  held chord acts once. Test counts are the measured values (64 unit, 43 e2e).
 
 ## [0.3.1-dev] — 2026-11-14
 

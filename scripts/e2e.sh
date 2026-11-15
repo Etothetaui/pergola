@@ -47,7 +47,12 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do kill "$pid" >/dev/null 2>&1 || true; done
   sleep 0.3
   for pid in "${PIDS[@]:-}"; do kill -9 "$pid" >/dev/null 2>&1 || true; done
-  rm -rf "$TMP"
+  # PERGOLA_E2E_KEEP=1 keeps the sandbox (daemon.log, xvfb.log) for debugging.
+  if [ -n "${PERGOLA_E2E_KEEP:-}" ]; then
+    printf 'e2e sandbox kept: %s\n' "$TMP"
+  else
+    rm -rf "$TMP"
+  fi
 }
 trap cleanup EXIT
 
@@ -296,6 +301,37 @@ for x in 320 400 480; do wmctrl -i -r "$W3" -e "0,$x,220,320,240" >/dev/null 2>&
 sleep 1.2
 if P list | grep -q "^floating.*$W3"; then ok "a docked tile dragged away floats again"; else bad "drag-out did not float $W3"; fi
 P arrange >/dev/null; sleep 0.4
+
+# Holding a chord must act once. The X server auto-repeats a held key ~11
+# times a second, so a bound command would race ("back" held for a second
+# would walk eleven history entries). The daemon latches the chord on press
+# and clears it on release, so a hold is one press.
+chord_for() { # command -> xdotool key spec, from the bindings actually installed
+  local label
+  label=$(P keys | awk -v c="$1" '$2==c {print $1; exit}')
+  [ -n "$label" ] || return 1
+  printf '%s' "$label" | tr 'A-Z' 'a-z' | sed -e 's/\[/bracketleft/g' -e 's/\]/bracketright/g'
+}
+build_history() {
+  P everything >/dev/null; sleep 0.4
+  for w in "$W1" "$W2" "$W3"; do
+    xdotool windowactivate "$w" >/dev/null 2>&1; sleep 0.35
+    P frame-window >/dev/null; sleep 0.35
+  done
+}
+BACK=$(chord_for back) || fail "back is not bound"
+build_history
+PRE=$(json_field 'd["camera"]["framed"]')
+xdotool key "$BACK"; sleep 0.5
+ONE=$(json_field 'd["camera"]["framed"]')
+build_history
+xdotool keydown "$BACK"; sleep 1.2; xdotool keyup "$BACK"; sleep 0.6
+HELD=$(json_field 'd["camera"]["framed"]')
+# The hold must move the camera (not be dropped) and move it exactly as far as
+# one deliberate tap — the server's ~11 repeats must not each step back.
+if [ "$HELD" = "$PRE" ]; then bad "a held chord did nothing (still $PRE)"; else
+  check_eq "$ONE" "$HELD" "holding a chord goes back once, not eleven times"
+fi
 
 say
 say "9. config validation and error paths"

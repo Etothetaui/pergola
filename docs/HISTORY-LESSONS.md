@@ -38,7 +38,7 @@ token needed); the raw digest and full class listing are in
 The single most repeated family. `i3#79`, `awesome#157`, `awesome#219`,
 `awesome#111`, `bspwm#16`, `spectrwm#103`, `herbstluftwm#85`, `i3#943`.
 
-Two distinct bugs hide in it:
+Three distinct bugs hide in it:
 
 1. **Modifier mask matched literally.** A grab for `Mod4+Left` registers
    `Mod4Mask`, but the key event arrives with `Mod4Mask|Mod2Mask` while Num Lock
@@ -47,6 +47,15 @@ Two distinct bugs hide in it:
 2. **Keymap changed under a live grab.** Switching to a Cyrillic/Neo/Bone
    layout renumbers keycodes; the old grabs now point at the wrong keys, so
    bindings either fire for the wrong key or not at all (`i3#79`, `awesome#157`).
+3. **A held chord fires on auto-repeat.** The server repeats a held key ~11
+   times a second (`awesome#230` is the CPU end of this), so "next view" held
+   for a second races through eleven views and "back" walks the whole history.
+   The trap is that the server marks a repeat as a `KeyRelease` and a `KeyPress`
+   carrying the *same* timestamp — so a naive "clear the latch on release"
+   guard is defeated by the repeat's own synthetic release (measured under
+   xfwm4+Xvfb: alternating press/release pairs, each pair sharing one time).
+   A chord bound to a discrete action therefore fires eleven times: `back`
+   walks eleven history entries, `dock` re-docks on every repeat.
 
 Pergola's answers:
 
@@ -60,6 +69,12 @@ Pergola's answers:
 * `Event::MappingNotify` triggers `reinstall_bindings()`, which rebuilds the
   keymap, ungrabs everything and re-grabs — so a layout switch leaves working
   bindings rather than stale ones.
+* `daemon::is_auto_repeat()` recognises a repeat by the server's own marker: a
+  `KeyPress` whose keycode and timestamp equal the immediately preceding
+  `KeyRelease`'s. A repeat press is dropped, so a held chord acts once; a
+  deliberate press follows a release with a later timestamp and fires.
+  `scripts/e2e.sh` holds the `back` chord for 1.2 s and asserts it moved one
+  history entry, not eleven.
 
 ### Fullscreen and maximise — 70 issues
 

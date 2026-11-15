@@ -227,8 +227,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 63 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 42 assertions against Xvfb + xfwm4 + real xterms
+cargo test               # 64 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # 43 assertions against Xvfb + xfwm4 + real xterms
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite
 cargo build --release
