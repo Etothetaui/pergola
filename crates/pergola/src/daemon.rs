@@ -42,10 +42,14 @@ struct GapDrag {
 /// A window that may have been dragged by the user, watched for the moment it
 /// stops moving (edge docking: drop a window on a screen edge to tile it).
 struct MoveWatch {
-    /// Consecutive configure events that actually changed the geometry.
+    /// Configure events that actually changed the geometry since the window
+    /// left the position we last applied.
     moves: u32,
     at: Instant,
     rect: Rect,
+    /// Where the window was when it was first seen moving: a drag is judged by
+    /// the distance travelled, not only by how many events it produced.
+    start: Rect,
 }
 
 pub struct Daemon {
@@ -463,8 +467,11 @@ impl Daemon {
         Ok(())
     }
 
-    fn save(&mut self) -> Result<()> {
-        self.file.set_camera(&self.camera);
+    /// Copy the live seat records into the document's metadata. `tree` reads
+    /// the document, not the daemon's own `seats`, so a title or class change
+    /// handled by `PropertyNotify` must reach the metadata or the read-only
+    /// `tree` view keeps showing the name the window had when it was adopted.
+    fn sync_meta(&mut self) {
         let meta = pergola_core::PergolaMeta {
             seats: self.seats.clone(),
             gap: Some(self.engine.gap),
@@ -472,6 +479,11 @@ impl Daemon {
             overlay: Some(self.overlay_on),
         };
         self.file.pergola = Some(meta);
+    }
+
+    fn save(&mut self) -> Result<()> {
+        self.file.set_camera(&self.camera);
+        self.sync_meta();
         if let Some(parent) = self.layout_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -503,7 +515,10 @@ impl Daemon {
         let rest = &argv[1..];
         match name {
             "status" => self.status(),
-            "tree" => Ok(self.file.to_json()),
+            "tree" => {
+                self.sync_meta();
+                Ok(self.file.to_json())
+            }
             "list" => self.list(),
             "rects" => self.rects(rest),
             "dock" => self.dock(rest),
@@ -747,6 +762,20 @@ impl Daemon {
             .ok_or_else(|| anyhow!("window 0x{win:x} is not managed by pergola"))?
             .clone();
         let rect = dropped
+            // Already floating: keep the rectangle the user put it in. Falling
+            // back to the default 80x80x800x500 here teleports the window to
+            // the top-left corner, where a WM's own "drag to the edge" gesture
+            // then fires (measured 2026-11-15: `float` on an already-floating
+            // xterm under openbox jumped it to the top edge and openbox
+            // maximised it).
+            .or_else(|| {
+                self.file
+                    .doc
+                    .floating
+                    .iter()
+                    .find(|f| f.panel.id == seat.panel)
+                    .map(|f| f.rect)
+            })
             .or_else(|| {
                 self.engine
                     .rect_of(
@@ -1252,6 +1281,11 @@ impl Daemon {
         if event.override_redirect || self.drag.is_some() {
             return Ok(());
         }
+        // Our own apply echoes back as configure events; a 250 ms window after
+        // it is not a user drag. (Removing this and relying only on the applied
+        // rect was measured 2026-11-15: intermediate echoes of a two-step apply
+        // read as drags and every window docked itself. The openbox cost of
+        // keeping it is filed as pi-agenda bug 'edge drag under openbox'.)
         if self.last_apply.elapsed() < Duration::from_millis(250) {
             return Ok(());
         }
@@ -1281,10 +1315,20 @@ impl Daemon {
                 return Ok(());
             }
         }
+        // The baseline is where we last put the window ourselves. A WM that
+        // reports the drop position only (openbox sends one ICCCM-synthetic
+        // ConfigureNotify at the end of a drag, xfwm4 sends a stream) still
+        // shows a real travel from that baseline; a window the WM merely
+        // clamped, or our own echo, does not move. Measured 2026-11-15: with a
+        // strict "three configure events" rule, edge docking never fired under
+        // openbox and the e2e suite's one failing assertion was this path.
+        let baseline = self.applied.get(&event.window).map(|r| r.to_rect());
+        let moved_from_baseline = baseline.is_some_and(|b| !same_rect(b, rect));
         let watch = self.moves.entry(event.window).or_insert(MoveWatch {
-            moves: 0,
+            moves: u32::from(moved_from_baseline),
             at: Instant::now(),
             rect,
+            start: baseline.unwrap_or(rect),
         });
         if !same_rect(watch.rect, rect) {
             watch.moves += 1;
@@ -1308,7 +1352,7 @@ impl Daemon {
         let now = Instant::now();
         let mut ready = Vec::new();
         for (window, watch) in &self.moves {
-            if watch.moves >= 3 && now.duration_since(watch.at) >= Duration::from_millis(300) {
+            if now.duration_since(watch.at) >= Duration::from_millis(300) && is_drag(watch) {
                 ready.push((*window, watch.rect));
             }
         }
@@ -1361,6 +1405,25 @@ impl Daemon {
         Ok(())
     }
 }
+
+/// A settled window counts as dragged when it produced a burst of configure
+/// events, or when one event moved it far enough that no WM placement could
+/// explain it (a single-report WM: openbox).
+fn is_drag(watch: &MoveWatch) -> bool {
+    if watch.moves >= 3 {
+        return true;
+    }
+    if watch.moves == 0 {
+        return false;
+    }
+    let travel = (watch.rect.x - watch.start.x)
+        .abs()
+        .max((watch.rect.y - watch.start.y).abs());
+    travel >= DRAG_TRAVEL_PX
+}
+
+/// How far a single-event move must travel to be a drag rather than placement.
+const DRAG_TRAVEL_PX: f64 = 40.0;
 
 /// How close to a screen edge a dragged window must be dropped to tile.
 const EDGE_SNAP_PX: f64 = 14.0;
@@ -1727,6 +1790,48 @@ mod tests {
         // 3 px from the top, 9 px from the left: the top wins.
         let rect = Rect::new(9.0, 3.0, 200.0, 200.0);
         assert_eq!(snap_edge(rect, screen, EDGE_SNAP_PX), Some(Direction::Up));
+    }
+
+    #[test]
+    fn a_single_report_that_travelled_is_a_drag() {
+        // openbox reports the drop position once: one event, but 900 px of travel.
+        let watch = MoveWatch {
+            moves: 1,
+            at: Instant::now(),
+            rect: Rect::new(-156.0, 322.0, 316.0, 238.0),
+            start: Rect::new(901.0, 322.0, 316.0, 238.0),
+        };
+        assert!(is_drag(&watch));
+    }
+
+    #[test]
+    fn a_placement_at_the_edge_is_not_a_drag() {
+        let placed = Rect::new(0.0, 0.0, 400.0, 300.0);
+        // The WM clamped a new window to the corner and we never applied a rect:
+        // no baseline, so no travel and no moves.
+        let clamped = MoveWatch {
+            moves: 0,
+            at: Instant::now(),
+            rect: placed,
+            start: placed,
+        };
+        assert!(!is_drag(&clamped));
+        // One event but a few px of placement jitter: still not a drag.
+        let jitter = MoveWatch {
+            moves: 1,
+            at: Instant::now(),
+            rect: placed,
+            start: Rect::new(6.0, 3.0, 400.0, 300.0),
+        };
+        assert!(!is_drag(&jitter));
+        // The event burst the xfwm4 path produces is still a drag.
+        let burst = MoveWatch {
+            moves: 3,
+            at: Instant::now(),
+            rect: placed,
+            start: placed,
+        };
+        assert!(is_drag(&burst));
     }
 
     #[test]
