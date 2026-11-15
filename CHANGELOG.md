@@ -19,6 +19,9 @@ All notable changes to Pergola. Format follows the versioning rules in
   frame by one pixel (873 px split in two gave 434+6+434 = 874).
 * `pergola-health` now asserts every tile is inside `_NET_WORKAREA` — the executable guard for the
   "tiled over the panel" class.
+* A window that is entirely outside the framed view is parked below the work area instead of to the
+  side, where most WMs clamp it back to keep a title-bar sliver reachable.
+* The overlay no longer draws a boundary line for a zero-weight child (a collapsed desktop leaf).
 
 ### Changed
 

@@ -214,7 +214,7 @@ impl Daemon {
             let Some(LayoutNode::Panel(panel)) = self.file.doc.root.node(id) else {
                 continue;
             };
-            let target = tf(*rect).to_irect();
+            let target = park_if_outside(tf(*rect).to_irect(), screen, framed.is_some());
             for view in &panel.views {
                 if let Some(seat) = self.seats.iter().find(|s| &s.seat == view) {
                     let _ = self.x.move_resize(seat.window, target);
@@ -250,8 +250,8 @@ impl Daemon {
             let Some(window) = window else { continue };
             if self.camera.desktop_hidden {
                 let target = IRect::new(
-                    screen.w + 40,
-                    screen.y,
+                    screen.x,
+                    screen.y + screen.h,
                     f.rect.w as i32,
                     f.rect.h as i32,
                 );
@@ -949,6 +949,13 @@ fn overlay_bars(
         let accent = framed.is_some() && path.contains(&split.id.as_str());
         let color = if accent { ACCENT } else { LINE };
         for i in 0..split.children.len().saturating_sub(1) {
+            // A zero-weight child (a collapsed desktop leaf) has no boundary to
+            // draw: the line would sit on the screen edge for nothing.
+            if split.weights.get(i).copied().unwrap_or(0.0) <= 0.0
+                || split.weights.get(i + 1).copied().unwrap_or(0.0) <= 0.0
+            {
+                continue;
+            }
             let Some((_, child)) = rects.iter().find(|(id, _)| id == split.children[i].id()) else {
                 continue;
             };
@@ -979,6 +986,25 @@ fn overlay_bars(
         bars.push((IRect::new(v.x + v.w - t, v.y, t, v.h), ACCENT));
     }
     bars
+}
+
+/// A window that is entirely outside the framed view is parked *below* the work
+/// area. Parking to the side does not work: xfwm4 (and most WMs) clamp a window
+/// so a strip of its title bar stays reachable, which leaves a visible sliver at
+/// the screen edge. Below the work area is not clamped.
+fn park_if_outside(target: IRect, viewport: IRect, zoomed: bool) -> IRect {
+    if !zoomed {
+        return target;
+    }
+    let visible = target.x < viewport.x + viewport.w
+        && target.x + target.w > viewport.x
+        && target.y < viewport.y + viewport.h
+        && target.y + target.h > viewport.y;
+    if visible {
+        target
+    } else {
+        IRect::new(viewport.x, viewport.y + viewport.h, target.w, target.h)
+    }
 }
 
 fn same_rect(a: Rect, b: Rect) -> bool {
@@ -1185,6 +1211,22 @@ mod tests {
         assert_eq!(bars.len(), 6);
         let accent = bars.iter().filter(|(_, c)| *c == 0x00e8b04b).count();
         assert_eq!(accent, 6, "both splits are on the path, plus the frame");
+    }
+
+    #[test]
+    fn windows_outside_the_view_are_parked_below_it() {
+        let view = IRect::new(0, 27, 1600, 873);
+        // fully to the right of the framed node
+        let right = IRect::new(1700, 27, 400, 400);
+        assert_eq!(park_if_outside(right, view, true), IRect::new(0, 900, 400, 400));
+        // fully above
+        let above = IRect::new(0, -500, 400, 400);
+        assert_eq!(park_if_outside(above, view, true), IRect::new(0, 900, 400, 400));
+        // partially visible stays put: a zoom may legitimately clip a tile
+        let partial = IRect::new(1500, 27, 400, 400);
+        assert_eq!(park_if_outside(partial, view, true), partial);
+        // not zoomed: never park
+        assert_eq!(park_if_outside(right, view, false), right);
     }
 
     #[test]
