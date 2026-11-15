@@ -9,6 +9,8 @@ Pergola is a Rust reimplementation of the model popularised by
 inside xfwm4, mutter (X11), kwin_x11, i3, openbox, awesome, or any other
 EWMH-compliant window manager.
 
+![Pergola: one tile on the left, a nested column of three on the right, and the desktop space](docs/screenshot.png)
+
 ```text
  root ── split(x) ─┬─ p-editor ────────────────────────┐
                    ├─ split(y) ─┬─ p-browser ──────────┤

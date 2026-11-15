@@ -39,6 +39,10 @@ pub struct Daemon {
     last_desk: Option<Rect>,
     /// Force floating windows to their stored rect on the next apply.
     place_floating: bool,
+    /// Whether the previous apply ran under a camera transform. Live rects seen
+    /// while zoomed are screen-space, not world-space, so they must not be
+    /// adopted back as the window's stored position.
+    last_zoomed: bool,
     running: bool,
     layout_path: PathBuf,
 }
@@ -82,6 +86,7 @@ impl Daemon {
             last_focus: None,
             last_desk: None,
             place_floating: true,
+            last_zoomed: false,
             running: true,
             layout_path,
         };
@@ -234,7 +239,7 @@ impl Daemon {
         let desk_changed = self
             .last_desk
             .map_or(true, |d| !same_rect(d, desk.unwrap_or(world)));
-        let place = self.place_floating || desk_changed;
+        let place = self.place_floating || desk_changed || self.last_zoomed;
         let mut floating = std::mem::take(&mut self.file.doc.floating);
         for f in floating.iter_mut() {
             let window = f
@@ -266,6 +271,7 @@ impl Daemon {
         }
         self.file.doc.floating = floating;
         self.last_desk = Some(desk.unwrap_or(world));
+        self.last_zoomed = framed.is_some();
         self.place_floating = false;
 
         if self.overlay_on {

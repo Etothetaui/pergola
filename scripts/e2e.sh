@@ -153,6 +153,10 @@ PY
 
 say
 say "3. zoom"
+P float --window "$W3" >/dev/null || fail "float W3"
+sleep 0.3
+FLOAT_BEFORE=$(P list | awk '$1=="floating"{print $2, $3, $4}' | head -1)
+[ -n "$FLOAT_BEFORE" ] || fail "no floating window to check"
 P everything >/dev/null
 xdotool windowactivate "$W2" >/dev/null 2>&1; sleep 0.4
 P frame-window >/dev/null || fail "frame-window"
@@ -162,8 +166,13 @@ check_near "0" "$fx" 2 "framed window x"
 check_near "0" "$fy" 2 "framed window y"
 check_near "$W" "$fw" 2 "framed window width"
 check_near "$H" "$fh" 2 "framed window height"
+# The floating window must come back to the size it had before the zoom: live
+# rects seen while zoomed are screen-space and must not be adopted as world
+# positions.
 P zoom-out >/dev/null || fail "zoom-out"
-sleep 0.3
+sleep 0.4
+FLOAT_AFTER=$(P list | awk '$1=="floating"{print $2, $3, $4}' | head -1)
+check_eq "$FLOAT_BEFORE" "$FLOAT_AFTER" "floating window geometry survives a zoom"
 check_geometry "after zoom-out"
 
 say
