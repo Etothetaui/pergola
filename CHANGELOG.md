@@ -21,6 +21,13 @@ All notable changes to Pergola. Format follows the versioning rules in
   from it as a drag, so a WM that reports only the drop position still docks.
   Two unit tests: `a_single_report_that_travelled_is_a_drag`,
   `a_placement_at_the_edge_is_not_a_drag`.
+* **The own-apply guard shrank from 250 ms to 100 ms.** The guard swallows the
+  stale `ConfigureNotify` a WM delivers after our move (openbox sends the
+  pre-move position after we have already applied the new one; measured at
+  ~0.5 ms after the apply). A geometric replacement was tried and failed — the
+  stale echo is 803 px from the applied rect, so geometry cannot tell it from a
+  real drag. 100 ms still catches the burst while shrinking the window in which
+  a real drag can be swallowed 2.5×. Both WMs passed 43/43 three runs each.
 
 ### Changed
 
