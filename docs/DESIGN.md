@@ -92,10 +92,10 @@ border around every tile and read as a debug artefact. It is off by default; `ov
 
 ## Testing
 
-* `cargo test` — 44 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 46 unit tests over geometry, weights, docking, removal, gap
   clamping, neighbours, camera history, saved views, command URLs, document
   round-trips and repair of malformed weights.
 * `scripts/e2e.sh` — starts Xvfb + xfwm4 + three xterms, runs the real daemon,
   and asserts the geometry the X server reports against `pergola rects` after
-  dock, zoom, arrange, gap changes, float and a daemon restart (75 assertions).
+  dock, zoom, arrange, gap changes, float and a daemon restart (76 assertions).
   It never touches the live session.

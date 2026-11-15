@@ -71,6 +71,14 @@ for _ in $(seq 1 50); do "$BIN" --socket "$SOCK" status >/dev/null 2>&1 && break
 "$BIN" --socket "$SOCK" status >/dev/null 2>&1 || { cat "$TMP/daemon.log"; fail "daemon did not start"; }
 P() { "$BIN" --socket "$SOCK" "$@"; }
 
+# One daemon per display: a second one must refuse, not unlink the live socket.
+if "$BIN" --socket "$SOCK" daemon >"$TMP/daemon2.log" 2>&1; then
+  bad "a second daemon is refused"
+else
+  ok "a second daemon is refused"
+fi
+P status >/dev/null 2>&1 || fail "the second daemon stole the live socket"
+
 mapfile -t XWINS < <(xdotool search --class XTerm 2>/dev/null)
 [ "${#XWINS[@]}" -ge 3 ] || fail "test windows did not appear"
 W1="$(printf '0x%08x' "${XWINS[0]}")"

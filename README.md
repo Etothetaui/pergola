@@ -41,12 +41,20 @@ cd pergola
 
 Requirements: Rust (1.75+), an X11 session, `xdotool`/`wmctrl` only for the
 optional test script. No root, no daemon privileges, no Accessibility-style
-permission prompt.
+permission prompt. `install.sh` installs `pergola` and `pergola-health` into
+`~/.local/bin`, writes `~/.config/pergola/config.json` (only if absent), and
+adds a systemd user unit plus an XDG autostart entry so the daemon starts with
+your session. `./install.sh --no-start` skips the start.
 
 ```bash
 pergola doctor          # display, EWMH client list, running WM
+pergola status          # the daemon's view: screen, panels, depth, gap, overlay
 pergola keys --check    # which chords are free on this desktop
+pergola-health          # soak check; exits non-zero on any failure
 ```
+
+Full install, upgrade, uninstall and troubleshooting reference:
+**[docs/SETUP.md](docs/SETUP.md)**.
 
 ## Quick start
 
@@ -106,6 +114,26 @@ to `Super` for that command and reports it at startup.
 | `Ctrl+Alt+O` | overlay |
 
 `Super+…` is the automatic fallback for any chord the desktop already uses.
+`pergola keys --check` prints what was actually bound and which chords the
+desktop already owns.
+
+## Configuration
+
+`~/.config/pergola/config.json` (all keys optional):
+
+| Key | Default | Effect |
+|---|---|---|
+| `gap` | `6.0` | pixels between tiles and width of the overlay divider |
+| `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to |
+| `auto_dock` | `false` | dock new windows automatically instead of floating them |
+| `overlay` | `false` | draw the split lines and viewport frame |
+| `desktop_share` | `0.0` | desktop strip `arrange` keeps; `0` gives it none |
+| `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
+| `hotkeys` | `true` | grab the default chords on the root window |
+
+`pergola reload` re-reads the file; `overlay` and `hotkeys` apply on daemon
+restart. The `gap` and `overlay` commands change the running session only. See
+[docs/SETUP.md](docs/SETUP.md#configuration) for the details.
 
 ## How it works
 
@@ -157,9 +185,9 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
 ## Development
 
 ```bash
-cargo test             # 37 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh         # 75 assertions against Xvfb + xfwm4 + real xterms
-scripts/health.sh      # soak check of a running daemon (cpu, layout, drift, orphans)
+cargo test               # 46 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # 76 assertions against Xvfb + xfwm4 + real xterms
+scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite
 cargo build --release
 ```
@@ -173,7 +201,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.2.0-dev` — pre-stable, no compatibility promises.
+`0.2.1-dev` — pre-stable, no compatibility promises.
 
 ## License
 

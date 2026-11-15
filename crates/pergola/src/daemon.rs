@@ -731,6 +731,16 @@ impl Daemon {
     pub fn run(&mut self, socket: &std::path::Path) -> Result<()> {
         let socket = socket.to_path_buf();
         if socket.exists() {
+            // One daemon per display. A socket that still accepts a connection
+            // belongs to a live daemon: refuse instead of unlinking it, which
+            // would leave the first daemon running but unreachable.
+            if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+                anyhow::bail!(
+                    "a pergola daemon is already running on {} (one per display)",
+                    socket.display()
+                );
+            }
+            // No listener: a killed daemon left the file behind. Reclaim it.
             let _ = std::fs::remove_file(&socket);
         }
         if let Some(parent) = socket.parent() {

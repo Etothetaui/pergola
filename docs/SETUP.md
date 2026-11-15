@@ -1,0 +1,200 @@
+# Setup
+
+Everything Pergola installs is user-local. It never runs as root, never becomes
+a system service, and never replaces the desktop's window manager — it attaches
+to the running X11 session and asks the WM to move windows.
+
+For what the pieces are and why, read [DESIGN.md](DESIGN.md); this page is the
+operational side: install, configure, upgrade, remove, diagnose.
+
+## Requirements
+
+| Need | Why |
+|---|---|
+| Linux with an **X11** session | Wayland clients cannot be moved by an external process |
+| An **EWMH-compliant window manager** | Pergola reads `_NET_CLIENT_LIST` and moves windows with `_NET_MOVERESIZE_WINDOW`; measured on **Xfwm4** and **Openbox** |
+| **Rust 1.75+** | only to build; the installed binary links nothing but `libc` and `libgcc_s` |
+| An XDG autostart directory **or** a systemd user manager | to start the daemon at login (both are written by `install.sh`) |
+| `Xvfb`, `xfwm4`, `xterm`, `xdotool`, `wmctrl` | optional, only for `scripts/e2e.sh` |
+
+`pergola doctor` is the authoritative check for the first two: it prints the
+display, the screen, the EWMH client list and the running WM, or the one reason
+it cannot proceed.
+
+## Install
+
+```bash
+git clone https://github.com/SyntheticPrometheus/pergola
+cd pergola
+./install.sh
+```
+
+`install.sh` does, in order:
+
+1. `cargo build --release`.
+2. Installs `pergola` and `pergola-health` into `~/.local/bin` (override with
+   `PREFIX=/usr/local` or `BINDIR=/some/bin`).
+3. Writes `~/.config/pergola/config.json` **only if it does not exist** — an
+   upgrade never overwrites your settings.
+4. Renders `systemd/pergola.service` with the real binary path and the display
+   the install ran on, writes it to `~/.config/systemd/user/`, then
+   `systemctl --user enable pergola.service`.
+5. Renders `autostart/pergola.desktop` the same way.
+6. Starts the daemon and prints `pergola status` — unless `--no-start` is given
+   or a daemon already answers on the socket.
+
+Options: `./install.sh --no-start`, `PREFIX=…`, `BINDIR=…`.
+
+### What lands where
+
+| File | Purpose |
+|---|---|
+| `~/.local/bin/pergola` | the daemon and the CLI (one binary; `pergola daemon` is the daemon) |
+| `~/.local/bin/pergola-health` | `scripts/health.sh` under a stable name, for timers and cron |
+| `${XDG_CONFIG_HOME:-~/.config}/pergola/config.json` | user settings (below) |
+| `${XDG_STATE_HOME:-~/.local/state}/pergola/layout.json` | the saved tree, camera and window fingerprints |
+| `${XDG_STATE_HOME:-~/.local/state}/pergola/health.jsonl` | one JSON line per `pergola-health` run |
+| `${XDG_RUNTIME_DIR:-<state dir>}/pergola.sock` | the Unix socket the CLI talks to |
+| `~/.config/systemd/user/pergola.service` | start at login on systemd desktops |
+| `~/.config/autostart/pergola.desktop` | start at login on non-systemd desktops |
+
+### Install by hand
+
+`install.sh` is a convenience, not magic. The minimum is:
+
+```bash
+cargo build --release
+install -Dm755 target/release/pergola ~/.local/bin/pergola
+install -Dm755 scripts/health.sh ~/.local/bin/pergola-health
+mkdir -p ~/.config/pergola && $EDITOR ~/.config/pergola/config.json
+pergola daemon &          # or start it from your session's autostart
+```
+
+## Start at login
+
+`install.sh` writes **both** a systemd user unit and an XDG autostart entry and
+enables the unit. Use whichever your desktop honours; starting both is
+harmless (the second daemon refuses the live socket and exits with a one-line
+reason) but noisy in the logs. To pick one:
+
+```bash
+# systemd only
+systemctl --user enable pergola.service
+rm ~/.config/autostart/pergola.desktop
+# autostart only
+systemctl --user disable pergola.service
+```
+
+The XDG entry only runs in the desktops listed in `OnlyShowIn` (XFCE, GNOME on
+X11, KDE, LXDE, LXQt, MATE, Cinnamon, Unity); elsewhere keep the systemd unit.
+
+The systemd unit cannot inherit `DISPLAY` from your session, so `install.sh`
+bakes in the display it was run under. If you change display (or the daemon
+starts on the wrong screen), re-run `./install.sh --no-start`.
+
+## Configuration
+
+`~/.config/pergola/config.json`, all keys optional (missing keys fall back to
+the defaults):
+
+```json
+{
+  "gap": 6.0,
+  "minimum_share": 0.05,
+  "auto_dock": false,
+  "overlay": false,
+  "desktop_share": 0.0,
+  "terminal": "xfce4-terminal",
+  "hotkeys": true
+}
+```
+
+| Key | Default | Effect |
+|---|---|---|
+| `gap` | `6.0` | pixels between tiles, and width of the overlay divider |
+| `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to when weights are edited |
+| `auto_dock` | `false` | dock new windows automatically instead of leaving them floating |
+| `overlay` | `false` | draw split lines in the gaps and a frame around the viewport |
+| `desktop_share` | `0.0` | share of the screen `arrange` gives the desktop leaf; `0` means the desktop gets no strip |
+| `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
+| `hotkeys` | `true` | grab the default chords on the root window |
+
+Notes:
+
+* `pergola reload` re-reads `gap`, `minimum_share`, `desktop_share`,
+  `auto_dock` and `terminal`. `overlay` and `hotkeys` are applied when the
+  daemon starts — restart it to change those.
+* `pergola gap 12` changes the running layout only; put the value in
+  `config.json` to keep it across restarts.
+* `pergola overlay on` is likewise a session toggle; the config key is the
+  default at startup.
+* A malformed file is reported on stderr and ignored (defaults are used); the
+  daemon still starts.
+* `pergola keys --check` lists what was actually bound and which planned chords
+  the desktop already owns. `pergola keys --probe <chord>…` tests individual
+  chords without installing anything.
+
+## Verify the installation
+
+```bash
+pergola doctor        # display, EWMH client list, running WM, version
+pergola status        # the running daemon's view: screen, panels, depth, gap, overlay
+pergola dock left      # dock the focused window — the real end-to-end test
+pergola rects         # frame rectangles, as the daemon believes them
+pergola-health        # soak check; exits non-zero on any failure
+```
+
+`pergola-health` checks daemon liveness, CPU use, layout invariants, geometry
+drift against what the X server reports, docked windows that no longer exist,
+and (with `--e2e`) runs the full regression suite. `--json` prints one line,
+`--quiet` prints nothing when healthy; both keep the exit code, so a timer can
+act on it.
+
+## Upgrade
+
+```bash
+cd pergola
+git pull
+./install.sh --no-start     # never overwrites config.json
+pergola stop
+setsid pergola daemon >/dev/null 2>&1   # or: systemctl --user restart pergola
+```
+
+A running daemon keeps the old binary mapped until it is restarted, so the
+`pergola stop` / start (or `systemctl --user restart`) step is what actually
+upgrades the running layout engine. `layout.json` is additive: an older layout
+still loads after an upgrade.
+
+## Uninstall
+
+```bash
+pergola stop
+systemctl --user disable --now pergola.service 2>/dev/null
+rm -f ~/.local/bin/pergola ~/.local/bin/pergola-health
+rm -f ~/.config/autostart/pergola.desktop
+rm -f ~/.config/systemd/user/pergola.service
+# optional: your settings and layout
+rm -rf ~/.config/pergola ~/.local/state/pergola
+```
+
+Floating windows keep whatever geometry they had; a `pergola float-all` before
+stopping returns every window to the desktop layer.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `pergola: daemon not running` | `pergola daemon` in a terminal; then `pergola status`. One daemon per display, one socket |
+| `pergola doctor` cannot find a display | `echo $DISPLAY`; the daemon and the CLI need the same X display |
+| `doctor` reports no EWMH client list | no window manager running, or one that does not implement EWMH |
+| Windows do not move when docked | the WM ignores `_NET_MOVERESIZE_WINDOW` (tiling WMs that lay themselves out) — only Xfwm4 and Openbox are measured |
+| Tiles sit under the top panel | that is the work-area class of bug: `pergola-health` asserts every tile is inside `_NET_WORKAREA`; upgrade if it fails |
+| Hotkeys do nothing | `pergola keys --check`; the desktop may own the chord; Pergola falls back to `Super` per command and says which ones had no free chord at startup |
+| A window peeks at the screen edge when zoomed out | the WM clamps off-screen windows (xfwm4 does); documented limitation |
+| Terminal tiles do not fill the tile exactly | the client's resize hints (a character grid) win; the layout is still the tile |
+| Second daemon will not start | expected: one instance per display, guarded by the Unix socket |
+| Daemon exits at login | `journalctl --user -u pergola -n 50`; usually `DISPLAY` — re-run `install.sh` from the right session |
+
+Tuning knobs that answer the most common complaints: `gap` (thicker split
+lines and spacing), `desktop_share` (keep a desktop strip when docking), and
+`auto_dock` (stop new windows from floating).

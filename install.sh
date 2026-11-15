@@ -48,7 +48,10 @@ fi
 # systemd user unit (used by desktops that start graphical-session.target)
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
-sed "s|%h/.local/bin/pergola|$BINDIR/pergola|" \
+# The unit cannot inherit DISPLAY from the desktop session, so bake the display
+# this install runs on, not a hard-coded :0 (re-run install.sh after changing it).
+sed -e "s|%h/.local/bin/pergola|$BINDIR/pergola|" \
+    -e "s|Environment=DISPLAY=:0|Environment=DISPLAY=${DISPLAY:-:0}|" \
   "$ROOT/systemd/pergola.service" >"$UNIT_DIR/pergola.service"
 if command -v systemctl >/dev/null; then
   systemctl --user daemon-reload 2>/dev/null || true

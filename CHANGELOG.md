@@ -3,6 +3,32 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.2.1-dev] — 2026-11-14
+
+### Fixed
+
+* Rectangles round their **edges**, not their sizes, so a row of tiles can no longer overflow its
+  frame by one pixel (873 px split in two gave 434+6+434 = 874).
+* `pergola-health` now asserts every tile is inside `_NET_WORKAREA` — the executable guard for the
+  "tiled over the panel" class.
+* A window that is entirely outside the framed view is parked below the work area instead of to the
+  side, where most WMs clamp it back to keep a title-bar sliver reachable.
+* The overlay no longer draws a boundary line for a zero-weight child (a collapsed desktop leaf).
+* A second daemon no longer unlinks the live socket: it used to steal the socket from a running
+  daemon, leaving that daemon alive but unreachable. It now refuses when the socket accepts a
+  connection and only reclaims a stale file left by a killed daemon. `scripts/e2e.sh` asserts both
+  halves (the refusal and that the first daemon keeps answering).
+* `install.sh` writes the installing session's `$DISPLAY` into the systemd user unit instead of
+  hard-coding `:0`, so the daemon also starts from a session that is not the first display.
+
+### Documentation
+
+* New [docs/SETUP.md](docs/SETUP.md): requirements, what `install.sh` writes and where, the config
+  reference, start-at-login, upgrade, uninstall and troubleshooting. The README now links to it and
+  carries the configuration keys inline.
+* Test counts in the README and `docs/DESIGN.md` corrected to the measured values (46 unit tests,
+  76 e2e assertions).
+
 ## [0.2.0-dev] — 2026-11-14
 
 ### Fixed
@@ -15,13 +41,6 @@ All notable changes to Pergola. Format follows the versioning rules in
   desktop leaves no black strip at the screen edge.
 * `pergola-health` tolerates a client's own resize increments (terminals snap to a character grid)
   instead of reporting them as drift.
-* Rectangles round their **edges**, not their sizes, so a row of tiles can no longer overflow its
-  frame by one pixel (873 px split in two gave 434+6+434 = 874).
-* `pergola-health` now asserts every tile is inside `_NET_WORKAREA` — the executable guard for the
-  "tiled over the panel" class.
-* A window that is entirely outside the framed view is parked below the work area instead of to the
-  side, where most WMs clamp it back to keep a title-bar sliver reachable.
-* The overlay no longer draws a boundary line for a zero-weight child (a collapsed desktop leaf).
 
 ### Changed
 
