@@ -3,6 +3,16 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.1.0-dev] — 2026-11-14
+
+### Added
+
+* `scripts/health.sh` (installed as `pergola-health`): daemon liveness, CPU, layout invariants,
+  geometry drift against the X server, orphaned docked windows, and an optional `--e2e` pass.
+  Exits non-zero and appends one JSON line per run, so a scheduler can act on it.
+* `BACKLOG.md`: the development queue, every item with a testable "done when".
+* `scripts/e2e.sh` asserts that a floating window's geometry survives a zoom.
+
 ## [0.0.0-dev] — 2026-11-14
 
 First working build, installed and tested on Arch Linux / XFCE (xfwm4) and in an

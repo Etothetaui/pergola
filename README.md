@@ -157,17 +157,23 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
 ## Development
 
 ```bash
-cargo test            # 37 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh        # 78 assertions against Xvfb + xfwm4 + real xterms
+cargo test             # 37 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh         # 75 assertions against Xvfb + xfwm4 + real xterms
+scripts/health.sh      # soak check of a running daemon (cpu, layout, drift, orphans)
+scripts/health.sh --e2e  # the above plus the regression suite
 cargo build --release
 ```
+
+`install.sh` also installs `pergola-health`, the same soak check under a stable name, so a
+scheduler or a timer can run it unattended and act on the exit code. `BACKLOG.md` is the
+development queue: every item names what is done when.
 
 The end-to-end script starts its own X server, window manager and windows, so it
 does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.0.0-dev` — pre-stable, no compatibility promises.
+`0.1.0-dev` — pre-stable, no compatibility promises.
 
 ## License
 

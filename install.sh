@@ -28,6 +28,7 @@ echo "building release…"
 echo "installing to $BINDIR/pergola"
 mkdir -p "$BINDIR" "$CONFIG_DIR" "$STATE_DIR"
 install -m 0755 "$ROOT/target/release/pergola" "$BINDIR/pergola"
+install -m 0755 "$ROOT/scripts/health.sh" "$BINDIR/pergola-health"
 
 if [ ! -f "$CONFIG_DIR/config.json" ]; then
   cat >"$CONFIG_DIR/config.json" <<'JSON'
@@ -76,5 +77,6 @@ echo
 echo "installed. try:"
 echo "  pergola status"
 echo "  pergola keys --check"
+echo "  pergola-health        # soak check: daemon, cpu, layout, drift, orphans"
 echo "  pergola dock left     # dock the focused window"
 echo "  pergola arrange       # tile every window into a fractal tree"
