@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pergola
+Comment=Fractal window manager layer for X11 desktops
+Exec=%h/.local/bin/pergola daemon
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+OnlyShowIn=XFCE;GNOME;KDE;LXDE;LXQt;MATE;Cinnamon;Unity;

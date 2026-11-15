@@ -1,0 +1,33 @@
+# Notice
+
+## Provenance
+
+Pergola is an independent reimplementation of the *fractal window model*
+popularised by TrellisWM, a commercial macOS application. It contains no code,
+assets, icons, text or data from TrellisWM, and it is not produced by, endorsed
+by, or affiliated with TrellisWM or its author.
+
+What informed this implementation, all of it public:
+
+* the product page and public guide at <https://trelliswm.app> — command names,
+  shortcut list, interaction descriptions, settings panes, plans;
+* the layout grammar and invariants published in the independent clean-room
+  study <https://github.com/archsueh/trelliswm-reverse> — a description of a
+  file format observed on that author's machine, plus a JavaScript and a Swift
+  implementation written from that description. That repository ships no
+  license and grants no reuse rights, so no code was taken from it; only the
+  published grammar and invariants were used.
+
+See `docs/RESEARCH.md` for the full research note and source list.
+
+## Trademarks
+
+"TrellisWM" and any related marks belong to their respective owner. The name is
+used only to identify the software whose model is discussed and reimplemented
+(nominative use). The Pergola name, logo-free identifier and `pergola://` URL
+scheme are this project's own.
+
+## Licensing
+
+Pergola is MIT licensed; see `LICENSE`. Nothing here grants any rights to
+TrellisWM or to the clean-room study, whose own terms continue to apply.

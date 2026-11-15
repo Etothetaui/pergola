@@ -1,0 +1,19 @@
+[Unit]
+Description=Pergola fractal window manager layer
+Documentation=https://github.com/SyntheticPrometheus/pergola
+# The daemon needs an X display with a running EWMH window manager.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/pergola daemon
+Restart=on-failure
+RestartSec=2
+# It must not take over the session; it only talks to the running WM.
+Environment=DISPLAY=:0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

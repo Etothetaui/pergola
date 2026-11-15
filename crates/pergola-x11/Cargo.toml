@@ -1,0 +1,14 @@
+[package]
+name = "pergola-x11"
+description = "X11/EWMH backend for Pergola: window enumeration, geometry, hotkeys, overlay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pergola-core.workspace = true
+x11rb.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true

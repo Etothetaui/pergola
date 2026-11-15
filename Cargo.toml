@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["crates/pergola-core", "crates/pergola-x11", "crates/pergola"]
+
+[workspace.package]
+version = "0.0.0-dev"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/SyntheticPrometheus/pergola"
+authors = ["SyntheticPrometheus"]
+
+[workspace.dependencies]
+pergola-core = { path = "crates/pergola-core" }
+pergola-x11 = { path = "crates/pergola-x11" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+dirs = "5"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

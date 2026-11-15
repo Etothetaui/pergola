@@ -1,0 +1,22 @@
+[package]
+name = "pergola"
+description = "Pergola: a fractal window manager layer for X11 desktops"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pergola"
+path = "src/main.rs"
+
+[dependencies]
+pergola-core.workspace = true
+pergola-x11.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+dirs.workspace = true
+x11rb.workspace = true
