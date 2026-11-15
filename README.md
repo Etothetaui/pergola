@@ -139,10 +139,15 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
 ## Known limitations
 
 * **X11 only.** No Wayland-native support; XWayland clients only.
+* Verified inside **xfwm4** (XFCE) and **Openbox**, live and in isolation; any
+  EWMH window manager should work, but only those two have been measured.
 * Windows outside the framed view are moved off-screen. Some WMs (xfwm4) clamp
   them to keep a sliver reachable, so a docked tile can peek at the screen edge.
 * Windows that set size hints (terminals with a character grid) may not fill a
-  tile exactly; the WM honours their hints.
+  tile exactly; the WM honours their hints. Under Openbox an `xterm` with 6x13
+  resize increments lands 11 px short of a 900 px tile; xfwm4 rounds differently.
+  This is the client's hint, not the layout: `pergola rects` still reports the
+  tile.
 * Dialogs and transient windows are treated as ordinary panels when docked.
 * Tab groups are modelled (`views.len() > 1`) but there is no drag-to-tab UI yet.
 * The overlay is drawn with 2–4 px override-redirect rectangles; there is no
