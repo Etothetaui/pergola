@@ -39,10 +39,19 @@ call item 5 (two measured WMs) green.
 **The openbox dock assertion now passes 6/6 consecutive runs.** The handover's
 failure was measured against the *old* `wmctrl -e` gesture, which pokes geometry
 three times with 120 ms sleeps immediately after the `float` apply — inside the
-250 ms own-apply guard. The replacement gesture is a real pointer drag (~1 s of
+own-apply guard. The replacement gesture is a real pointer drag (~1 s of
 motion), so the guard has expired before the drop arrives. The guard hazard is
-real for a drag that completes within 250 ms of an apply, but it is not what the
-e2e test measures any more.
+real for a drag that completes within the guard window of an apply, but it is
+not what the e2e test measures any more.
+
+**Guard narrowed 250 ms → 100 ms (commit 7e36cff).** The guard swallows the
+stale `ConfigureNotify` a WM delivers after our move — measured 2026-11-15, that
+stale event arrives within ~0.5 ms of the apply (openbox sends the pre-move
+position after we have already applied the new one). A geometric replacement was
+tried and failed: the stale echo is 803 px from the applied rect, so geometry
+cannot tell it from a real drag. 100 ms still catches the burst while shrinking
+the window in which a real drag can be swallowed 2.5×; both WMs passed 43/43
+three runs each at 100 ms.
 
 **Measured:** `scripts/e2e.sh --wm openbox` 43/43 (6 runs), `--wm xfwm4` 43/43,
 `cargo test --release` 66 pass. `scripts/health.sh` ok on the live daemon.
