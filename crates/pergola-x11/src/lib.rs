@@ -29,8 +29,81 @@ pub struct WindowInfo {
     pub title: String,
     pub class: String,
     pub pid: Option<u32>,
+    /// `_NET_WM_STATE_HIDDEN` (minimised or on another desktop).
     pub hidden: bool,
     pub active: bool,
+    /// `WM_TRANSIENT_FOR` is set: a dialog or popup owned by another window.
+    /// Such windows are never tiled (see `docs/HISTORY-LESSONS.md`).
+    pub transient: bool,
+    /// `_NET_WM_STATE_FULLSCREEN`: the WM owns this window's geometry.
+    pub fullscreen: bool,
+    /// `_NET_WM_STATE_MAXIMIZED_{HORZ,VERT}`: a move needs the state dropped
+    /// first, because a maximized window ignores `_NET_MOVERESIZE_WINDOW`.
+    pub maximized: bool,
+}
+
+/// The ICCCM `WM_NORMAL_HINTS` fields that constrain a tiled window.
+///
+/// A terminal asks for a client area of `base + n * inc` pixels: anything else
+/// and the WM clamps the window, which lands it an arbitrary distance from the
+/// tile it was meant to fill (the 11 px shortfall measured under Openbox). The
+/// tiler's answer is to snap the *client* area down to the client's own grid and
+/// let the remainder become a gap at the tile's right or bottom edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SizeHints {
+    pub base_w: i32,
+    pub base_h: i32,
+    pub inc_w: i32,
+    pub inc_h: i32,
+    pub min_w: i32,
+    pub min_h: i32,
+    pub max_w: i32,
+    pub max_h: i32,
+}
+
+impl SizeHints {
+    /// True when the client draws a character grid and expects increments.
+    pub fn has_increments(&self) -> bool {
+        self.inc_w > 1 || self.inc_h > 1
+    }
+}
+
+/// Fit one client dimension to the client's own resize grid, never exceeding
+/// `available`. `inc <= 1` means "no grid": the available size is used as-is,
+/// clamped by min/max.
+pub fn snap_client_size(available: i32, base: i32, inc: i32, min: i32, max: i32) -> i32 {
+    let available = available.max(1);
+    let mut size = if inc > 1 {
+        let base = base.max(0);
+        let steps = ((available - base) / inc).max(0);
+        base + steps * inc
+    } else {
+        available
+    };
+    if min > 0 {
+        size = size.max(min);
+    }
+    if max > 0 {
+        size = size.min(max);
+    }
+    size.max(1)
+}
+
+/// Snap a frame rectangle so its client area fits the client's size grid.
+/// The frame origin is kept, so the leftover pixels appear at the tile's right
+/// or bottom edge, where the next tile starts.
+pub fn snap_to_hints(
+    frame: IRect,
+    hints: SizeHints,
+    extents: (i32, i32, i32, i32),
+) -> IRect {
+    if !hints.has_increments() {
+        return frame;
+    }
+    let (l, r, t, b) = extents;
+    let client_w = snap_client_size(frame.w - l - r, hints.base_w, hints.inc_w, hints.min_w, hints.max_w);
+    let client_h = snap_client_size(frame.h - t - b, hints.base_h, hints.inc_h, hints.min_h, hints.max_h);
+    IRect::new(frame.x, frame.y, client_w + l + r, client_h + t + b)
 }
 
 impl WindowInfo {
@@ -78,6 +151,7 @@ struct Atoms {
     net_wm_state_hidden: u32,
     net_wm_state_maximized_horz: u32,
     net_wm_state_maximized_vert: u32,
+    net_wm_state_fullscreen: u32,
     net_frame_extents: u32,
     net_workarea: u32,
     net_current_desktop: u32,
@@ -175,6 +249,16 @@ impl X11 {
         }
         let states = self.atom_list(win, self.atoms.net_wm_state)?;
         let hidden = states.contains(&self.atoms.net_wm_state_hidden);
+        let fullscreen = states.contains(&self.atoms.net_wm_state_fullscreen);
+        let maximized = states.contains(&self.atoms.net_wm_state_maximized_horz)
+            || states.contains(&self.atoms.net_wm_state_maximized_vert);
+        let transient = self
+            .conn
+            .get_property(false, win, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.value_len > 0)
+            .unwrap_or(false);
 
         let geom = self.conn.get_geometry(win)?.reply()?;
         let translated = self
@@ -217,6 +301,9 @@ impl X11 {
             pid,
             hidden,
             active: self.active_window() == Some(win),
+            transient,
+            fullscreen,
+            maximized,
         }))
     }
 
@@ -298,6 +385,60 @@ impl X11 {
                 (v.len() == 4).then(|| (v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32))
             })
             .unwrap_or((0, 0, 0, 0))
+    }
+
+    /// The client's own resize grid (`WM_NORMAL_HINTS`), all zero when the
+    /// window does not ask for one. Read through the `WM_SIZE_HINTS` type, as
+    /// ICCCM requires; a property of any other type is ignored.
+    pub fn size_hints(&self, win: u32) -> SizeHints {
+        let reply = self
+            .conn
+            .get_property(
+                false,
+                win,
+                AtomEnum::WM_NORMAL_HINTS,
+                AtomEnum::WM_SIZE_HINTS,
+                0,
+                18,
+            )
+            .ok()
+            .and_then(|c| c.reply().ok());
+        let Some(reply) = reply else {
+            return SizeHints::default();
+        };
+        let v: Vec<u32> = reply.value32().map(|it| it.collect()).unwrap_or_default();
+        if v.len() < 18 {
+            return SizeHints::default();
+        }
+        let flags = v[0];
+        let field = |bit: u32, index: usize| -> i32 {
+            if flags & bit != 0 {
+                v[index] as i32
+            } else {
+                0
+            }
+        };
+        // ICCCM WM_SIZE_HINTS flags: PMinSize 1<<4, PMaxSize 1<<5,
+        // PResizeInc 1<<6, PBaseSize 1<<8.
+        SizeHints {
+            base_w: field(1 << 8, 15),
+            base_h: field(1 << 8, 16),
+            inc_w: field(1 << 6, 9),
+            inc_h: field(1 << 6, 10),
+            min_w: field(1 << 4, 5),
+            min_h: field(1 << 4, 6),
+            max_w: field(1 << 5, 7),
+            max_h: field(1 << 5, 8),
+        }
+    }
+
+    /// Whether the window is in `_NET_WM_STATE_FULLSCREEN`. A fullscreen window
+    /// owns its own geometry: the tiler must leave it alone.
+    pub fn fullscreen(&self, win: u32) -> bool {
+        let Ok(states) = self.atom_list(win, self.atoms.net_wm_state) else {
+            return false;
+        };
+        states.contains(&self.atoms.net_wm_state_fullscreen)
     }
 
     pub fn activate(&self, win: u32) -> Result<()> {
@@ -493,19 +634,73 @@ impl X11 {
     pub fn watch_window(&self, win: u32) -> Result<()> {
         self.conn.change_window_attributes(
             win,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY),
+            &ChangeWindowAttributesAux::new()
+                .event_mask(EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE),
         )?;
         Ok(())
     }
 
+    /// True when a property change on `atom` can change what `describe` shows:
+    /// the title or the class. Everything else (size hints, user time, state)
+    /// is not worth a redraw.
+    pub fn is_title_atom(&self, atom: u32) -> bool {
+        atom == self.atoms.net_wm_name
+            || atom == self.atoms.wm_class
+            || atom == u32::from(AtomEnum::WM_NAME)
+    }
+
     // MARK: hotkeys
+
+    /// Grab one chord with every combination of the lock modifiers added, so a
+    /// key press still reaches us with Caps Lock or Num Lock on. Returns true
+    /// when the unmodified grab succeeded; the lock variants are best effort
+    /// because the desktop may legitimately own some of them.
+    fn grab_with_locks(&self, mods: u16, keycode: u8) -> bool {
+        let locks = lock_mod_masks(&self.conn);
+        let mut combinations = vec![0u16];
+        for mask in &locks {
+            let mut next = combinations.clone();
+            for extra in &combinations {
+                next.push(extra | mask);
+            }
+            combinations = next;
+        }
+        let mut base_ok = false;
+        for extra in combinations {
+            let ok = self
+                .conn
+                .grab_key(
+                    false,
+                    self.root,
+                    ModMask::from(mods | extra),
+                    keycode,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
+                )
+                .map(|cookie| cookie.check().is_ok())
+                .unwrap_or(false);
+            if extra == 0 {
+                base_ok = ok;
+            }
+        }
+        base_ok
+    }
+
+    /// Release every root-window key grab this client owns, so a keyboard-map
+    /// change can install the new plan without leaving stale chords behind.
+    pub fn ungrab_all_keys(&self) -> Result<()> {
+        self.conn
+            .ungrab_key(0 /* AnyKey */, self.root, ModMask::ANY)?;
+        self.conn.flush()?;
+        Ok(())
+    }
 
     /// Grab `bindings` on the root window. Returns the labels that could not be
     /// grabbed (usually because the running WM already owns them).
     pub fn grab_keys(&self, bindings: &[KeyBinding]) -> Result<Vec<String>> {
         let min = self.conn.setup().min_keycode;
         let max = self.conn.setup().max_keycode;
-        let count = (max - min + 1) as u8;
+        let count = max - min + 1;
         let mapping = self.conn.get_keyboard_mapping(min, count)?.reply()?;
         let per = mapping.keysyms_per_keycode as usize;
         let mut failed = Vec::new();
@@ -523,19 +718,7 @@ impl X11 {
             };
             // BadAccess arrives asynchronously, so check the reply rather than
             // just the send.
-            let ok = self
-                .conn
-                .grab_key(
-                    false,
-                    self.root,
-                    ModMask::from(binding.mods),
-                    keycode,
-                    GrabMode::ASYNC,
-                    GrabMode::ASYNC,
-                )
-                .map(|cookie| cookie.check().is_ok())
-                .unwrap_or(false);
-            if !ok {
+            if !self.grab_with_locks(binding.mods, keycode) {
                 failed.push(binding.label.clone());
             }
         }
@@ -639,6 +822,7 @@ impl Atoms {
             net_wm_state_hidden: intern("_NET_WM_STATE_HIDDEN")?,
             net_wm_state_maximized_horz: intern("_NET_WM_STATE_MAXIMIZED_HORZ")?,
             net_wm_state_maximized_vert: intern("_NET_WM_STATE_MAXIMIZED_VERT")?,
+            net_wm_state_fullscreen: intern("_NET_WM_STATE_FULLSCREEN")?,
             net_frame_extents: intern("_NET_FRAME_EXTENTS")?,
             net_workarea: intern("_NET_WORKAREA")?,
             net_current_desktop: intern("_NET_CURRENT_DESKTOP")?,
@@ -673,9 +857,24 @@ fn pick_workarea(values: Option<Vec<u32>>, desktop: usize, screen: IRect) -> IRe
 
 /// Modifier masks used by the default bindings.
 pub mod mods {
-    // X modifier bits: Shift = 1, Control = 4, Mod1 = 8.
+    // X modifier bits: Shift = 1, Lock = 2, Control = 4, Mod1 = 8, Mod4 = 64.
     pub const CTRL_ALT: u16 = 4 | 8;
     pub const CTRL_ALT_SHIFT: u16 = 4 | 8 | 1;
+    /// Every modifier a binding may name. Lock (Caps Lock) and the other
+    /// modifiers are deliberately absent: they state a keyboard state, not a
+    /// chord.
+    pub const BINDING: u16 = 1 | 4 | 8 | 64;
+}
+
+/// The modifier bits a key event is matched on.
+///
+/// X delivers the raw modifier state, which includes Caps Lock (`Lock`) and,
+/// on most maps, Num Lock (`Mod2`). Matching the raw state means every binding
+/// silently dies the moment either lock is on — the single most-reported
+/// hotkey bug in bspwm (#16), xmonad (#1), spectrwm (#103) and i3 (#943).
+/// Masking to the modifiers a binding can actually name fixes that class.
+pub fn event_mods(state: u16) -> u16 {
+    state & mods::BINDING
 }
 
 /// X keysyms for the default bindings (values from `<X11/keysymdef.h>`).
@@ -763,7 +962,7 @@ impl X11 {
         let max = self.conn.setup().max_keycode;
         let mapping = self
             .conn
-            .get_keyboard_mapping(min, (max - min + 1) as u8)?
+            .get_keyboard_mapping(min, max - min + 1)?
             .reply()?;
         let per = mapping.keysyms_per_keycode as usize;
         let keycode_for = |sym: u32| -> Option<u8> {
@@ -784,19 +983,7 @@ impl X11 {
                 let Some(keycode) = keycode_for(binding.keysym) else {
                     continue;
                 };
-                let ok = self
-                    .conn
-                    .grab_key(
-                        false,
-                        self.root,
-                        ModMask::from(binding.mods),
-                        keycode,
-                        GrabMode::ASYNC,
-                        GrabMode::ASYNC,
-                    )
-                    .map(|cookie| cookie.check().is_ok())
-                    .unwrap_or(false);
-                if ok {
+                if self.grab_with_locks(binding.mods, keycode) {
                     installed.push((binding, *command));
                     bound = true;
                     break;
@@ -894,6 +1081,51 @@ pub fn to_irect(r: Rect) -> IRect {
     r.to_irect()
 }
 
+/// Modifier masks to grab *in addition to* a binding's own mask, so the grab
+/// still fires with Caps Lock or Num Lock on. Computed from the modifier map:
+/// the mask that carries `Num_Lock` is platform-dependent (usually Mod2, but
+/// some layouts put it on Mod3 or Mod5), and guessing it is how "bindings stop
+/// working with numlock" happens.
+pub fn lock_mod_masks(conn: &RustConnection) -> Vec<u16> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    let mut masks = vec![1u16 << 1]; // Lock (Caps Lock), fixed by the core protocol.
+    let setup = conn.setup();
+    let min = setup.min_keycode;
+    let max = setup.max_keycode;
+    let count = max - min + 1;
+    let Some(binding) = conn
+        .get_keyboard_mapping(min, count)
+        .ok()
+        .and_then(|c| c.reply().ok())
+    else {
+        return masks;
+    };
+    let per_key = binding.keysyms_per_keycode as usize;
+    let keycode_sym = |code: u8| -> Option<u32> {
+        let index = (code.saturating_sub(min)) as usize * per_key;
+        binding.keysyms.get(index).copied()
+    };
+    let Some(modmap) = conn.get_modifier_mapping().ok().and_then(|c| c.reply().ok()) else {
+        return masks;
+    };
+    let per_mod = (modmap.keycodes.len() / 8).max(1);
+    for (index, row) in modmap.keycodes.chunks(per_mod).enumerate() {
+        if index >= 8 {
+            break;
+        }
+        // Num_Lock = 0xff7f, Caps_Lock = 0xffe5.
+        if row
+            .iter()
+            .any(|&code| matches!(keycode_sym(code), Some(0xff7f) | Some(0xffe5)))
+        {
+            masks.push(1u16 << index);
+        }
+    }
+    masks.sort_unstable();
+    masks.dedup();
+    masks
+}
+
 /// Human-readable summary of a window, for `pergola list`.
 pub fn describe(info: &WindowInfo) -> String {
     format!(
@@ -979,5 +1211,61 @@ mod tests {
             pick_workarea(Some(vec![0, 27, 1600, 873]), 4, SCREEN),
             IRect::new(0, 27, 1600, 873)
         );
+    }
+
+    #[test]
+    fn event_mods_ignores_caps_and_num_lock_but_keeps_super() {
+        const SHIFT: u16 = 1;
+        const LOCK: u16 = 2;
+        const CONTROL: u16 = 4;
+        const MOD1: u16 = 8;
+        const MOD2: u16 = 16; // Num Lock on the default map
+        const MOD4: u16 = 64;
+        // Ctrl+Alt+Space with Caps Lock and Num Lock both on.
+        assert_eq!(
+            event_mods(CONTROL | MOD1 | LOCK | MOD2),
+            CONTROL | MOD1
+        );
+        // A Super chord must keep Mod4; forgetting it is how the documented
+        // fallback silently stops working on desktops that own Ctrl+Alt.
+        assert_eq!(event_mods(MOD4 | LOCK | MOD2), MOD4);
+        assert_eq!(event_mods(SHIFT | CONTROL | MOD1 | MOD4), SHIFT | CONTROL | MOD1 | MOD4);
+    }
+
+    #[test]
+    fn client_size_snaps_down_to_the_increment_grid() {
+        // A terminal with a 6x13 grid and no base size.
+        assert_eq!(snap_client_size(900, 0, 6, 0, 0), 900);
+        assert_eq!(snap_client_size(901, 0, 6, 0, 0), 900);
+        assert_eq!(snap_client_size(895, 0, 6, 0, 0), 894);
+        // Base size is the origin of the grid: (900 - 4) / 6 = 149 steps.
+        assert_eq!(snap_client_size(900, 4, 6, 0, 0), 4 + 149 * 6);
+        // No increments: the available size stands.
+        assert_eq!(snap_client_size(901, 0, 0, 0, 0), 901);
+        // Minimum wins over the tile, maximum caps a too-large tile.
+        assert_eq!(snap_client_size(200, 0, 10, 250, 0), 250);
+        assert_eq!(snap_client_size(900, 0, 10, 0, 400), 400);
+    }
+
+    #[test]
+    fn snap_to_hints_keeps_the_frame_origin_and_the_decoration() {
+        let frame = IRect::new(100, 50, 906, 313);
+        let hints = SizeHints {
+            inc_w: 6,
+            inc_h: 13,
+            ..SizeHints::default()
+        };
+        // 4 px of left/right decoration, 2 px of top/bottom.
+        let out = snap_to_hints(frame, hints, (2, 2, 2, 2));
+        assert_eq!(out.x, 100);
+        assert_eq!(out.y, 50);
+        assert_eq!(out.w - 4, 900); // 902 client -> 6 * 150 = 900
+        assert_eq!(out.h - 4, 299); // 309 client -> 13 * 23 = 299
+    }
+
+    #[test]
+    fn snap_to_hints_is_identity_without_increments() {
+        let frame = IRect::new(0, 0, 101, 77);
+        assert_eq!(snap_to_hints(frame, SizeHints::default(), (0, 0, 0, 0)), frame);
     }
 }

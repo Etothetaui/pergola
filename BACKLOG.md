@@ -102,6 +102,36 @@ only an EnterNotify on the band; the drop target needs pointer tracking during a
 **Done when:** a hovered gap draws a line and leaves no artefact, a dragged window shows where it
 will land, and dragging a docked tile to the opposite edge re-docks it in one gesture.
 
+## 11. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+
+**What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
+records as newline-delimited JSON over the control socket, so a panel can draw the tree without
+polling `pergola tree`.
+**Why:** the harvest's second-largest class is **ipc / scripting** (227 issues) — tilers whose only
+interface is "run a command and parse the output" leave every status bar re-implementing state.
+Pergola's socket is request/response only today.
+**Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
+the stream survives a daemon restart, and an e2e assertion reads two records from one session.
+
+## 12. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+
+**What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
+currently only *sets* that property when it focuses a window.
+**Why:** the **ewmh / icccm** class (168 issues) is mostly clients and panels asking the WM to do
+something it does not listen for. A taskbar's "click to focus" silently does nothing today.
+**Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
+reports the same seat as focused; a unit test covers the request path.
+
+## 13. Named workspaces (tags) on top of views
+
+**What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
+per-tag focus memory; the document format gains a `tags` list beside `views`.
+**Why:** the largest class in the harvest is **workspace / tag** (236 issues), and Pergola's views
+are anonymous: there is no way to say "move this window to view 3". This is a format change, so it
+is a deliberate `MINOR` bump with a loader that keeps reading older documents.
+**Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
+and a document written by the new version loads in the old one without losing its views.
+
 ## Not planned
 
 - **Wayland-native.** An external process cannot move Wayland clients; anything here would be a
@@ -109,3 +139,8 @@ will land, and dragging a docked tile to the opposite edge re-docks it in one ge
 - **Screenshot layer for zoom** (TrellisWM's approach). It needs ScreenCaptureKit-class capture
   plus compositing; the geometry transform is the honest X11 equivalent.
 - **macOS.** Different window system, different constraints; out of scope.
+- **Tray and panel ownership** (132 issues in the harvest). Pergola reads the work area a
+  desktop's panel leaves; it does not draw a bar or own a tray. A tiler that owns the bar is a
+  desktop environment, not a tiler.
+- **Compositing** (57 issues). Opacity and effects belong to the running compositor; the overlay
+  dim planned in item 4 is the only compositor interaction worth having.

@@ -194,6 +194,10 @@ commands, document), `pergola-x11` (EWMH enumeration, moves, hotkey grabs,
 overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
 [docs/DESIGN.md](docs/DESIGN.md).
 
+Why each edge case is handled the way it is: [docs/HISTORY-LESSONS.md](docs/HISTORY-LESSONS.md)
+classifies 700 issues filed against the seven tiling window managers that came
+before Pergola and maps every failure class to the fix that answers it.
+
 ## Known limitations
 
 * **X11 only.** No Wayland-native support; XWayland clients only.
@@ -201,12 +205,13 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
   EWMH window manager should work, but only those two have been measured.
 * Windows outside the framed view are moved off-screen. Some WMs (xfwm4) clamp
   them to keep a sliver reachable, so a docked tile can peek at the screen edge.
-* Windows that set size hints (terminals with a character grid) may not fill a
-  tile exactly; the WM honours their hints. Under Openbox an `xterm` with 6x13
-  resize increments lands 11 px short of a 900 px tile; xfwm4 rounds differently.
-  This is the client's hint, not the layout: `pergola rects` still reports the
-  tile.
-* Dialogs and transient windows are treated as ordinary panels when docked.
+* Windows that set size hints (terminals with a character grid) are fitted to
+  their own resize increment before the frame is placed, so the tile covers its
+  slot without the WM clamping it short. A tile is therefore at most one
+  character cell narrower than the slot, and `pergola rects` reports the slot.
+* Dialogs and transient windows (`WM_TRANSIENT_FOR`) are not tiled: they keep the
+  geometry their toolkit gave them, and a dock request for one fails with
+  "not managed by pergola" rather than placing a dialog in a tile.
 * Tab groups are modelled (`views.len() > 1`) but there is no drag-to-tab UI yet.
 * A split's ratio can be changed by dragging its gap, not by a command; there is
   no `pergola ratio`. With `gap: 0` there is no strip to grab at all.
@@ -222,8 +227,8 @@ overlay), `pergola` (daemon + CLI + Unix-socket IPC). See
 ## Development
 
 ```bash
-cargo test               # 59 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 84 assertions against Xvfb + xfwm4 + real xterms
+cargo test               # 63 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # 42 assertions against Xvfb + xfwm4 + real xterms
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite
 cargo build --release
@@ -239,7 +244,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.3.1-dev` — pre-stable, no compatibility promises.
+`0.3.2-dev` — pre-stable, no compatibility promises.
 
 ## License
 

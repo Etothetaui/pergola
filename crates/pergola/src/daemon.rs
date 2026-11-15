@@ -14,7 +14,9 @@ use pergola_core::{
     Axis, Camera, CameraAction, Command, Direction, FloatingWindow, GapHandle, IRect, LayoutEngine,
     LayoutFile, LayoutNode, Rect, SeatRecord,
 };
-use pergola_x11::{binding_plan, command_for_key, describe, KeyBinding, WindowInfo, X11};
+use pergola_x11::{
+    binding_plan, command_for_key, describe, event_mods, snap_to_hints, KeyBinding, WindowInfo, X11,
+};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::ConfigureNotifyEvent;
 use x11rb::protocol::Event;
@@ -142,12 +144,17 @@ impl Daemon {
     /// gone, adopt new windows, refresh titles.
     fn reconcile(&mut self) -> Result<bool> {
         let windows = self.x.windows()?;
-        let live: HashSet<u32> = windows.iter().map(|w| w.id).collect();
+        // `_NET_CLIENT_LIST` still contains a minimised window (and windows on
+        // the host WM's other desktops) even though it is unmapped. A seat is
+        // gone only when its window leaves the client list: dropping it because
+        // the window was merely minimised collapses the tile and loses the
+        // layout — i3#718, awesome#92.
+        let clients: HashSet<u32> = self.x.client_list()?.into_iter().collect();
 
         let gone: Vec<SeatRecord> = self
             .seats
             .iter()
-            .filter(|s| !live.contains(&s.window))
+            .filter(|s| !clients.contains(&s.window))
             .cloned()
             .collect();
         let mut changed = !gone.is_empty();
@@ -164,6 +171,22 @@ impl Daemon {
         }
 
         for w in &windows {
+            if w.hidden {
+                // Minimised: keep the seat and its title, but do not treat the
+                // geometry as the user's.
+                if let Some(record) = self.seats.iter_mut().find(|s| s.window == w.id) {
+                    record.title = w.title.clone();
+                    record.class = w.class.clone();
+                }
+                continue;
+            }
+            // A dialog or popup (`WM_TRANSIENT_FOR`) belongs to its parent and
+            // the WM places it. Adopting it would create a seat for a window
+            // that `apply` then refuses to move, leaving an empty panel in the
+            // tree and a tile with nothing in it — awesome#22, i3#787.
+            if w.transient {
+                continue;
+            }
             if let Some(record) = self.seats.iter_mut().find(|s| s.window == w.id) {
                 record.title = w.title.clone();
                 record.class = w.class.clone();
@@ -246,6 +269,13 @@ impl Daemon {
 
     fn apply(&mut self) -> Result<()> {
         let screen = self.x.workarea_rect()?;
+        // No usable output geometry yet (server still starting, monitor asleep,
+        // RandR mid-change): every rect computed from a 0x0 world divides by
+        // zero and collapses the whole tree. Leave the last geometry alone and
+        // let the next reconcile try again.
+        if screen.w <= 0 || screen.h <= 0 {
+            return Ok(());
+        }
         let world = screen.to_rect();
         let rects = self.engine.rects(&self.file.doc.root, world);
         let framed = if self.camera.framed != self.file.doc.root.id() {
@@ -264,16 +294,32 @@ impl Daemon {
             };
             let target = park_if_outside(tf(*rect).to_irect(), screen, framed.is_some());
             for view in &panel.views {
-                if let Some(seat) = self.seats.iter().find(|s| &s.seat == view) {
-                    // A maximized window ignores `_NET_MOVERESIZE_WINDOW`: the
-                    // tile would keep the full-screen geometry and the tree
-                    // would lie. Drop the state, then move.
-                    if self.x.maximized(seat.window) {
-                        let _ = self.x.unmaximize(seat.window);
-                    }
-                    let _ = self.x.move_resize(seat.window, target);
-                    self.applied.insert(seat.window, target);
+                let Some(seat) = self.seats.iter().find(|s| &s.seat == view) else {
+                    continue;
+                };
+                let Ok(Some(info)) = self.x.info(seat.window) else {
+                    continue;
+                };
+                // A fullscreen window owns its geometry: the WM has taken it
+                // over and moving it would fight the user's F11. A transient
+                // window (dialog, popup) belongs to its parent, and tiling it
+                // lands it wherever the parent happens to be — awesome#22.
+                // Leave both alone until the state clears.
+                if info.fullscreen || info.transient {
+                    continue;
                 }
+                // A maximized window ignores `_NET_MOVERESIZE_WINDOW`: the
+                // tile would keep the full-screen geometry and the tree would
+                // lie. Drop the state, then move.
+                if info.maximized {
+                    let _ = self.x.unmaximize(seat.window);
+                }
+                // Snap the client area to its own resize grid, so a terminal
+                // lands flush against the tile instead of being clamped by the
+                // WM to an arbitrary shortfall.
+                let target = snap_to_hints(target, self.x.size_hints(seat.window), info.extents);
+                let _ = self.x.move_resize(seat.window, target);
+                self.applied.insert(seat.window, target);
             }
             if let Some(visible) = panel.visible() {
                 if let Some(seat) = self.seats.iter().find(|s| s.seat == visible) {
@@ -599,6 +645,14 @@ impl Daemon {
             };
             out.push_str(&format!("{:<9} {}\n", where_, describe(w)));
         }
+        // Minimised windows are unmapped, so `windows()` does not list them,
+        // but their seats are still in the tree. Say so instead of letting the
+        // user think the tile vanished.
+        for seat in &self.seats {
+            if !windows.iter().any(|w| w.id == seat.window) {
+                out.push_str(&format!("{:<9} 0x{:08x}  {}\n", "hidden", seat.window, seat.title));
+            }
+        }
         Ok(out.trim_end().to_string())
     }
 
@@ -902,20 +956,8 @@ impl Daemon {
             }
         });
 
-        if self.config.hotkeys {
-            match self.x.install_bindings(&binding_plan()) {
-                Ok((bound, failures)) => {
-                    self.bindings = bound;
-                    for failure in &failures {
-                        eprintln!(
-                            "pergola: no free key for '{}' (tried {})",
-                            failure.command,
-                            failure.tried.join(", ")
-                        );
-                    }
-                }
-                Err(e) => eprintln!("pergola: cannot grab hotkeys: {e}"),
-            }
+        if let Err(e) = self.reinstall_bindings() {
+            eprintln!("pergola: cannot grab hotkeys: {e}");
         }
 
         eprintln!(
@@ -996,7 +1038,10 @@ impl Daemon {
                 if std::env::var_os("PERGOLA_DEBUG").is_some() {
                     eprintln!("pergola: KeyPress detail={} state=0x{state:x}", key.detail);
                 }
-                let mods = state & (4 | 8 | 1); // Control | Mod1 | Shift
+                // Mask to the modifiers a binding can name: Caps Lock and
+                // Num Lock are keyboard state, not chords. Matching the raw
+                // state is the classic "shortcuts die with numlock on" bug.
+                let mods = event_mods(state);
                 let keysym = self
                     .keymap
                     .iter()
@@ -1028,7 +1073,49 @@ impl Daemon {
             }
             Event::ButtonRelease(_) => self.end_gap_drag()?,
             Event::ConfigureNotify(configure) => self.note_configure(&configure)?,
+            // A keyboard-map change (layout switch, xmodmap, another client's
+            // remap) invalidates both the keycode table and the grabs. Rebuild
+            // and re-grab, or every binding silently points at the old layout.
+            Event::MappingNotify(_) => self.reinstall_bindings()?,
+            // A title or class change is a property change, not a configure:
+            // without this the tree keeps the name the window had when it was
+            // adopted until the next 2 s reconcile — herbstluftwm#35, bspwm#50.
+            Event::PropertyNotify(property) => {
+                if self.x.is_title_atom(property.atom) {
+                    if let Ok(Some(info)) = self.x.info(property.window) {
+                        if let Some(seat) = self.seats.iter_mut().find(|s| s.window == property.window) {
+                            seat.title = info.title;
+                            seat.class = info.class;
+                        }
+                    }
+                }
+            }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Rebuild the keycode table and re-grab every binding after a keyboard
+    /// map change. Ungrabbing first drops chords that still point at the old
+    /// map; regrabbing the same client is idempotent.
+    fn reinstall_bindings(&mut self) -> Result<()> {
+        if !self.config.hotkeys {
+            return Ok(());
+        }
+        self.keymap = build_keymap(&self.x)?;
+        let _ = self.x.ungrab_all_keys();
+        match self.x.install_bindings(&binding_plan()) {
+            Ok((bound, failures)) => {
+                self.bindings = bound;
+                for failure in &failures {
+                    eprintln!(
+                        "pergola: no free key for '{}' (tried {})",
+                        failure.command,
+                        failure.tried.join(", ")
+                    );
+                }
+            }
+            Err(e) => eprintln!("pergola: cannot grab hotkeys: {e}"),
         }
         Ok(())
     }
@@ -1127,6 +1214,15 @@ impl Daemon {
         }
         if self.seat_for_window(event.window).is_none() {
             return Ok(());
+        }
+        // A fullscreen window's geometry is the WM's (F11), not a drag the
+        // user wants docked; and a transient window's place belongs to its
+        // parent. Treating either as a drag docks the wrong window to the
+        // nearest edge — awesome#22, i3#594.
+        if let Ok(Some(info)) = self.x.info(event.window) {
+            if info.fullscreen || info.transient {
+                return Ok(());
+            }
         }
         // The WM reports client coordinates; edge snapping is about the frame
         // the user sees, so add the decorations back.
@@ -1496,7 +1592,7 @@ fn build_keymap(x: &X11) -> Result<Vec<(u8, u32)>> {
     use x11rb::protocol::xproto::ConnectionExt as _;
     let min = x.conn.setup().min_keycode;
     let max = x.conn.setup().max_keycode;
-    let count = (max - min + 1) as u8;
+    let count = max - min + 1;
     let mapping = x.conn.get_keyboard_mapping(min, count)?.reply()?;
     let per = mapping.keysyms_per_keycode as usize;
     let mut out = Vec::new();

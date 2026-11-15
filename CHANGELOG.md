@@ -3,6 +3,61 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.3.2-dev] — 2026-11-14
+
+### Fixed
+
+* **A `Super+…` chord no longer dies when Num Lock is on.** The key-event path
+  compared the raw modifier state against a mask of `Shift|Control|Mod1`, so a
+  grab registered for `Mod4` never matched an event carrying `Mod4|Mod2`. It now
+  masks the event state down to the four binding modifiers
+  (`pergola_x11::event_mods`), so lock keys cannot break a chord
+  (`bspwm#16`, `i3#943`, `spectrwm#103`).
+* **Bindings survive a keyboard-layout switch.** Changing to a Cyrillic/Neo/Bone
+  layout renumbers keycodes and left the old grabs pointing at the wrong keys.
+  `MappingNotify` now triggers `reinstall_bindings()`, which rebuilds the keymap,
+  ungrabs everything and re-grabs (`i3#79`, `awesome#157`, `awesome#219`).
+* **Grabs are registered for every lock combination.** The Num Lock mask is read
+  from the modifier map instead of assumed to be Mod2, and `grab_with_locks()`
+  grabs each binding with and without every lock key held.
+* **A terminal tile no longer ends up 11 px short of its slot.** Client sizes are
+  now fitted to the `WM_NORMAL_HINTS` resize grid by `snap_to_hints()` before the
+  frame is placed, so the tile the engine computed and the tile on screen agree
+  (`awesome#200`, `awesome#197`).
+* **A 0×0 work area no longer collapses the tree.** A RandR mid-change or a
+  monitor asleep reports a zero-sized work area; `apply()` now returns early and
+  retries on the next pass instead of dividing by zero (`i3#926`).
+* **Fullscreen and maximised windows are left alone.** `WindowInfo` now carries
+  `_NET_WM_STATE_FULLSCREEN` and the maximised flags, and `apply()`/`note_configure()`
+  skip them, so entering fullscreen cannot be mistaken for an edge-dock drag
+  (`awesome#245`, `awesome#203`).
+* **Transient windows are never tiled.** `WM_TRANSIENT_FOR` is read into
+  `WindowInfo.transient`; `reconcile()` will not adopt a dialog into the tree and
+  `apply()` skips it, so a completion popup or a file chooser stays where its
+  toolkit put it (`awesome#22`, `i3#787`).
+* **A minimised window keeps its tile.** Liveness is now decided from
+  `_NET_CLIENT_LIST` rather than from the mapped state, so minimising a window no
+  longer collapses its tile; `pergola list` reports the seat as `hidden`
+  (`i3#718`, `awesome#92`).
+* **A title change is visible immediately.** `watch_window()` subscribes to
+  `STRUCTURE_NOTIFY | PROPERTY_CHANGE` and `PropertyNotify` refreshes title and
+  class instead of waiting for the next geometry pass (`herbstluftwm#35`).
+* **`scripts/e2e.sh` geometry assertions are increment-aware.** The suite
+  compared tile origin and size with a fixed ±2 tolerance, so snapping to a
+  terminal's character grid reported six false failures. It now compares the four
+  edges against the client's own `WM_NORMAL_HINTS` increment, the same rule
+  `scripts/health.sh` already used.
+
+### Documentation
+
+* `docs/HISTORY-LESSONS.md` — 700 issues filed against i3, awesomewm, bspwm,
+  xmonad, herbstluftwm, qtile and spectrwm (2009–2019), classified into 25
+  failure classes and mapped to the fix that answers each, with the classes
+  Pergola does **not** handle named explicitly.
+* `docs/research/issue-digest.md` and `docs/research/issue-classes.txt` — the raw
+  harvest; `scripts/research-issues.py` regenerates it from the GitHub REST API.
+* Test counts are the measured values (63 unit, 42 e2e).
+
 ## [0.3.1-dev] — 2026-11-14
 
 ### Fixed

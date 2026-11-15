@@ -1,0 +1,396 @@
+
+## keymap / keyboard layout (34)
+- awesome#63 [closed] AltGr shortcut combinations not work
+- awesome#111 [closed] "less" ("<") in globalkeys mapping breaks "comma" (",") in clientkeys
+- awesome#157 [closed] Run-/Lua- Prompt not working with special xkb-layout (Neo/Bone)
+- awesome#169 [open] Key release signals not emitted for modifier keys
+- awesome#196 [closed] Panel not responding mouse when I switching to russian keyboard
+- awesome#211 [closed] Build failure after merged push request
+- awesome#219 [closed] awful.widget.prompt and menubar do not support russian (cyrillic) input
+- awesome#230 [closed] Awesome uses high CPU when key held down
+- bspwm#16 [closed] Mouse bindings doesnt work with numlock on
+- herbstluftwm#85 [open] Binding `Shift+a` isn't the same as binding `A`
+- i3#79 [closed] WM bindings not work when using non English keyboard layot
+- i3#943 [closed] i3lock and numlock
+- i3#491 [closed] i3-config-wizard generates invalid config file
+- i3#837 [closed] Problem with mod key
+
+## hotkey grabs (81)
+- awesome#63 [closed] AltGr shortcut combinations not work
+- awesome#77 [open] Fake input cannot bypass Awesome keys (shortcuts)
+- awesome#99 [closed] After minimize, focus should still follow mouse
+- awesome#111 [closed] "less" ("<") in globalkeys mapping breaks "comma" (",") in clientkeys
+- awesome#135 [closed] Closing programs in the systray makes keyboard unresponsive
+- awesome#151 [closed] descriptions of keybindings
+- awesome#169 [open] Key release signals not emitted for modifier keys
+- awesome#195 [closed] May not be a bug of awesomewm--recent update of google-chrome does not automatically redraw the client
+- awesome#205 [closed] Cannot close window with mod+shift+c with default config
+- awesome#211 [closed] Build failure after merged push request
+- awesome#223 [closed] Can not minimize only client on a tag, while it's under cursor
+- awesome#237 [closed] Set window as unfocusable
+- awesome#245 [closed] Maximized Firefox windows not restored properly after fullscreen (F11)
+- bspwm#16 [closed] Mouse bindings doesnt work with numlock on
+
+## multi-monitor / randr (132)
+- awesome#66 [closed] Catalog error : Detected recursion in catalog -//OASIS//ENTITIES DocBook XML
+- awesome#75 [closed] Awesome WM won't start with my system language but it works with English.
+- awesome#109 [closed] dbus.emit_signal() usage question
+- awesome#111 [closed] "less" ("<") in globalkeys mapping breaks "comma" (",") in clientkeys
+- awesome#154 [open] There is something wrong with inputs
+- awesome#161 [closed] Window not shown
+- awesome#170 [closed] Focus problems in multi monitor setup with Google Chrome / Chromium
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#203 [closed] In dual monitor configuration, maximization of a window in screen2 moves window to screen1 
+- awesome#205 [closed] Cannot close window with mod+shift+c with default config
+- bspwm#32 [closed] Reorganize Messages
+- bspwm#139 [open] Floating window stuck beneath tiling windows
+- bspwm#137 [closed] Strange behaviour on different external monitor swap
+- bspwm#85 [closed] Sticky Tile/Virtual Monitors
+
+## focus / raise (170)
+- awesome#22 [closed] Regression: dialogs are not handled correctly anymore
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#92 [closed] Cannot minimize all windows on a tag
+- awesome#99 [closed] After minimize, focus should still follow mouse
+- awesome#130 [closed] Tag is not losing "urgent" state
+- awesome#134 [closed] An alleged race condition on client focus
+- awesome#140 [closed] Menubar won't open when theme.bg_focus is not a color
+- awesome#141 [closed] Crashing when theme uses nonexistent PNG files
+- awesome#143 [closed] spec: focusing and raising a client on another tag
+- awesome#161 [closed] Window not shown
+- awesome#164 [closed] Unfocusing a client doesn't work
+- awesome#170 [closed] Focus problems in multi monitor setup with Google Chrome / Chromium
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#189 [open] mouse::enter with redirected windows
+
+## geometry / size hints (94)
+- awesome#22 [closed] Regression: dialogs are not handled correctly anymore
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#151 [closed] descriptions of keybindings
+- awesome#161 [closed] Window not shown
+- awesome#172 [open] Expose window geometry saved for awful.client.floating via API
+- awesome#173 [open] luaA_register_xproperty: allow for tables to be registered
+- awesome#197 [closed] Gaps when fair layout is active
+- awesome#200 [closed] Can't resize libreoffice
+- awesome#213 [closed] Get wrong the geometry of client with new tag
+- awesome#231 [open] float/max/full/minimize should be set on a per-tag basis
+- awesome#245 [closed] Maximized Firefox windows not restored properly after fullscreen (F11)
+- bspwm#22 [closed] Move/Resize while tiled
+- bspwm#54 [closed] focus_follows_pointer and nitrogen
+- bspwm#85 [closed] Sticky Tile/Virtual Monitors
+
+## fullscreen / maximize (70)
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#171 [closed] RFC: Set c.border_width to 0 when maximized
+- awesome#195 [closed] May not be a bug of awesomewm--recent update of google-chrome does not automatically redraw the client
+- awesome#202 [closed] awesome wm with unclutter
+- awesome#203 [closed] In dual monitor configuration, maximization of a window in screen2 moves window to screen1 
+- awesome#217 [closed] autofocus: shouldn't raise clients
+- awesome#220 [closed] Window titles on maximized windows get weird sequence of characters
+- awesome#231 [open] float/max/full/minimize should be set on a per-tag basis
+- awesome#237 [closed] Set window as unfocusable
+- awesome#241 [closed] rules doesn't honor "custom" WM_CLASS
+- awesome#245 [closed] Maximized Firefox windows not restored properly after fullscreen (F11)
+- awesome#248 [closed] Java JMenuBar gets incorrect focus
+- awesome#254 [closed] Monodevelop GUI editor (Stetic) problems - can't drag and drop widgets
+
+## transient / dialog (91)
+- awesome#22 [closed] Regression: dialogs are not handled correctly anymore
+- awesome#64 [closed] is startup-notification optional? / irritating waiting cursor
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#84 [closed] Menubar cannot handle special pattern characters
+- awesome#140 [closed] Menubar won't open when theme.bg_focus is not a color
+- awesome#141 [closed] Crashing when theme uses nonexistent PNG files
+- awesome#166 [closed] Asking for Function: automatical closing of notifications
+- awesome#181 [closed] client.transient_for is not set when restarting awesome
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#190 [closed] KDE Frameworks 5 notifications do not close on click
+- awesome#199 [closed] Sometimes font color dialog doesn't show in LibreOffice
+- awesome#203 [closed] In dual monitor configuration, maximization of a window in screen2 moves window to screen1 
+- awesome#219 [closed] awful.widget.prompt and menubar do not support russian (cyrillic) input
+
+## crash / hang (160)
+- awesome#22 [closed] Regression: dialogs are not handled correctly anymore
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#75 [closed] Awesome WM won't start with my system language but it works with English.
+- awesome#84 [closed] Menubar cannot handle special pattern characters
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#135 [closed] Closing programs in the systray makes keyboard unresponsive
+- awesome#136 [closed] Travis integration
+- awesome#141 [closed] Crashing when theme uses nonexistent PNG files
+- awesome#156 [closed] align layout constructor arguments
+- awesome#176 [closed] qt5 tray icons with a grey background
+- awesome#178 [closed] Get clients ordered by stack / prefer clients on top with client.swap.bydirection
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#195 [closed] May not be a bug of awesomewm--recent update of google-chrome does not automatically redraw the client
+- awesome#200 [closed] Can't resize libreoffice
+
+## memory / cpu (10)
+- awesome#226 [closed] in max mode there should be only 1 mapped window at any time
+- awesome#230 [closed] Awesome uses high CPU when key held down
+- i3#995 [closed] I3 freezes (100[pct] cpu).
+- i3#414 [closed] Repository for Ubuntu (and blog) not updated
+- i3#240 [closed] Three Column Resize Results in Lost Width
+- i3#895 [closed] It's possible to bring up i3bar while i3lock is active
+- qtile#379 [closed] CPU usage leak
+- qtile#349 [closed] Problem after suspend/sleep
+- spectrwm#102 [closed] autorun broken in last release (2.7.0)
+- xmonad#35 [closed] memory leak on master
+
+## restart / state (91)
+- awesome#67 [closed] Keyboard issues: stops responsing
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#77 [open] Fake input cannot bypass Awesome keys (shortcuts)
+- awesome#78 [closed] Can't get data from dbus signal if its type is double
+- awesome#84 [closed] Menubar cannot handle special pattern characters
+- awesome#108 [closed] Add signal for startup (similar to "exit")
+- awesome#109 [closed] dbus.emit_signal() usage question
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#173 [open] luaA_register_xproperty: allow for tables to be registered
+- awesome#176 [closed] qt5 tray icons with a grey background
+- awesome#181 [closed] client.transient_for is not set when restarting awesome
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#201 [closed] "capi.dbus.add_match" and "capi.dbus.connect_signal" 
+- awesome#235 [closed] naugthy state suspended
+
+## config / errors (171)
+- awesome#75 [closed] Awesome WM won't start with my system language but it works with English.
+- awesome#109 [closed] dbus.emit_signal() usage question
+- awesome#110 [closed] Allow testing for valid object in LUA ("invalid object"); obj:isvalid()
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#134 [closed] An alleged race condition on client focus
+- awesome#136 [closed] Travis integration
+- awesome#140 [closed] Menubar won't open when theme.bg_focus is not a color
+- awesome#141 [closed] Crashing when theme uses nonexistent PNG files
+- awesome#151 [closed] descriptions of keybindings
+- awesome#154 [open] There is something wrong with inputs
+- awesome#172 [open] Expose window geometry saved for awful.client.floating via API
+- awesome#185 [closed] Provide a helper to start a command, and return exit code, stdout and stderr
+- awesome#193 [closed] Implement request::minimized
+- awesome#203 [closed] In dual monitor configuration, maximization of a window in screen2 moves window to screen1 
+
+## startup / empty (107)
+- awesome#64 [closed] is startup-notification optional? / irritating waiting cursor
+- awesome#67 [closed] Keyboard issues: stops responsing
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#108 [closed] Add signal for startup (similar to "exit")
+- awesome#134 [closed] An alleged race condition on client focus
+- awesome#172 [open] Expose window geometry saved for awful.client.floating via API
+- awesome#176 [closed] qt5 tray icons with a grey background
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#200 [closed] Can't resize libreoffice
+- awesome#205 [closed] Cannot close window with mod+shift+c with default config
+- awesome#230 [closed] Awesome uses high CPU when key held down
+- awesome#231 [open] float/max/full/minimize should be set on a per-tag basis
+- bspwm#22 [closed] Move/Resize while tiled
+- bspwm#54 [closed] focus_follows_pointer and nitrogen
+
+## ewmh / icccm (168)
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#84 [closed] Menubar cannot handle special pattern characters
+- awesome#111 [closed] "less" ("<") in globalkeys mapping breaks "comma" (",") in clientkeys
+- awesome#136 [closed] Travis integration
+- awesome#143 [closed] spec: focusing and raising a client on another tag
+- awesome#154 [open] There is something wrong with inputs
+- awesome#157 [closed] Run-/Lua- Prompt not working with special xkb-layout (Neo/Bone)
+- awesome#162 [closed] Alpha channel ignored on borders
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#205 [closed] Cannot close window with mod+shift+c with default config
+- awesome#209 [closed] "urxvt -bl" (borderLess) creates unmanagable client
+- awesome#211 [closed] Build failure after merged push request
+- awesome#231 [open] float/max/full/minimize should be set on a per-tag basis
+
+## compositing (57)
+- awesome#76 [closed] Rendering issues
+- awesome#162 [closed] Alpha channel ignored on borders
+- awesome#176 [closed] qt5 tray icons with a grey background
+- awesome#179 [closed] rendering problems after xorg upgrade
+- awesome#214 [closed] Too slow rendering on radeon
+- awesome#237 [closed] Set window as unfocusable
+- bspwm#112 [closed] Windows being rendered in multiple workspaces
+- bspwm#138 [closed] Feature: hiding borders
+- bspwm#70 [closed] Segfault while starting
+- bspwm#52 [closed] PyCharm renders as a blank window
+- bspwm#113 [closed] Steam bleeding trough desktops
+- bspwm#115 [closed] Compton Opacity Problem
+- herbstluftwm#37 [open] Feature request: rotate grid
+- herbstluftwm#72 [closed] Handle _NET_WM_STATE_BELOW (enhancement request)
+
+## tray / panel (132)
+- awesome#22 [closed] Regression: dialogs are not handled correctly anymore
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#76 [closed] Rendering issues
+- awesome#84 [closed] Menubar cannot handle special pattern characters
+- awesome#99 [closed] After minimize, focus should still follow mouse
+- awesome#135 [closed] Closing programs in the systray makes keyboard unresponsive
+- awesome#140 [closed] Menubar won't open when theme.bg_focus is not a color
+- awesome#162 [closed] Alpha channel ignored on borders
+- awesome#176 [closed] qt5 tray icons with a grey background
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#196 [closed] Panel not responding mouse when I switching to russian keyboard
+- awesome#211 [closed] Build failure after merged push request
+- awesome#212 [open] How to interact with systray with keyboard
+- awesome#219 [closed] awful.widget.prompt and menubar do not support russian (cyrillic) input
+
+## workspace / tag (236)
+- awesome#63 [closed] AltGr shortcut combinations not work
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#92 [closed] Cannot minimize all windows on a tag
+- awesome#130 [closed] Tag is not losing "urgent" state
+- awesome#134 [closed] An alleged race condition on client focus
+- awesome#135 [closed] Closing programs in the systray makes keyboard unresponsive
+- awesome#138 [closed] Unknown signal warning for tag property 'icon_only'
+- awesome#140 [closed] Menubar won't open when theme.bg_focus is not a color
+- awesome#141 [closed] Crashing when theme uses nonexistent PNG files
+- awesome#143 [closed] spec: focusing and raising a client on another tag
+- awesome#154 [open] There is something wrong with inputs
+- awesome#161 [closed] Window not shown
+- awesome#163 [closed] Implement lua __index and __newindex for capi objects
+
+## ipc / scripting (227)
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#77 [open] Fake input cannot bypass Awesome keys (shortcuts)
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#135 [closed] Closing programs in the systray makes keyboard unresponsive
+- awesome#136 [closed] Travis integration
+- awesome#138 [closed] Unknown signal warning for tag property 'icon_only'
+- awesome#140 [closed] Menubar won't open when theme.bg_focus is not a color
+- awesome#151 [closed] descriptions of keybindings
+- awesome#154 [open] There is something wrong with inputs
+- awesome#163 [closed] Implement lua __index and __newindex for capi objects
+- awesome#164 [closed] Unfocusing a client doesn't work
+- awesome#172 [open] Expose window geometry saved for awful.client.floating via API
+- awesome#179 [closed] rendering problems after xorg upgrade
+- awesome#185 [closed] Provide a helper to start a command, and return exit code, stdout and stderr
+
+## build / packaging (172)
+- awesome#64 [closed] is startup-notification optional? / irritating waiting cursor
+- awesome#66 [closed] Catalog error : Detected recursion in catalog -//OASIS//ENTITIES DocBook XML
+- awesome#67 [closed] Keyboard issues: stops responsing
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#76 [closed] Rendering issues
+- awesome#82 [closed] Add ${CMAKE_DL_LIBS} in CMakeLists.txt
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#135 [closed] Closing programs in the systray makes keyboard unresponsive
+- awesome#136 [closed] Travis integration
+- awesome#154 [open] There is something wrong with inputs
+- awesome#157 [closed] Run-/Lua- Prompt not working with special xkb-layout (Neo/Bone)
+- awesome#159 [closed] "Wayland" support of awesome
+- awesome#160 [closed] build: allow to pass in VERSION / GIT_VERSION
+
+## drag / resize (58)
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#170 [closed] Focus problems in multi monitor setup with Google Chrome / Chromium
+- awesome#202 [closed] awesome wm with unclutter
+- awesome#223 [closed] Can not minimize only client on a tag, while it's under cursor
+- awesome#225 [closed] Add support for multi-pointer X
+- awesome#254 [closed] Monodevelop GUI editor (Stetic) problems - can't drag and drop widgets
+- bspwm#22 [closed] Move/Resize while tiled
+- bspwm#54 [closed] focus_follows_pointer and nitrogen
+- bspwm#8 [closed] add "focus follows mouse" option
+- bspwm#41 [closed] focus_follows_pointer should not raise windows
+- bspwm#60 [closed] Moving the pointer to a different monitor does not move monitor focus.
+- bspwm#24 [closed] Compress pointer tracking events.
+- bspwm#53 [closed] Left-click is sometimes not registered in Steam
+- bspwm#12 [closed] focus_follows_mouse should not hide floating windows
+
+## lock / screensaver (62)
+- awesome#127 [closed] Crash due to lgi bug
+- awesome#157 [closed] Run-/Lua- Prompt not working with special xkb-layout (Neo/Bone)
+- awesome#211 [closed] Build failure after merged push request
+- awesome#216 [closed] Clarify timer API docs
+- awesome#235 [closed] naugthy state suspended
+- awesome#249 [closed] textclock.lua: incorrect timezone handling
+- bspwm#32 [closed] Reorganize Messages
+- bspwm#16 [closed] Mouse bindings doesnt work with numlock on
+- bspwm#88 [closed] Possible rules deadlock
+- bspwm#148 [closed] remove_unplugged_monitors is not working
+- bspwm#127 [closed] Dzen2 default panel stacks contents
+- bspwm#79 [closed] Sticky window segfault
+- bspwm#92 [closed] Pipes not being closed by handle_rules
+- herbstluftwm#30 [open] Better exit status for lock_tag/unlock_tag
+
+## title property (41)
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#162 [closed] Alpha channel ignored on borders
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#220 [closed] Window titles on maximized windows get weird sequence of characters
+- bspwm#127 [closed] Dzen2 default panel stacks contents
+- bspwm#128 [closed] Use Conky for the top bar
+- bspwm#50 [closed] Example panel shows superfluous T with window title
+- bspwm#107 [closed] Dzen2 panel example dependencies
+- herbstluftwm#35 [closed] Title doesn't get updated correctly with Qt applications
+- herbstluftwm#39 [closed] Feature request: floating dialog windows
+- herbstluftwm#40 [closed] Title in panel doesn't update when closing single window in frame
+- herbstluftwm#64 [closed] XFetchName doesn't always return a name.
+- herbstluftwm#101 [closed] spawn does not refresh the comand
+- herbstluftwm#116 [closed] can't use titles with spaces or parenthesis in rules
+
+## window type (38)
+- awesome#136 [closed] Travis integration
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#209 [closed] "urxvt -bl" (borderLess) creates unmanagable client
+- awesome#254 [closed] Monodevelop GUI editor (Stetic) problems - can't drag and drop widgets
+- bspwm#133 [closed] Support _MOTIF_WM_HINTS
+- bspwm#87 [closed] [resolved] Bar-Aint-Recursive is tiled like a normal window
+- bspwm#96 [closed] Inconsistent stacking order
+- herbstluftwm#96 [closed] can't focus textfields in unmanaged dialogs
+- herbstluftwm#146 [closed] Don't reinstall the build dependencies in every travis run 
+- i3#905 [closed] Support for window icons (_NET_WM_ICON property)
+- i3#787 [closed] some windows not managed by i3
+- i3#777 [closed] Tabbed layout and decorations
+- i3#540 [closed] workaround for borderless
+- i3#771 [closed] reproducable crash: assert fails in src/randr.c
+
+## performance (26)
+- awesome#82 [closed] Add ${CMAKE_DL_LIBS} in CMakeLists.txt
+- awesome#160 [closed] build: allow to pass in VERSION / GIT_VERSION
+- awesome#170 [closed] Focus problems in multi monitor setup with Google Chrome / Chromium
+- awesome#214 [closed] Too slow rendering on radeon
+- bspwm#32 [closed] Reorganize Messages
+- bspwm#6 [closed] handle debug messages
+- bspwm#24 [closed] Compress pointer tracking events.
+- bspwm#7 [closed] Use of non-portable extension
+- herbstluftwm#13 [open] hidden tags / monitors
+- herbstluftwm#22 [open] Resizing/scaling of pseudotiled clients
+- herbstluftwm#40 [closed] Title in panel doesn't update when closing single window in frame
+- herbstluftwm#56 [closed] Update _NET_WM_DESKTOP atom for all clients when removing a tag
+- herbstluftwm#58 [closed] Update focus objects when removing a tag
+- herbstluftwm#79 [open] Wayland support
+
+## stacking (85)
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#109 [closed] dbus.emit_signal() usage question
+- awesome#134 [closed] An alleged race condition on client focus
+- awesome#143 [closed] spec: focusing and raising a client on another tag
+- awesome#157 [closed] Run-/Lua- Prompt not working with special xkb-layout (Neo/Bone)
+- awesome#170 [closed] Focus problems in multi monitor setup with Google Chrome / Chromium
+- awesome#178 [closed] Get clients ordered by stack / prefer clients on top with client.swap.bydirection
+- awesome#179 [closed] rendering problems after xorg upgrade
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#217 [closed] autofocus: shouldn't raise clients
+- awesome#231 [open] float/max/full/minimize should be set on a per-tag basis
+- awesome#237 [closed] Set window as unfocusable
+- awesome#249 [closed] textclock.lua: incorrect timezone handling
+- bspwm#48 [closed] gtk3 floating menu issue
+
+## window classes (101)
+- awesome#69 [closed] Menubar geometry does not respect bottom awful.wibox 
+- awesome#71 [closed] Eclipse: completion popup-window disappearing
+- awesome#170 [closed] Focus problems in multi monitor setup with Google Chrome / Chromium
+- awesome#176 [closed] qt5 tray icons with a grey background
+- awesome#179 [closed] rendering problems after xorg upgrade
+- awesome#182 [open] Handle refocusing the same client with mod-j/k
+- awesome#203 [closed] In dual monitor configuration, maximization of a window in screen2 moves window to screen1 
+- awesome#209 [closed] "urxvt -bl" (borderLess) creates unmanagable client
+- awesome#214 [closed] Too slow rendering on radeon
+- awesome#226 [closed] in max mode there should be only 1 mapped window at any time
+- awesome#232 [closed] Move menubar.utils.lookup_icon to awful.utils / refactor it
+- awesome#233 [closed] Unused icon_theme with default theme
+- awesome#245 [closed] Maximized Firefox windows not restored properly after fullscreen (F11)
+- awesome#248 [closed] Java JMenuBar gets incorrect focus

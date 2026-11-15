@@ -114,10 +114,29 @@ check_geometry() {
     local win="0x${id#p-}" fg
     fg=$(frame_geom "$win")
     local ax ay aw ah; read -r ax ay aw ah <<<"$fg"
-    check_near "$x" "$ax" 2 "$label $id x"
-    check_near "$y" "$ay" 2 "$label $id y"
-    check_near "$w" "$aw" 2 "$label $id w"
-    check_near "$h" "$ah" 2 "$label $id h"
+    # A client with a character grid (every terminal) snaps its size to
+    # WM_NORMAL_HINTS resize increments, so the honest tolerance for a tile's
+    # edges is its own increment, never less than 2 px. Compare edges rather
+    # than origin+size: a snapped client can be one increment smaller while the
+    # WM anchors it at the requested position, so the frame origin is exact but
+    # the extent is not — and a real drift (a maximised window) is off by a
+    # whole tile, far beyond one increment.
+    local inc iw ih
+    inc=$(xprop -id "$win" WM_NORMAL_HINTS 2>/dev/null \
+      | sed -n 's/.*resize increment: \([0-9]*\) by \([0-9]*\).*/\1 \2/p')
+    read -r iw ih <<<"${inc:-0 0}"
+    [ "${iw:-0}" -gt 2 ] || iw=2
+    [ "${ih:-0}" -gt 2 ] || ih=2
+    local worst=0 d
+    for d in $((ax-x)) $((ay-y)) $(((ax+aw)-(x+w))) $(((ay+ah)-(y+h))); do
+      [ "${d#-}" -gt "$worst" ] && worst="${d#-}"
+    done
+    local tol=$iw; [ "$ih" -gt "$tol" ] && tol=$ih
+    if [ "$worst" -le "$tol" ]; then
+      ok "$label $id geometry ($x,$y ${w}x$h)"
+    else
+      bad "$label $id geometry: expected $x,$y ${w}x$h, got $ax,$ay ${aw}x$ah (edge drift $worst > $tol)"
+    fi
     checked=$((checked+1))
   done < <(P rects)
   [ "$checked" -gt 0 ] || fail "$label: no panels to check"
