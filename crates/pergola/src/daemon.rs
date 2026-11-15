@@ -1281,12 +1281,18 @@ impl Daemon {
         if event.override_redirect || self.drag.is_some() {
             return Ok(());
         }
-        // Our own apply echoes back as configure events; a 250 ms window after
-        // it is not a user drag. (Removing this and relying only on the applied
-        // rect was measured 2026-11-15: intermediate echoes of a two-step apply
-        // read as drags and every window docked itself. The openbox cost of
-        // keeping it is filed as pi-agenda bug 'edge drag under openbox'.)
-        if self.last_apply.elapsed() < Duration::from_millis(250) {
+        // Our own apply echoes back as configure events; a window after it is
+        // not a user drag. (Removing this and relying only on the applied rect
+        // was measured 2026-11-15: intermediate echoes of a two-step apply read
+        // as drags and every window docked itself. The openbox cost of keeping
+        // it is filed as pi-agenda bug 'edge drag under openbox'.)
+        //
+        // 100 ms, not 250 ms: measured 2026-11-15, the stale ConfigureNotify a
+        // WM delivers after our move arrives within ~0.5 ms of the apply (a
+        // pre-move echo the WM had already queued). 100 ms still catches that
+        // burst while shrinking the window in which a real drag can be
+        // swallowed 2.5x; both WMs passed 43/43 three runs each at 100 ms.
+        if self.last_apply.elapsed() < Duration::from_millis(100) {
             return Ok(());
         }
         if self.seat_for_window(event.window).is_none() {
