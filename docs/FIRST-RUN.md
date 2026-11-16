@@ -18,7 +18,7 @@ pergola status    # what the daemon thinks: screen size, panels, depth, gap
 ```
 
 `doctor` should name your display and your window manager. `status` should
-print one line starting with `pergola 0.3.4-dev`. If either says "daemon not
+print one line starting with `pergola 0.4.0-dev`. If either says "daemon not
 running", start it with `pergola daemon` in a terminal (or
 `systemctl --user restart pergola`), then try again.
 
@@ -58,7 +58,9 @@ The terminal is only one way in. With a window focused:
 
 If the desktop already owns a chord (`xfwm4` owns `Ctrl+Alt+arrows`), Pergola
 falls back to `Super` for that command and says so at startup. `pergola keys
---check` prints the chord actually bound for each command.
+--check` prints the chord actually bound for each command. To pick your own
+chord instead, add a `bindings` map to `config.json` and run `pergola reload`;
+see [Configuration](SETUP.md#remapping-keys).
 
 ## The words on the screen
 
@@ -66,7 +68,7 @@ The first line `pergola status` prints is dense. Here is what each field means:
 
 | Field | Meaning |
 |---|---|
-| `pergola 0.3.4-dev` | the version of the running daemon |
+| `pergola 0.4.0-dev` | the version of the running daemon |
 | `1600x874` | the work area the daemon is tiling into (the screen minus panels/docks) |
 | `N panels` | how many windows are currently tiled in the tree |
 | `N floating` | how many windows are on the desktop layer (not tiled) |

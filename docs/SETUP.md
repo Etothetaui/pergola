@@ -106,7 +106,14 @@ the defaults):
   "overlay": false,
   "desktop_share": 0.0,
   "terminal": "xfce4-terminal",
-  "hotkeys": true
+  "hotkeys": true,
+  "edge_dock": true,
+  "bindings": {
+    "zoom-out": ["Super+Page_Up"],
+    "back": ["Super+b", "Alt+b"],
+    "view 3": ["Super+3"],
+    "overlay": []
+  }
 }
 ```
 
@@ -120,12 +127,39 @@ the defaults):
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
 | `edge_dock` | `true` | dock a floating window dropped on a screen edge (mouse tiling) |
+| `bindings` | `{}` | per-command chord overrides: command → candidate chords, tried in order |
+
+### Remapping keys
+
+`bindings` is a map from a command to the chords to try, in order. Naming a
+command replaces its default candidates entirely; an empty list unbinds it;
+commands you do not mention keep the defaults. Any command the daemon
+understands can be bound, not only the ones in the default plan, so `view 3`,
+`gap 12` or `frame-desktop` can be put on a chord:
+
+```json
+{
+  "bindings": {
+    "zoom-out": ["Super+Page_Up"],
+    "back": ["Super+b", "Alt+b"],
+    "view 3": ["Super+3"],
+    "overlay": []
+  }
+}
+```
+
+Chords are written `Modifier+…+Key`, with modifiers `Ctrl`, `Alt`, `Shift` and
+`Super` (aliases `Control`, `Mod1`, `Mod4`, `Win`) and keys named as in
+`xmodmap`: letters, digits, `Space`, `Return`, `Tab`, `Escape`, arrows,
+`Page_Up`, `Page_Down`, `Home`, `End`, brackets and punctuation. A chord the
+desktop already owns fails to grab and falls through to the next candidate.
 
 Notes:
 
 * `pergola reload` re-reads `gap`, `minimum_share`, `desktop_share`,
-  `auto_dock` and `terminal`. `overlay` and `hotkeys` are applied when the
-  daemon starts — restart it to change those.
+  `auto_dock`, `terminal` and `bindings`, and re-grabs the hotkeys, so a
+  `bindings` or `hotkeys` edit takes effect without a restart. `overlay` is
+  applied when the daemon starts — restart it to change that.
 * `pergola gap 12` changes the running layout only; put the value in
   `config.json` to keep it across restarts.
 * `pergola overlay on` is likewise a session toggle; the config key is the
@@ -133,8 +167,9 @@ Notes:
 * A malformed file is reported on stderr and ignored (defaults are used); the
   daemon still starts.
 * `pergola keys --check` lists what was actually bound and which planned chords
-  the desktop already owns. `pergola keys --probe <chord>…` tests individual
-  chords without installing anything.
+  the desktop already owns, including your `bindings` overrides (`off` marks a
+  command you unbound with an empty list). `pergola keys --probe <chord>…` tests
+  individual chords without installing anything.
 
 ## Keyboard and mouse
 

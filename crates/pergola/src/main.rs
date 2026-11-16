@@ -95,6 +95,9 @@ fn doctor() -> Result<()> {
 }
 
 fn keys(socket: &PathBuf, args: &[String]) -> Result<()> {
+    // The plan the daemon would install: defaults merged with the user's
+    // per-command overrides from config.json.
+    let plan = config::Config::load().binding_plan();
     if !args.iter().any(|a| a == "--check" || a == "--probe") {
         // Ask the running daemon what it actually bound; fall back to the plan.
         if let Ok(response) = ipc::call(socket, &["keys".to_string()]) {
@@ -144,9 +147,12 @@ fn keys(socket: &PathBuf, args: &[String]) -> Result<()> {
                             .map(|label| label.trim_end().to_string())
                     })
                 };
-                for (command, specs) in pergola_x11::binding_plan() {
+                for (command, specs) in &plan {
                     match bound_label(command) {
                         Some(label) => println!("bound {:<20} {}", label, command),
+                        // An empty candidate list is an intentional unbind, not
+                        // a grab that failed: say so instead of crying NONE.
+                        None if specs.is_empty() => println!("off   {:<20} {}", "(unbound)", command),
                         None => println!("NONE  {:<20} {}", command, specs.join(" / ")),
                     }
                 }
@@ -155,7 +161,7 @@ fn keys(socket: &PathBuf, args: &[String]) -> Result<()> {
             }
         }
         let x = pergola_x11::X11::connect()?;
-        let (bound, failures) = x.install_bindings(&pergola_x11::binding_plan())?;
+        let (bound, failures) = x.install_bindings(&plan)?;
         for (binding, command) in &bound {
             println!("bound {:<20} {}", binding.label, command);
         }
@@ -164,8 +170,11 @@ fn keys(socket: &PathBuf, args: &[String]) -> Result<()> {
         }
         return Ok(());
     }
-    for (command, specs) in pergola_x11::binding_plan() {
-        println!("{:<20} {}", specs[0], command);
+    for (command, specs) in &plan {
+        match specs.first() {
+            Some(first) => println!("{:<20} {}", first, command),
+            None => println!("{:<20} {}", "(unbound)", command),
+        }
     }
     Ok(())
 }

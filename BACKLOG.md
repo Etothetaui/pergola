@@ -77,8 +77,9 @@ weights; the result is identical to a gap drag of the same delta; a unit test co
 ## 8. Settings and chords in the palette
 
 **What:** `pergola settings` opens the palette with the config keys (gap, minimum_share,
-auto_dock, edge_dock, overlay, terminal) and the chord map; picking a row edits `config.json`
-atomically and reloads.
+auto_dock, edge_dock, overlay, terminal) and the chord map — the `bindings` map that has
+existed in `config.json` since 0.4.0-dev; picking a row edits `config.json` atomically and
+reloads.
 **Why:** the last place a person must edit JSON (UX-NOTES rows 3 and 12). `Command::Settings`
 already exists in `pergola-core` and renders nothing.
 **Done when:** every key in `config.json` is reachable from the menu, a bad value is rejected

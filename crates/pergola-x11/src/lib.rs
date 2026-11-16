@@ -918,6 +918,35 @@ fn make_resize_cursors(conn: &RustConnection) -> Result<(Cursor, Cursor)> {
     Ok((h, v))
 }
 
+/// The default bindings with a user's per-command overrides applied. A command
+/// named in `overrides` replaces its default candidates entirely (an empty list
+/// unbinds it); commands not mentioned keep the defaults, and an override for a
+/// command outside the default plan is appended, so any command the daemon
+/// understands (`view 3`, `gap 12`, `frame-desktop`, …) can be put on a chord.
+pub fn binding_plan_with(
+    overrides: &std::collections::HashMap<String, Vec<String>>,
+) -> Vec<(String, Vec<String>)> {
+    let mut plan: Vec<(String, Vec<String>)> = binding_plan()
+        .into_iter()
+        .map(|(command, defaults)| {
+            let specs = match overrides.get(command) {
+                Some(user) => user.clone(),
+                None => defaults.into_iter().map(str::to_string).collect(),
+            };
+            (command.to_string(), specs)
+        })
+        .collect();
+    // Extra commands the user invented: append in a stable order so
+    // `pergola keys --check` is deterministic.
+    let mut extra: Vec<(&String, &Vec<String>)> = overrides
+        .iter()
+        .filter(|(command, _)| !plan.iter().any(|(known, _)| known == *command))
+        .collect();
+    extra.sort_by(|a, b| a.0.cmp(b.0));
+    plan.extend(extra.into_iter().map(|(c, s)| (c.clone(), s.clone())));
+    plan
+}
+
 pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
     vec![
         ("everything", vec!["Ctrl+Alt+Space", "Super+Space"]),
@@ -956,8 +985,8 @@ impl X11 {
     /// that were installed and the ones that had to be skipped.
     pub fn install_bindings(
         &self,
-        plan: &[(&'static str, Vec<&'static str>)],
-    ) -> Result<(Vec<(KeyBinding, &'static str)>, Vec<BindFailure>)> {
+        plan: &[(String, Vec<String>)],
+    ) -> Result<(Vec<(KeyBinding, String)>, Vec<BindFailure>)> {
         let min = self.conn.setup().min_keycode;
         let max = self.conn.setup().max_keycode;
         let mapping = self
@@ -975,6 +1004,10 @@ impl X11 {
         let mut installed = Vec::new();
         let mut failures = Vec::new();
         for (command, specs) in plan {
+            // An empty candidate list is an intentional unbind, not a failure.
+            if specs.is_empty() {
+                continue;
+            }
             let mut bound = false;
             for spec in specs {
                 let Some(binding) = parse_binding(spec) else {
@@ -984,14 +1017,14 @@ impl X11 {
                     continue;
                 };
                 if self.grab_with_locks(binding.mods, keycode) {
-                    installed.push((binding, *command));
+                    installed.push((binding, command.clone()));
                     bound = true;
                     break;
                 }
             }
             if !bound {
                 failures.push(BindFailure {
-                    command: command.to_string(),
+                    command: command.clone(),
                     tried: specs.iter().map(|s| s.to_string()).collect(),
                 });
             }
@@ -1069,11 +1102,15 @@ pub fn parse_binding(spec: &str) -> Option<KeyBinding> {
 }
 
 /// Map a key event back to a command string.
-pub fn command_for_key(bindings: &[(KeyBinding, &'static str)], mods: u16, keysym: u32) -> Option<&'static str> {
+pub fn command_for_key<'a>(
+    bindings: &'a [(KeyBinding, String)],
+    mods: u16,
+    keysym: u32,
+) -> Option<&'a str> {
     bindings
         .iter()
         .find(|(b, _)| b.mods == mods && b.keysym == keysym)
-        .map(|(_, cmd)| *cmd)
+        .map(|(_, cmd)| cmd.as_str())
 }
 
 /// Convert a core `Rect` to an `IRect`.
@@ -1267,5 +1304,42 @@ mod tests {
     fn snap_to_hints_is_identity_without_increments() {
         let frame = IRect::new(0, 0, 101, 77);
         assert_eq!(snap_to_hints(frame, SizeHints::default(), (0, 0, 0, 0)), frame);
+    }
+
+    #[test]
+    fn binding_overrides_replace_only_the_named_command() {
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("zoom-out".to_string(), vec!["Super+Page_Up".to_string()]);
+        let plan = binding_plan_with(&overrides);
+        let find = |command: &str| {
+            plan.iter()
+                .find(|(c, _)| c == command)
+                .map(|(_, specs)| specs.clone())
+                .unwrap_or_else(|| panic!("missing {command}"))
+        };
+        // The named command loses its defaults entirely.
+        assert_eq!(find("zoom-out"), vec!["Super+Page_Up".to_string()]);
+        // An unnamed command keeps its default candidates.
+        assert_eq!(
+            find("zoom-in"),
+            vec!["Ctrl+Alt+Down".to_string(), "Super+Down".to_string()]
+        );
+        // Nothing else is lost: the default plan's length is preserved.
+        assert_eq!(plan.len(), binding_plan().len());
+    }
+
+    #[test]
+    fn binding_overrides_can_add_and_unbind_commands() {
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("view 3".to_string(), vec!["Super+3".to_string()]);
+        overrides.insert("overlay".to_string(), Vec::new());
+        let plan = binding_plan_with(&overrides);
+        // An invented command is appended, in a deterministic position.
+        let last = plan.last().expect("plan is not empty");
+        assert_eq!(last.0, "view 3");
+        assert_eq!(last.1, vec!["Super+3".to_string()]);
+        // An empty list is kept as an intentional unbind, not dropped.
+        let overlay = plan.iter().find(|(c, _)| c == "overlay").expect("overlay");
+        assert!(overlay.1.is_empty());
     }
 }

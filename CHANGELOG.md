@@ -3,6 +3,27 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.4.0-dev]
+
+### Added
+
+* **Keybindings are configurable.** A `bindings` map in `config.json` overrides
+  the default chords per command: `{"zoom-out": ["Super+Page_Up"]}` replaces
+  that command's candidates, an empty list unbinds it, and commands you do not
+  mention keep their defaults. Any command the daemon understands can be bound,
+  not only the ones in the default plan (`view 3`, `gap 12`, `frame-desktop`).
+  `pergola reload` now re-grabs the hotkeys, so a remap takes effect without a
+  restart; `pergola keys --check` prints the chords actually grabbed, `off` for
+  a deliberate unbind. Two unit tests cover the merge and the add/unbind paths.
+  This is a MINOR bump: a new config key, per [docs/VERSIONING.md](docs/VERSIONING.md).
+
+### Changed
+
+* **`pergola reload` re-grabs the hotkeys.** It used to re-read the config and
+  re-apply geometry without touching the grabs, so changing `hotkeys` or `bindings`
+  needed a daemon restart. It now reinstalls the bindings, and `hotkeys: false` at
+  reload releases the grabs so the desktop gets its chords back.
+
 ## [0.3.4-dev]
 
 ### Added

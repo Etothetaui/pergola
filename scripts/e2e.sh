@@ -390,6 +390,25 @@ if "$BIN" --socket "$SOCK" view 0 >/dev/null 2>&1; then bad "a bad view slot is 
 if "$BIN" sim --json | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null; then ok "sim --json is valid JSON"; else bad "sim --json is not valid JSON"; fi
 if P tree | python3 -c 'import json,sys; d=json.load(sys.stdin); d["doc"]["root"]["kind"]' >/dev/null; then ok "tree is valid JSON"; else bad "tree is not valid JSON"; fi
 
+# Config-driven keybindings: a `bindings` map overrides the default chords per
+# command, and `reload` re-grabs without a daemon restart. Written last so the
+# key presses above ran against the default plan.
+mkdir -p "$XDG_CONFIG_HOME/pergola"
+printf '%s' '{"bindings":{"view 3":["Super+9"],"overlay":[]}}' \
+  > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1
+sleep 0.4
+if P keys | grep -c 'Super+9 .*view 3' >/dev/null; then
+  ok "a config binding overrides a default chord and reload re-grabs"
+else
+  bad "config binding did not take effect: $(P keys | grep 'view 3' || echo 'not bound')"
+fi
+if P keys --check | grep -c '^off .*overlay' >/dev/null; then
+  ok "an empty candidate list shows as a deliberate unbind"
+else
+  bad "an empty candidate list was not reported as off: $(P keys --check | grep overlay || echo 'not listed')"
+fi
+
 say
 say "10. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"

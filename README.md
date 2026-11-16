@@ -165,10 +165,34 @@ the edge behaviour off if a drag should never tile.
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
 | `edge_dock` | `true` | dock a window dropped on a screen edge (mouse tiling) |
+| `bindings` | `{}` | per-command chord overrides, `command → [chord, …]` |
 
-`pergola reload` re-reads the file; `overlay` and `hotkeys` apply on daemon
-restart. The `gap` and `overlay` commands change the running session only. See
+`pergola reload` re-reads the file and re-grabs the hotkeys, so a `bindings`
+edit takes effect without a restart. `overlay` still applies on daemon restart.
+The `gap` and `overlay` commands change the running session only. See
 [docs/SETUP.md](docs/SETUP.md#configuration) for the details.
+
+### Remap a key
+
+`bindings` maps a command to the chords to try, in order. Naming a command
+replaces its default chords entirely; an empty list unbinds it; commands you do
+not mention keep their defaults. Any command the daemon understands can be
+bound, not only the ones in the default plan:
+
+```json
+{
+  "bindings": {
+    "zoom-out": ["Super+Page_Up"],
+    "back": ["Super+b", "Alt+b"],
+    "view 3": ["Super+3"],
+    "overlay": []
+  }
+}
+```
+
+After saving, run `pergola reload` and check the result with
+`pergola keys --check`: it prints the chord the daemon actually grabbed, or
+`off` for a command you unbound deliberately.
 
 ## How it works
 
@@ -250,7 +274,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.3.4-dev` — pre-stable, no compatibility promises.
+`0.4.0-dev` — pre-stable, no compatibility promises.
 
 ## License
 

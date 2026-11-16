@@ -15,7 +15,7 @@ use pergola_core::{
     LayoutFile, LayoutNode, Rect, SeatRecord,
 };
 use pergola_x11::{
-    binding_plan, command_for_key, describe, event_mods, snap_to_hints, KeyBinding, WindowInfo, X11,
+    command_for_key, describe, event_mods, snap_to_hints, KeyBinding, WindowInfo, X11,
 };
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::ConfigureNotifyEvent;
@@ -59,7 +59,7 @@ pub struct Daemon {
     camera: pergola_core::CameraState,
     config: Config,
     overlay_on: bool,
-    bindings: Vec<(KeyBinding, &'static str)>,
+    bindings: Vec<(KeyBinding, String)>,
     keymap: Vec<(u8, u32)>,
     seats: Vec<SeatRecord>,
     /// Panel that had focus before the current command, used as the default
@@ -116,7 +116,7 @@ impl Daemon {
         // The config is the default; a toggle only lasts for the session, so a
         // persisted `overlay` value must not override a config edit.
         let overlay_on = config.overlay;
-        let bindings: Vec<(KeyBinding, &'static str)> = Vec::new();
+        let bindings: Vec<(KeyBinding, String)> = Vec::new();
         let keymap = build_keymap(&x)?;
         let mut daemon = Self {
             x,
@@ -904,6 +904,8 @@ impl Daemon {
         self.config = Config::load();
         self.engine = LayoutEngine::new(self.config.gap, self.config.minimum_share)
             .with_desktop_share(self.config.desktop_share);
+        // Re-grab so a `bindings` edit takes effect without a restart.
+        self.reinstall_bindings()?;
         self.apply()?;
         Ok("config reloaded".to_string())
     }
@@ -1101,7 +1103,10 @@ impl Daemon {
                     .find(|(code, _)| *code == key.detail)
                     .map(|(_, sym)| *sym);
                 if let Some(keysym) = keysym {
-                    if let Some(command) = command_for_key(&self.bindings, mods, keysym) {
+                    // Owned, because `handle` needs `&mut self` while the
+                    // binding table is borrowed.
+                    let command = command_for_key(&self.bindings, mods, keysym).map(str::to_string);
+                    if let Some(command) = command {
                         let argv: Vec<String> =
                             command.split_whitespace().map(str::to_string).collect();
                         if let Err(e) = self.handle(&argv) {
@@ -1172,11 +1177,16 @@ impl Daemon {
     /// map; regrabbing the same client is idempotent.
     fn reinstall_bindings(&mut self) -> Result<()> {
         if !self.config.hotkeys {
+            // Hotkeys were switched off by a reload: drop the grabs so the
+            // desktop gets its chords back instead of the daemon holding them.
+            let _ = self.x.ungrab_all_keys();
+            self.bindings.clear();
             return Ok(());
         }
         self.keymap = build_keymap(&self.x)?;
         let _ = self.x.ungrab_all_keys();
-        match self.x.install_bindings(&binding_plan()) {
+        let plan = self.config.binding_plan();
+        match self.x.install_bindings(&plan) {
             Ok((bound, failures)) => {
                 self.bindings = bound;
                 for failure in &failures {
@@ -1191,7 +1201,7 @@ impl Daemon {
                 // report; without it the user learns about the fallback only
                 // by pressing a chord the desktop intercepts.
                 for (binding, command) in &self.bindings {
-                    if let Some((_, specs)) = binding_plan().iter().find(|(c, _)| c == command) {
+                    if let Some((_, specs)) = plan.iter().find(|(c, _)| c == command) {
                         if let Some(primary) = specs.first() {
                             if binding.label != *primary {
                                 eprintln!(

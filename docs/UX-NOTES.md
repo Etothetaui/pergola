@@ -23,7 +23,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 |---|---|---|---|---|
 | Discoverability | Nothing on screen says a gap is draggable; the only cue is the cursor once the pointer is already on a 6 px strip | New user | 3 | Highlight the band on hover even with the overlay off; a first-run hint line in the palette |
 | Discoverability | Every action is a chord that has to be learned; the palette exists but is one more chord (`Ctrl+Alt+M`) | New user | 3 | Show the palette on first start, or add a panel/applet entry it can be launched from |
-| Chords | The bound chords differ per desktop (xfwm4 owns `Ctrl+Alt+arrows`, so camera keys are `Super+…`); there is no way to see or change them except `pergola keys --check` in a shell | Anyone whose desktop claims chords | 3 | Config-declared chord map, panes in the palette, and conflicts reported as a notification |
+| Chords | The bound chords differ per desktop (xfwm4 owns `Ctrl+Alt+arrows`, so camera keys are `Super+…`). A `bindings` map in `config.json` now remaps them (0.4.0-dev), but there is still no UI: seeing or changing a chord means editing JSON and running `pergola keys --check` in a shell | Anyone whose desktop claims chords | 2 | Chord pane in the palette, and conflicts reported as a notification |
 | Palette | The list is fixed: "Float this window" is offered for an already-floating window, and no row shows what it will act on | Menu users | 2 | Build rows from the focused panel's state; show the window title in the menu prompt |
 | Palette | Needs an external menu program; without one the hotkey fails into the daemon log, where the user never looks | Minimal installs (no rofi) | 3 | `notify-send` fallback naming the fix; `install.sh` warns; palette row "Install rofi" |
 | Ratios | Only a gap drag changes split weights; there is no `pergola ratio`, and `gap: 0` means no drag target at all | Keyboard-only users | 3 | `pergola ratio 0.3` plus palette rows (half/third/two-thirds) and a nudge chord |
@@ -40,9 +40,9 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 
 ## Next three
 
-1. **Settings + chord map** (rows 3, 12): one palette-driven editor for
-   `config.json` and the chord map makes the JSON file — the last place a person
-   must be a developer — disappear.
+1. **Settings** (rows 3, 12): one palette-driven editor for `config.json`
+   (including the chord map, now that it lives there) makes the JSON file — the
+   last place a person must be a developer — disappear.
 2. **Ratios and context-aware palette rows** (rows 4, 6): `pergola ratio` and rows
    that change with the focused panel make the menu sufficient on its own.
 3. **On-screen affordances** (rows 1, 2, 7, 9): hover highlight for the gaps, a

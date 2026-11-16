@@ -1,5 +1,6 @@
 //! Configuration and paths.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,12 @@ pub struct Config {
     pub hotkeys: bool,
     /// Dock a floating window dropped against a screen edge (mouse tiling).
     pub edge_dock: bool,
+    /// Per-command chord overrides: command → candidate chords, tried in order.
+    /// A command named here replaces its default candidates entirely (an empty
+    /// list unbinds it); commands not mentioned keep the defaults. Any command
+    /// the daemon understands may be bound, not only the ones in the default
+    /// plan, so `view 3` or `gap 12` can be put on a chord.
+    pub bindings: HashMap<String, Vec<String>>,
 }
 
 impl Default for Config {
@@ -38,6 +45,7 @@ impl Default for Config {
             terminal: std::env::var("TERMINAL").unwrap_or_else(|_| "xfce4-terminal".to_string()),
             hotkeys: true,
             edge_dock: true,
+            bindings: HashMap::new(),
         }
     }
 }
@@ -54,6 +62,12 @@ impl Config {
         }
     }
 
+    /// The default binding plan with this config's per-command overrides
+    /// applied. Every command the daemon understands can be bound, not only
+    /// the ones in the default plan.
+    pub fn binding_plan(&self) -> Vec<(String, Vec<String>)> {
+        pergola_x11::binding_plan_with(&self.bindings)
+    }
 }
 
 pub fn config_dir() -> PathBuf {
