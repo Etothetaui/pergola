@@ -409,6 +409,25 @@ else
   bad "an empty candidate list was not reported as off: $(P keys --check | grep overlay || echo 'not listed')"
 fi
 
+# `hotkeys: false` at reload must release the grabs so the desktop gets its
+# chords back; `hotkeys: true` must take them again. Both without a restart.
+printf '%s' '{"hotkeys":false}' > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1
+sleep 0.3
+if [ -z "$(P keys)" ]; then
+  ok "hotkeys: false at reload releases every grab"
+else
+  bad "hotkeys: false did not release the grabs: $(P keys | head -3 | tr '\n' ' ')"
+fi
+printf '%s' '{"hotkeys":true}' > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1
+sleep 0.3
+if [ "$(P keys | grep -c 'everything')" -ge 1 ]; then
+  ok "hotkeys: true at reload takes the grabs back"
+else
+  bad "hotkeys: true did not re-grab"
+fi
+
 say
 say "10. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
