@@ -280,9 +280,12 @@ pergola-health        # soak check; exits non-zero on any failure
 
 `pergola-health` checks daemon liveness, CPU use, layout invariants, geometry
 drift against what the X server reports, docked windows that no longer exist,
-and (with `--e2e`) runs the full regression suite. `--json` prints one line,
-`--quiet` prints nothing when healthy; both keep the exit code, so a timer can
-act on it.
+and (with `--e2e`) runs the full regression suite. `--e2e --wm openbox` runs
+that suite under a second window manager, and the summary line and the
+`health.jsonl` record both name the one that ran (`"wm":"openbox"`). `--json`
+prints one line, `--quiet` prints nothing when healthy; both keep the exit code,
+so a timer can act on it. The suite uses fixed sleeps, so run it on an idle
+machine — under CPU saturation a few checks flake.
 
 ## Upgrade
 

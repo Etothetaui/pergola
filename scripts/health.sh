@@ -3,6 +3,7 @@
 #
 #   scripts/health.sh              check the running daemon and its layout
 #   scripts/health.sh --e2e        also run the full regression suite (~3 min)
+#   scripts/health.sh --e2e --wm openbox   run that suite under a second WM
 #   scripts/health.sh --quiet      print nothing when healthy (exit code still tells)
 #   scripts/health.sh --json       one machine-readable line on stdout
 #
@@ -31,14 +32,20 @@ LOG="${PERGOLA_HEALTH_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/pergola/health.
 E2E=0
 QUIET=0
 JSON=0
-for arg in "$@"; do
-  case "$arg" in
+# The e2e suite is the only check that needs a WM; record which one ran so a
+# green line is not mistaken for "measured on every desktop".
+WM="${PERGOLA_TEST_WM:-xfwm4}"
+while [ $# -gt 0 ]; do
+  case "$1" in
     --e2e) E2E=1 ;;
+    --wm) WM="${2:-}"; shift ;;
+    --wm=*) WM="${1#--wm=}" ;;
     --quiet) QUIET=1 ;;
     --json) JSON=1 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
-    *) echo "health: unknown option $arg" >&2; exit 2 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    *) echo "health: unknown option $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 FAILURES=()
@@ -259,7 +266,7 @@ fi
 if [ "$E2E" -eq 1 ]; then
   if [ ! -x "$ROOT/scripts/e2e.sh" ]; then
     fail "e2e suite not found (set PERGOLA_REPO to the checkout)"
-  elif PERGOLA_BIN="$BIN" "$ROOT/scripts/e2e.sh" >/tmp/pergola-e2e-health.log 2>&1; then
+  elif PERGOLA_TEST_WM="$WM" PERGOLA_BIN="$BIN" "$ROOT/scripts/e2e.sh" >/tmp/pergola-e2e-health.log 2>&1; then
     SUMMARY="$(grep -E '^e2e:' /tmp/pergola-e2e-health.log | tail -1)"
     pass "e2e suite ($SUMMARY)"
     note "  ok   e2e suite ($SUMMARY)"
@@ -272,20 +279,21 @@ fi
 TS=$(date +%s)
 if [ -n "$STATUS" ]; then
   mkdir -p "$(dirname "$LOG")"
-  printf '{"ts":%s,"ok":%s,"cpu":%s,"drift":%s,"failures":%s,"warnings":%s,"e2e":%s}\n' \
+  printf '{"ts":%s,"ok":%s,"cpu":%s,"drift":%s,"failures":%s,"warnings":%s,"e2e":%s,"wm":%s}\n' \
     "$TS" "$([ ${#FAILURES[@]} -eq 0 ] && echo true || echo false)" \
     "${CPU:-0}" "$DRIFT_COUNT" \
     "$(printf '%s\n' "${FAILURES[@]:-}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
     "$(printf '%s\n' "${WARNINGS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
-    "$E2E" >>"$LOG"
+    "$E2E" "$(printf '%s' "$WM" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" >>"$LOG"
 fi
 
 if [ "$JSON" -eq 1 ]; then
-  printf '{"ok":%s,"cpu":%s,"drift":%s,"checks":%s,"failures":%s,"warnings":%s}\n' \
+  printf '{"ok":%s,"cpu":%s,"drift":%s,"checks":%s,"failures":%s,"warnings":%s,"wm":%s}\n' \
     "$([ ${#FAILURES[@]} -eq 0 ] && echo true || echo false)" "${CPU:-0}" "$DRIFT_COUNT" \
     "$(printf '%s\n' "${CHECKS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
     "$(printf '%s\n' "${FAILURES[@]:-}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
-    "$(printf '%s\n' "${WARNINGS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')"
+    "$(printf '%s\n' "${WARNINGS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" \
+    "$(printf '%s' "$WM" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" 
 fi
 
 if [ ${#FAILURES[@]} -gt 0 ]; then

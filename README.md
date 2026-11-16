@@ -294,7 +294,8 @@ cargo test               # 77 unit tests: geometry, tree, camera, commands, docu
 scripts/e2e.sh           # ~90 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
-scripts/health.sh --e2e  # the above plus the regression suite
+scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)
+scripts/health.sh --e2e --wm openbox   # ... under a second WM; the line names it
 cargo build --release
 ```
 

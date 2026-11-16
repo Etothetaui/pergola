@@ -5,6 +5,16 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ## [0.4.0-dev]
 
+### Changed
+
+* **`pergola-health --e2e` takes `--wm` and records it.** The regression suite has
+  taken `--wm xfwm4|openbox|i3` since 0.4.0; the health check now forwards a WM
+  too (`--wm openbox`), names it in the suite's summary line and adds `"wm"` to
+  every `health.jsonl` record, so a green line cannot be mistaken for "measured
+  on every desktop". The openbox run of the whole suite passes with no per-WM
+  tolerance: the geometry check already compares each client's own resize
+  increment (never under 2 px).
+
 ### Added
 
 * **The overlay dims the tiles when a compositor can render it.** `overlay on`
