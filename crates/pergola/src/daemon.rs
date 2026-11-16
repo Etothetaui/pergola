@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use pergola_core::engine::replace_node;
 use pergola_core::{
-    Axis, Camera, CameraAction, Command, Direction, FloatingWindow, GapHandle, IRect, LayoutEngine,
-    LayoutFile, LayoutNode, Rect, SeatRecord,
+    Axis, Camera, CameraAction, Command, Direction, FloatingWindow, GapHandle, History, IRect,
+    LayoutDocument, LayoutEngine, LayoutFile, LayoutNode, Rect, SeatRecord,
 };
 use pergola_x11::{
     command_for_key, describe, event_mods, snap_to_hints, KeyBinding, WindowInfo, X11,
@@ -38,6 +38,15 @@ struct GapDrag {
     /// Tree when the drag began. Every motion re-derives from this snapshot, so
     /// a drag can never accumulate rounding drift.
     snapshot: LayoutNode,
+}
+
+/// One undoable layout state: the document (tree, floating rects, tabs), the
+/// engine (so a gap change is undone too) and where the camera was looking.
+#[derive(Clone, PartialEq)]
+struct Snapshot {
+    doc: LayoutDocument,
+    engine: LayoutEngine,
+    camera: pergola_core::CameraState,
 }
 
 /// A window that may have been dragged by the user, watched for the moment it
@@ -96,6 +105,8 @@ pub struct Daemon {
     /// docks windows that appear after this, `all` also adopts the ones that
     /// were already on screen at startup.
     started: bool,
+    /// Layout states to come back to, newest last. Bounded: ten steps.
+    undo: History<Snapshot>,
 }
 
 impl Daemon {
@@ -146,6 +157,7 @@ impl Daemon {
             last_apply: Instant::now(),
             last_release: None,
             started: false,
+            undo: History::new(UNDO_DEPTH),
         };
         daemon.reconcile()?;
         daemon.started = true;
@@ -345,6 +357,39 @@ impl Daemon {
             return None;
         }
         Some((screen, DIM_OPACITY))
+    }
+
+    /// The layout as it stands, for the undo ring.
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            doc: self.file.doc.clone(),
+            engine: self.engine,
+            camera: self.camera.clone(),
+        }
+    }
+
+    /// Put the layout back the way it was before the last change. Windows that
+    /// have closed since the snapshot are dropped by the reconcile, so undo
+    /// cannot resurrect a seat; floating windows are placed back at their
+    /// stored rectangles.
+    fn undo_layout(&mut self) -> Result<String> {
+        let Some(previous) = self.undo.pop() else {
+            return Ok("nothing to undo".to_string());
+        };
+        self.file.doc = previous.doc;
+        self.engine = previous.engine;
+        self.camera = previous.camera;
+        self.reconcile()?;
+        self.normalize_camera();
+        self.place_floating = true;
+        self.apply()?;
+        self.save()?;
+        let left = self.undo.len();
+        Ok(if left == 0 {
+            "undid the last layout change (nothing older left)".to_string()
+        } else {
+            format!("undid the last layout change ({left} older to undo)")
+        })
     }
 
     fn apply(&mut self) -> Result<()> {
@@ -573,7 +618,17 @@ impl Daemon {
         if self.drag.is_some() {
             let _ = self.end_gap_drag();
         }
+        // Snapshot before the command so a dock, float, arrange or gap change
+        // can be undone. `undo` is exempt: recording the state it replaces
+        // would let undo oscillate between two layouts.
+        let before = self.snapshot();
         let result = self.dispatch(argv);
+        if result.is_ok()
+            && argv.first().map(String::as_str) != Some("undo")
+            && self.snapshot() != before
+        {
+            self.undo.push(before);
+        }
         if let Some(panel) = self.focused_panel() {
             self.last_focus = Some(panel);
         }
@@ -600,6 +655,7 @@ impl Daemon {
             "gap" => self.set_gap(rest),
             "ratio" => self.set_ratio(rest),
             "overlay" => self.overlay(rest),
+            "undo" => self.undo_layout(),
             "tab" => self.tab(rest),
             "tab-select" => self.tab_select(rest),
             "tab-next" => self.tab_cycle(true),
@@ -1627,6 +1683,9 @@ impl Daemon {
                 "pergola: gap drag {first}|{second} axis {axis:?} extent {extent:.0}px"
             );
         }
+        // A gap drag is a layout change like any other: remember the tree the
+        // user started from so `undo` puts the split back.
+        self.undo.push(self.snapshot());
         self.drag = Some(GapDrag {
             first,
             second,
@@ -1808,11 +1867,18 @@ impl Daemon {
         } else {
             None
         };
+        let mut marked = false;
         for (window, rect) in ready {
             self.moves.remove(&window);
             let Some(seat) = self.seat_for_window(window).cloned() else {
                 continue;
             };
+            if !marked {
+                // One snapshot per gesture, taken before the first window is
+                // actually docked or floated.
+                self.undo.push(self.snapshot());
+                marked = true;
+            }
             if self.file.doc.root.node(&seat.panel).is_some() {
                 // A tile pulled off the tree: float it where it was dropped.
                 if std::env::var_os("PERGOLA_DEBUG").is_some() {
@@ -1859,6 +1925,9 @@ const DRAG_TRAVEL_PX: f64 = 40.0;
 
 /// How close to a screen edge a dragged window must be dropped to tile.
 const EDGE_SNAP_PX: f64 = 14.0;
+
+/// How many layout changes `pergola undo` can walk back.
+const UNDO_DEPTH: usize = 10;
 
 /// How dark the overlay's dim layer is, in the X opacity convention: a 32-bit
 /// CARDINAL where `0xffffffff` is opaque. 40% black leaves the tiles readable

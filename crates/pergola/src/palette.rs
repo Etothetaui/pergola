@@ -34,6 +34,7 @@ const TABLE: &[(&str, &[&str])] = &[
     ("Show the whole tree", &["everything"]),
     ("Split with a new terminal", &["split-terminal"]),
     ("Toggle the split overlay", &["overlay", "toggle"]),
+    ("Undo the last layout change", &["undo"]),
 ];
 
 pub fn items() -> Vec<Item> {
@@ -349,7 +350,7 @@ mod tests {
         for item in &all {
             assert!(seen.insert(item.label), "duplicate label {}", item.label);
         }
-        assert_eq!(all.len(), 12);
+        assert_eq!(all.len(), 13);
     }
 
     #[test]
@@ -364,6 +365,7 @@ mod tests {
             "everything",
             "split-terminal",
             "overlay",
+            "undo",
         ];
         for item in items() {
             let first = *item.argv.first().expect("empty argv");

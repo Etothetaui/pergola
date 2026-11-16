@@ -273,6 +273,7 @@ Everything that tiles a window is reachable without a shell:
 | tile by mouse | drag a window to a screen edge and let go |
 | untile by mouse | drag the tile away from the edge |
 | switch tabs in a group | `Ctrl+Alt+Page_Down` / `Page_Up` |
+| undo the last layout change | `Ctrl+Alt+Z`, or `pergola undo` |
 
 The chords fall back to `Super+…` per command when the desktop owns the
 `Ctrl+Alt` chord — `pergola keys --check` prints what was really bound. The full

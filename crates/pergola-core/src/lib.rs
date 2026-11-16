@@ -8,12 +8,14 @@ pub mod command;
 pub mod document;
 pub mod engine;
 pub mod geom;
+pub mod history;
 pub mod node;
 
 pub use camera::{Camera, CameraAction, CameraState};
 pub use command::{Command, SettingsPane};
 pub use document::{fractal_tree, FloatingWindow, LayoutDocument, LayoutFile, PergolaMeta, SeatRecord};
 pub use engine::{GapHandle, LayoutEngine};
+pub use history::History;
 pub use geom::{Axis, Direction, IRect, Rect, Size};
 pub use node::{normalize_weights, Desktop, LayoutError, LayoutNode, Panel, Split};
 

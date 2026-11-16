@@ -17,6 +17,21 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **`pergola undo` — one chord back from a wrong dock.** `Ctrl+Alt+Z` (`Super+Z`
+  where the desktop owns the primary chord) or the palette row "Undo the last
+  layout change" restores the layout from before the last change: a dock, a
+  float, a drag out to the desktop, an edge drop, an `arrange`, a `ratio` or a
+  gap drag. The ring keeps ten states, and a snapshot is the whole document (the
+  tree, the floating rectangles, each panel's tab views) plus the gap and the
+  camera — so undoing a zoomed change puts the camera back too, which is exactly
+  what `back`/`forward` never did. A command that changed nothing is not
+  recorded a second time, `undo` itself is never recorded (it would oscillate
+  between two states), and a window that closed after the snapshot is dropped by
+  the reconcile, so undo cannot resurrect a dead seat. `History<T>` lives in
+  `pergola-core` with tests for the bound and the de-duplication. 97 unit tests,
+  114 e2e assertions on xfwm4 and openbox; the e2e docks a window by chord,
+  undoes it and checks the X server's geometry came back.
+
 * **`pergola config` and `config --check`.** `pergola config` prints every key
   with the value actually in force and where it came from — `default`, or
   `config.json:<line>` — so a misspelled key can no longer hide behind a

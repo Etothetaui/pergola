@@ -207,6 +207,7 @@ const DAEMON_COMMANDS: &[&str] = &[
     "gap",
     "ratio",
     "overlay",
+    "undo",
     "keys",
     "reload",
     "save",
@@ -486,6 +487,7 @@ LAYOUT
   split-terminal                 split the focused window with a new terminal
   gap <pixels>                   change the gap between tiles
   ratio <0.0-1.0>                rebalance the split around the focused panel
+  undo                           restore the layout before the last change
 
 KEYS
   keys [--check] [--probe <chord>...]  what each command is bound to

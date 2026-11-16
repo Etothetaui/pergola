@@ -1062,6 +1062,8 @@ pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
         ("arrange", vec!["Ctrl+Alt+a", "Super+a"]),
         ("float-all", vec!["Ctrl+Alt+f", "Super+f"]),
         ("overlay", vec!["Ctrl+Alt+o", "Super+o"]),
+        // A layout change can be undone; the camera's back/forward is not that.
+        ("undo", vec!["Ctrl+Alt+z", "Super+z"]),
         // Mouse-free tiling: the four edges a window can be docked against.
         ("dock left", vec!["Ctrl+Alt+Shift+Left", "Super+Shift+Left"]),
         ("dock right", vec!["Ctrl+Alt+Shift+Right", "Super+Shift+Right"]),

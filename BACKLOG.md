@@ -109,16 +109,19 @@ saturation three checks flake (`P list` empty reply, an `arrange` tile left at 0
 that does not step back), and the same three flake at the previous commit, so they are the
 suite's fixed sleeps rather than a product regression (`docs/DESIGN.md`).
 
-## 1. Layout undo
+### Layout undo (0.4.0-dev)
 
-**What:** a bounded snapshot ring of trees with `Ctrl+Alt+z` / palette "Undo layout change";
-redo is out of scope for the first pass.
-**Why:** a wrong dock can only be undone by hand (UX-NOTES row 9). The camera's back/forward is
-not a layout history and users assume it is.
-**Done when:** dock, float, gap drag and arrange each push a snapshot; undo restores the previous
-tree, geometry and floating rects; 10 steps are kept; e2e undoes a keyboard dock.
+`pergola undo` (bound to `Ctrl+Alt+z`, falling back to `Super+z`) restores the layout from before
+the last change: a dock, a float, a drag out to the desktop, an edge drop, an arrange, a gap
+change or a gap drag. The ring keeps ten states; each snapshot is the document (tree, floating
+rects, tab views) plus the engine's gap and the camera, so undoing a zoomed change puts the camera
+back where it was too. A command that changed nothing is not recorded twice, and `undo` itself is
+never recorded — otherwise it would oscillate between two states. Windows that closed since the
+snapshot are dropped by the reconcile, so undo cannot resurrect a dead seat. `History<T>` lives in
+`pergola-core` with its own tests for the bound and the de-duplication; the e2e docks a window by
+chord and undoes it.
 
-## 2. Pointer affordances
+## 1. Pointer affordances
 
 **What:** highlight a gap band on hover even with the overlay off, show the target rectangle during
 a window drag, and re-dock a docked tile that settles near another edge.
@@ -127,7 +130,7 @@ only an EnterNotify on the band; the drop target needs pointer tracking during a
 **Done when:** a hovered gap draws a line and leaves no artefact, a dragged window shows where it
 will land, and dragging a docked tile to the opposite edge re-docks it in one gesture.
 
-## 3. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+## 2. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
 
 **What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
 records as newline-delimited JSON over the control socket, so a panel can draw the tree without
@@ -138,7 +141,7 @@ Pergola's socket is request/response only today.
 **Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
 the stream survives a daemon restart, and an e2e assertion reads two records from one session.
 
-## 4. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+## 3. Honour `_NET_ACTIVE_WINDOW` requests from pagers
 
 **What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
 currently only *sets* that property when it focuses a window.
@@ -147,7 +150,7 @@ something it does not listen for. A taskbar's "click to focus" silently does not
 **Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
 reports the same seat as focused; a unit test covers the request path.
 
-## 5. Named workspaces (tags) on top of views
+## 4. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -157,7 +160,7 @@ is a deliberate `MINOR` bump with a loader that keeps reading older documents.
 **Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
 and a document written by the new version loads in the old one without losing its views.
 
-## 6. Release pipeline, so `pergola-bin` can exist
+## 5. Release pipeline, so `pergola-bin` can exist
 
 **What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
 a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays

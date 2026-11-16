@@ -6,7 +6,7 @@ the code or on a real X session during this work, not from a hypothetical user.
 Severity is "how much does this cost the person who meets it": 1 cosmetic,
 3 "they will give up on the feature", 5 "they cannot do the task at all".
 
-## What works today (0.3.0-dev)
+## What works today (0.4.0-dev)
 
 * Tile the focused window from the keyboard: `Ctrl+Alt+Shift+arrows` dock,
   `Ctrl+Alt+Shift+W` floats. Verified on xfwm4 in `scripts/e2e.sh`.
@@ -15,6 +15,10 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 * See the actions by name and click them: `Ctrl+Alt+M` / `pergola palette`, when
   `rofi`/`zenity`/`yad`/`dmenu` is installed.
 * Camera, views, history, arrange, float-all and the overlay all have chords.
+* Undo the last layout change (`Ctrl+Alt+Z`, palette "Undo the last layout
+  change", ten steps): a wrong dock, float, arrange, ratio or gap drag is one
+  chord away from where it was. Verified on xfwm4 and openbox in
+  `scripts/e2e.sh`.
 * `pergola-health` proves the daemon, layout invariants and work-area fit.
 
 ## Pain points
@@ -30,14 +34,13 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Ratios | `pergola ratio 0.3` rebalances a split from the keyboard, but there are no palette rows for half/third and no nudge chord; `gap: 0` leaves no drag strip | Keyboard-only users | 2 | Palette rows (half/third/two-thirds) and a nudge chord |
 | Re-dock | Moving a tile to another edge takes two drags (out to float, then to the edge); a docked tile cannot be re-docked directly | Mouse users in nested layouts | 2 | If a docked window settles near a different edge, re-dock it against that edge |
 | Drop target | Edge drops dock against the last focused space, so in a deep tree the window nests there instead of tiling the root — correct by design, surprising in practice | Nested layouts | 3 | Show the target rectangle during the drag (needs pointer tracking), or offer "always dock at the root" |
-| Undo | No layout undo: `back`/`forward` are camera history. A wrong dock has to be reversed by hand | Everyone | 3 | Snapshot ring of trees + `Ctrl+Alt+Z`; palette "Undo layout change" |
 | New windows | `auto_dock` is now a tri-state (`off`/`new`/`all`), but there is no palette toggle: changing it means editing `config.json` and reloading | Everyone who tiles | 2 | A palette toggle for `auto_dock` |
 | Feedback | Success and failure of a hotkey action are printed to a terminal the user does not have | Everyone without a terminal | 2 | Optional `notify-send` toast for dock/float/errors |
 | Settings | `pergola settings` (0.4.0-dev) is the menu-driven editor: every scalar key and every chord is reachable, a bad value is rejected before the file is touched, and the daemon reloads afterwards. What is still missing is help: the rows show `gap = 6`, not what a gap is or what range is allowed, and the only feedback for a rejected value is the process's stderr | Everyone who tiles | 1 | One-line help per key in the menu, and a rejected value reported as a toast |
 | Zoom + drag | A drag-out while zoomed converts screen coordinates as if they were world coordinates, so the floating window can land outside the desktop leaf | Untiling while zoomed | 2 | Inverse camera transform for the drop rectangle |
 | Terminal split | `split-terminal` assumes `xfce4-terminal` when `$TERMINAL` is unset, which is wrong on most desktops | Non-XFCE users | 2 | Fall back to the desktop's terminal from `XDG_CURRENT_DESKTOP`, and say which config key to set |
 | Accessibility | No keyboard way to select a tile other than activating its window; the overlay draws no text and exposes no AT-SPI | Keyboard-only / low-vision | 3 | Focus-by-chord across tiles; overlay labels with the tile's size |
-| Tabs | Tab groups work from the command line and default chords (`tab`, `tab-select`, `tab-next`, `tab-prev`) but have no palette row and no drag-to-tab | People expecting TrellisWM tabs; the mouse path is missing | 2 | BACKLOG #1 (commands done, UI pending) |
+| Tabs | Tab groups work from the command line, from default chords (`tab`, `tab-select`, `tab-next`, `tab-prev`) but there is no palette row for a tab action, no drag-a-window-onto-a-tab gesture and no tab bar | People expecting TrellisWM tabs; the mouse path is missing | 2 | Not scheduled (drag-to-tab is not in BACKLOG.md) |
 
 ## Next three
 
@@ -48,8 +51,8 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
    ratios and rows that change with the focused panel make the menu sufficient
    on its own.
 3. **On-screen affordances** (rows 1, 2, 7, 9): hover highlight for the gaps, a
-   drop target during an edge drag, an undo chord. These are the difference between
-   "works if you know it" and "you can find it".
+   drop target during an edge drag. These are the difference between "works if you
+   know it" and "you can find it".
 
 Measured on Xfwm4. The pointer paths were not exercised under Openbox; treat that
 as untested, not working.

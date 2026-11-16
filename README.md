@@ -99,6 +99,7 @@ pergola rects            # every panel's current frame rectangle
 | `overlay [on\|off\|toggle]` | draw split lines in the gaps, and dim the tiles when a compositor can render it (off by default) |
 | `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
 | `tab` / `tab-select` / `tab-next` / `tab-prev` | fold a window into a panel as a tab, switch tabs |
+| `undo` | put the layout back before the last dock, float, arrange, gap change or ratio |
 | `config [--check]` | the resolved config with each key's source, or what is wrong with the file |
 | `settings` / `settings --list` / `settings <key> <value>` | change a setting from a menu, list the rows, or set one key |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
@@ -129,6 +130,7 @@ to `Super` for that command and reports it at startup.
 | `Ctrl+Alt+A` | arrange |
 | `Ctrl+Alt+F` | float-all |
 | `Ctrl+Alt+O` | overlay |
+| `Ctrl+Alt+Z` | **undo the last layout change** |
 | `Ctrl+Alt+Page_Down` / `Page_Up` | next / previous tab in a group |
 
 **You can tile with three keys and no terminal:** focus a window, `Ctrl+Alt+Shift+←`,
@@ -301,8 +303,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 93 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 109 assertions against Xvfb + a real WM + real xterms
+cargo test               # 97 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # 114 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

@@ -458,6 +458,22 @@ if [ "$HELD" = "$PRE" ]; then bad "a held chord did nothing (still $PRE)"; else
   check_eq "$ONE" "$HELD" "holding a chord goes back once, not eleven times"
 fi
 
+# Undo is a layout history, not the camera's: a keyboard dock can be taken back
+# to the exact tree, floating rects and geometry it replaced.
+P arrange >/dev/null; sleep 0.4
+BEFORE_TREE=$(json_field 'json.dumps(d["doc"]["root"], sort_keys=True)')
+BEFORE_FLOAT=$(json_field 'len(d["doc"]["floating"])')
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
+xdotool key ctrl+alt+shift+Left; sleep 0.8
+AFTER_TREE=$(json_field 'json.dumps(d["doc"]["root"], sort_keys=True)')
+if [ "$BEFORE_TREE" = "$AFTER_TREE" ]; then bad "a keyboard dock left the tree unchanged"; else ok "a keyboard dock changed the tree"; fi
+UNDO=$(P undo); echo "       ($UNDO)"
+check_eq "$BEFORE_TREE" "$(json_field 'json.dumps(d["doc"]["root"], sort_keys=True)')" "undo restores the tree"
+check_eq "$BEFORE_FLOAT" "$(json_field 'len(d["doc"]["floating"])')" "undo restores the floating rects"
+check_geometry "after undo"
+for _ in $(seq 1 20); do P undo >/dev/null 2>&1; done
+if P undo | grep -c 'nothing to undo' >/dev/null; then ok "undo with an empty history says so"; else bad "undo did not report an empty history"; fi
+
 say
 say "9. config validation and error paths"
 if "$BIN" --socket "$SOCK" dock sideways >/dev/null 2>&1; then bad "a bad edge is rejected"; else ok "a bad edge is rejected"; fi
