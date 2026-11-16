@@ -91,6 +91,7 @@ pergola rects            # every panel's current frame rectangle
 | `palette` | a menu of the tile actions, for the mouse (rofi/zenity/dmenu) |
 | `overlay [on\|off\|toggle]` | draw split lines in the gaps (off by default) |
 | `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
+| `tab` / `tab-select` / `tab-next` / `tab-prev` | fold a window into a panel as a tab, switch tabs |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
 | `reload` `save` `stop` | daemon control |
 
@@ -259,7 +260,9 @@ before Pergola and maps every failure class to the fix that answers it.
 * Dialogs and transient windows (`WM_TRANSIENT_FOR`) are not tiled: they keep the
   geometry their toolkit gave them, and a dock request for one fails with
   "not managed by pergola" rather than placing a dialog in a tile.
-* Tab groups are modelled (`views.len() > 1`) but there is no drag-to-tab UI yet.
+* Tab groups work from the command line and the default chords (`tab-next`,
+  `tab-prev`), but there is no drag-to-tab UI and no tab bar: the shown view is
+  the one you interact with, and the hidden ones are only reachable by command.
 * A split's ratio can be changed by dragging its gap, not by a command; there is
   no `pergola ratio`. With `gap: 0` there is no strip to grab at all.
 * The palette is a fixed list of actions, not a context-aware one (it offers

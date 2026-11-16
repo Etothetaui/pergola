@@ -206,6 +206,10 @@ const DAEMON_COMMANDS: &[&str] = &[
     "neighbour",
     "view",
     "save-view",
+    "tab",
+    "tab-select",
+    "tab-next",
+    "tab-prev",
 ];
 
 /// Would the daemon understand this as a command? Lenient on purpose: a false
@@ -370,11 +374,21 @@ LAYOUT
   split-terminal                 split the focused window with a new terminal
   gap <pixels>                   change the gap between tiles
 
+TABS
+  tab [--window ID] [--target PANEL]  fold a window into a panel as a tab
+  tab-select <seat|window>       show one tab of a group
+  tab-next | tab-prev            cycle the tabs of the focused group
+
 KEYS
   keys [--check] [--probe <chord>...]  what each command is bound to
   bind <command> [chord...]      bind a command to chords (none: show it)
   bind <command> --default       restore the default chords
   unbind <command>               remove a command's chords
+
+TABS
+  tab [--window <id>] [--target <panel>]  fold a window into a panel as a tab
+  tab-select <seat|window>       show one view of a tab group
+  tab-next | tab-prev            cycle the shown view of the focused group
 
 INSPECTION
   status | tree | list | keys | doctor | sim [--json]

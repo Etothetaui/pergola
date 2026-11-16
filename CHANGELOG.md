@@ -7,6 +7,20 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **Tab groups work.** A panel can hold several windows as tabs: every view is
+  mapped at the panel rectangle and only the selected one is raised. `pergola
+  tab --window <id> [--target <panel>]` folds a window into a panel as a tab;
+  `tab-select <seat|window>` shows one view, `tab-next`/`tab-prev` cycle it
+  (bound to `Ctrl+Alt+Page_Down`/`Page_Up`, falling back to `Super+Page_Down`/
+  `Page_Up` when the desktop owns the primary). Switching a tab gives the shown
+  window the keyboard, so typing goes to the view you can see. Closing the shown
+  tab drops that view only — its siblings keep the panel — and promotes the
+  neighbour; the group collapses only when the last view goes. The document
+  model already had `views`/`selected`/`tabbed`; the daemon just never drove
+  them. Unit tests cover selection repair and cycling (wrapping both ways); the
+  e2e asserts against X geometry that both tabs are mapped at one rectangle,
+  exactly one is raised, the default chord cycles the view, and the survivor
+  keeps its tile after its sibling is killed.
 * **Keybindings are configurable.** A `bindings` map in `config.json` overrides
   the default chords per command: `{"zoom-out": ["Super+Page_Up"]}` replaces
   that command's candidates, an empty list unbinds it, and commands you do not

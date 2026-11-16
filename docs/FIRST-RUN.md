@@ -55,6 +55,8 @@ The terminal is only one way in. With a window focused:
 * Drag a floating window to a screen edge and let go within 14 px — it docks.
 * Drag the gap between two tiles — it resizes the split.
 * Drag a tile away from its edge — it floats where you dropped it.
+* `Ctrl+Alt+Page_Down` / `Page_Up` — switch between windows stacked in one tile
+  (a tab group); `pergola tab` folds the focused window into its tile as a tab.
 
 If the desktop already owns a chord (`xfwm4` owns `Ctrl+Alt+arrows`), Pergola
 falls back to `Super` for that command and says so at startup. `pergola keys
@@ -97,7 +99,8 @@ The first line `pergola status` prints is dense. Here is what each field means:
 | **overlay** | Split lines drawn with 2–3 px rectangles in the gaps (off by default). |
 | **dock** | Move a window into the tree against an edge of its space (tile it). |
 | **float** | Return a window to the desktop layer (untile it). |
-| **view** | A saved camera position (`save-view 1`, `view 1`). |
+| **view** | A saved camera position (`save-view 1`, `view 1`). Confusingly, a panel's *views* are also its tabs; the command name `tab-select` is used when the tab meaning is meant. |
+| **tab** | A second window stacked in the same tile as the first. Only the selected tab is visible; the others stay mapped behind it. `pergola tab`, `tab-select`, `tab-next`, `tab-prev`. |
 | **layout document** | The JSON tree + camera + window fingerprints persisted to `~/.local/state/pergola/layout.json`. |
 | **work area** | The screen minus panels and docks, from `_NET_WORKAREA`. Pergola tiles inside it. |
 | **EWMH** | The X11 standard for window-manager hints and client lists. Pergola uses `_NET_MOVERESIZE_WINDOW` to move windows. |
@@ -113,6 +116,7 @@ The first line `pergola status` prints is dense. Here is what each field means:
 | A window will not move | The WM ignores `_NET_MOVERESIZE_WINDOW` (common for tiling WMs that lay themselves out). Only Xfwm4 and Openbox are measured. |
 | A dropped window landed somewhere nested | Edge drops dock against the last focused space by design — drop again on the edge you want, or use `Ctrl+Alt+Shift+arrows` after focusing the target tile. |
 | "a pergola daemon is already running" | Expected: one instance per display. Stop the old one with `pergola stop` first. |
+| `pergola tab-next` says "not a tab group" | The focused window's tile holds only one window. Fold another in first with `pergola tab --window <id>`, or focus a window in a group that already has more than one. |
 
 More: `docs/SETUP.md` → Troubleshooting, `docs/UX-NOTES.md` for the known
 human-interface pain points (with severity and proposed fixes), and

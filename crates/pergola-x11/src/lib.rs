@@ -970,6 +970,9 @@ pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
         ("float", vec!["Ctrl+Alt+Shift+w", "Super+Shift+w"]),
         // Discoverability: a menu of the same actions, for the mouse.
         ("palette", vec!["Ctrl+Alt+m", "Super+m"]),
+        // Tab groups: cycle the shown view of the focused group.
+        ("tab-next", vec!["Ctrl+Alt+Page_Down", "Super+Page_Down"]),
+        ("tab-prev", vec!["Ctrl+Alt+Page_Up", "Super+Page_Up"]),
     ]
 }
 

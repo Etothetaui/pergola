@@ -190,6 +190,33 @@ Notes:
   typo in the file is reported and the file is left untouched, so your edits are
   not silently replaced by regenerated defaults.
 
+### Tab groups
+
+A panel can hold several windows as tabs. Every view stays mapped at the panel
+rectangle and only the selected one is raised, so switching a tab is instant —
+nothing is unmapped or re-laid-out.
+
+```sh
+pergola tab                     # fold the focused window into its panel as a tab
+pergola tab --window 0x40000c   # fold a specific window
+pergola tab-select 0x40000c     # show a named view (seat or window id)
+pergola tab-next                # cycle to the next view in the focused group
+pergola tab-prev                # cycle back
+```
+
+Switching a tab also gives the shown window the keyboard, so typing goes to the
+view you can see. Closing the shown tab drops only that view — its siblings keep
+the panel — and the selection is repaired to the neighbour that took its place;
+the group collapses only when the last view goes.
+
+`tab-next` and `tab-prev` are bound by default to `Ctrl+Alt+Page_Down`/`Page_Up`
+(`Super+Page_Down`/`Page_Up` when the desktop owns the primary chord). Remap or
+unbind them like any other command with `pergola bind tab-next <chord>`.
+
+There is no tab bar and no drag-a-window-onto-a-tab gesture yet: the hidden
+views are reachable by command or chord, not by clicking. See
+[BACKLOG.md](../BACKLOG.md) for the planned UI.
+
 ## Keyboard and mouse
 
 Everything that tiles a window is reachable without a shell:
@@ -203,6 +230,7 @@ Everything that tiles a window is reachable without a shell:
 | resize a split | drag the gap between the two tiles |
 | tile by mouse | drag a window to a screen edge and let go |
 | untile by mouse | drag the tile away from the edge |
+| switch tabs in a group | `Ctrl+Alt+Page_Down` / `Page_Up` |
 
 The chords fall back to `Super+…` per command when the desktop owns the
 `Ctrl+Alt` chord — `pergola keys --check` prints what was really bound. The full

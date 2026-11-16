@@ -68,6 +68,62 @@ impl Panel {
             .filter(|s| self.views.iter().any(|v| v == s))
             .or_else(|| self.views.first().map(String::as_str))
     }
+
+    /// Show `seat` in this panel. Returns false when the seat is not a view, so
+    /// a caller cannot select a window the panel does not hold.
+    pub fn select(&mut self, seat: &str) -> bool {
+        if !self.views.iter().any(|v| v == seat) {
+            return false;
+        }
+        self.selected = Some(seat.to_string());
+        true
+    }
+
+    /// Move the selection one view forward (or backward), wrapping at the ends.
+    /// Returns the newly selected seat; a single-view panel just reports its
+    /// one view.
+    pub fn cycle(&mut self, forward: bool) -> Option<String> {
+        if self.views.len() < 2 {
+            return self.visible().map(str::to_string);
+        }
+        let current = self
+            .visible()
+            .and_then(|s| self.views.iter().position(|v| v == s))
+            .unwrap_or(0);
+        let next = if forward {
+            (current + 1) % self.views.len()
+        } else {
+            (current + self.views.len() - 1) % self.views.len()
+        };
+        self.selected = Some(self.views[next].clone());
+        self.selected.clone()
+    }
+
+    /// Drop one view. The selection is repaired to the neighbour that takes its
+    /// place — the next view, or the previous one when the last view went — so
+    /// a panel never points at a window that is gone. Returns true when views
+    /// remain; false means the panel is now empty and should be removed.
+    pub fn remove_view(&mut self, seat: &str) -> bool {
+        let Some(idx) = self.views.iter().position(|v| v == seat) else {
+            return !self.views.is_empty();
+        };
+        let was_selected = self.visible() == Some(seat);
+        self.views.remove(idx);
+        if self.views.is_empty() {
+            self.selected = None;
+            return false;
+        }
+        if was_selected {
+            let next = idx.min(self.views.len() - 1);
+            self.selected = Some(self.views[next].clone());
+        }
+        if self.views.len() == 1 {
+            // A group of one is not a group; do not claim otherwise in the
+            // document the next load reads.
+            self.tabbed = None;
+        }
+        true
+    }
 }
 
 /// A container. `children.len() == weights.len()` and `sum(weights) == 1`.
@@ -363,5 +419,49 @@ mod tests {
         assert_eq!(p2.visible(), Some("s2"));
         p2.selected = Some("gone".into());
         assert_eq!(p2.visible(), Some("s1"));
+    }
+
+    #[test]
+    fn selecting_and_cycling_views() {
+        let mut p = Panel::tab_group("p", vec!["s1".into(), "s2".into(), "s3".into()]);
+        assert!(p.select("s2"));
+        assert_eq!(p.visible(), Some("s2"));
+        assert!(!p.select("nope"), "a panel cannot select a seat it does not hold");
+        assert_eq!(p.visible(), Some("s2"));
+        assert_eq!(p.cycle(true).as_deref(), Some("s3"));
+        assert_eq!(p.cycle(true).as_deref(), Some("s1"), "cycling wraps forward");
+        assert_eq!(p.cycle(false).as_deref(), Some("s3"), "cycling wraps backward");
+        let mut single = Panel::new("q", vec!["s1".into()]);
+        assert_eq!(single.cycle(true).as_deref(), Some("s1"));
+    }
+
+    #[test]
+    fn removing_the_selected_view_promotes_its_neighbour() {
+        let mut p = Panel::tab_group("p", vec!["s1".into(), "s2".into(), "s3".into()]);
+        p.select("s2");
+        assert!(p.remove_view("s2"), "views remain");
+        assert_eq!(p.views, vec!["s1", "s3"]);
+        assert_eq!(p.visible(), Some("s3"), "the view that took its place is shown");
+        // Removing the last view of the group promotes the previous one.
+        p.select("s3");
+        assert!(p.remove_view("s3"));
+        assert_eq!(p.visible(), Some("s1"));
+        // The final view takes the panel with it.
+        assert!(!p.remove_view("s1"));
+        assert!(p.views.is_empty());
+        assert_eq!(p.selected, None);
+        // A group that drops to one view stops claiming to be a group.
+        let mut group = Panel::tab_group("g", vec!["s1".into(), "s2".into()]);
+        assert!(group.remove_view("s2"));
+        assert!(!group.is_tab_group());
+        assert_eq!(group.tabbed, None);
+    }
+
+    #[test]
+    fn removing_an_unselected_view_keeps_the_selection() {
+        let mut p = Panel::tab_group("p", vec!["s1".into(), "s2".into(), "s3".into()]);
+        p.select("s2");
+        assert!(p.remove_view("s1"));
+        assert_eq!(p.visible(), Some("s2"));
     }
 }

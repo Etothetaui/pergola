@@ -346,6 +346,28 @@ impl LayoutEngine {
         Ok(result)
     }
 
+    /// Remove one seat from its panel without disturbing the panel's other
+    /// views. A panel whose last view goes is removed like any other node, so
+    /// the collapse rules stay in one place; a panel left with one view stops
+    /// being a tab group. Unlike [`Self::removing`], the sibling views survive.
+    pub fn removing_view(
+        &self,
+        seat_id: &str,
+        root: &LayoutNode,
+    ) -> Result<LayoutNode, LayoutError> {
+        let panel = root.panel_containing(seat_id).ok_or_else(|| {
+            LayoutError::NotFound(format!("panel containing '{seat_id}'"))
+        })?;
+        let mut panel = panel.clone();
+        let panel_id = panel.id.clone();
+        if panel.remove_view(seat_id) {
+            let next = replace_node(root, &panel_id, &LayoutNode::Panel(panel));
+            next.validate()?;
+            return Ok(next);
+        }
+        self.removing(&panel_id, root)
+    }
+
     fn remove(&self, id: &str, node: &LayoutNode) -> (LayoutNode, bool) {
         let LayoutNode::Split(s) = node else {
             return (node.clone(), false);

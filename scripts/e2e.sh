@@ -360,7 +360,18 @@ chord_for() { # command -> xdotool key spec, from the bindings actually installe
   local label
   label=$(P keys | awk -v c="$1" '$2==c {print $1; exit}')
   [ -n "$label" ] || return 1
-  printf '%s' "$label" | tr 'A-Z' 'a-z' | sed -e 's/\[/bracketleft/g' -e 's/\]/bracketright/g'
+  # Lowercase only the modifier tokens: xdotool takes "ctrl" or "Ctrl" but
+  # needs the key name exactly as X spells it. Lowercasing the whole label
+  # turned "Page_Down" into "page_down", which xdotool rejects, so the chord
+  # silently never fired.
+  printf '%s' "$label" | awk -F+ '{
+    n = NF; out = "";
+    for (i = 1; i < n; i++) out = out tolower($i) "+";
+    key = $n;
+    if (key == "[") key = "bracketleft";
+    if (key == "]") key = "bracketright";
+    print out key;
+  }'
 }
 build_history() {
   P everything >/dev/null; sleep 0.4
@@ -490,7 +501,144 @@ else
 fi
 
 say
-say "10. screenshot"
+say "10. tab groups"
+# A tab group is one panel holding several windows: every view is mapped at the
+# panel rectangle and only the selected one is raised. The document model has
+# always supported this; before 0.4.0-dev nothing could create, switch or
+# repair a group, so a closed tab took the whole panel with it.
+printf '%s' '{"gap":6.0,"hotkeys":true}' > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1
+sleep 0.3
+P float-all >/dev/null; sleep 0.4
+P arrange >/dev/null; sleep 0.4
+
+# The first panel with more than one view, as "id count selected".
+tab_panel() {
+  P tree | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+def walk(n):
+    if n.get("kind") == "panel":
+        yield n
+    for c in n.get("children", []):
+        yield from walk(c)
+for p in walk(d["doc"]["root"]):
+    if len(p["views"]) > 1:
+        print(p["id"], len(p["views"]), p.get("selected") or "-")
+        break
+'
+}
+
+# Fold W2 into W1's panel: `tab` with no --target joins the panel that had
+# focus before the tabbed window.
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
+TAB_OUT=$("$BIN" --socket "$SOCK" tab --window "$W2" 2>&1)
+case "$TAB_OUT" in
+  *"tabbed"*) ok "tab folds a window into a panel" ;;
+  *) bad "tab did not report the fold: $TAB_OUT" ;;
+esac
+sleep 0.5
+S_W1=$(printf 's-%x' "$((W1))")
+S_W2=$(printf 's-%x' "$((W2))")
+read -r TAB_ID TAB_COUNT TAB_SEL <<EOF
+$(tab_panel)
+EOF
+check_eq "2" "${TAB_COUNT:-0}" "the panel now holds both windows"
+check_eq "$S_W2" "${TAB_SEL:-}" "the tabbed window is the shown view"
+
+# Both views are mapped at the panel rectangle: the X server must agree.
+eval "$(xdotool getwindowgeometry --shell "$W1")"; read -r A_X A_Y A_W A_H <<<"$X $Y $WIDTH $HEIGHT"
+eval "$(xdotool getwindowgeometry --shell "$W2")"; read -r B_X B_Y B_W B_H <<<"$X $Y $WIDTH $HEIGHT"
+check_near "$A_X" "$B_X" 2 "both tabs sit at the same x"
+check_near "$A_Y" "$B_Y" 2 "both tabs sit at the same y"
+check_near "$A_W" "$B_W" 2 "both tabs have the same width"
+check_near "$A_H" "$B_H" 2 "both tabs have the same height"
+
+# Exactly one is raised: in _NET_CLIENT_LIST_STACKING (bottom to top) the
+# shown view must come after the hidden one.
+stack_rank() { # window -> 1-based position in the stacking order (bottom = 1)
+  # Compare numeric ids: the WM prints 0x60000c, the test has 0x0060000c.
+  xprop -root _NET_CLIENT_LIST_STACKING 2>/dev/null | python3 -c '
+import sys
+want = int(sys.argv[1], 16)
+tail = sys.stdin.read().split("=", 1)[-1]
+ids = [int(t, 16) for t in tail.replace(",", " ").split() if t.startswith("0x")]
+print(ids.index(want) + 1 if want in ids else "")
+' "$1"
+}
+R_W1=$(stack_rank "$W1"); R_W2=$(stack_rank "$W2")
+if [ -n "$R_W1" ] && [ -n "$R_W2" ] && [ "$R_W2" -gt "$R_W1" ]; then
+  ok "only the shown tab is raised ($W2 above $W1)"
+else
+  bad "the shown tab is not the top one: ranks W1=${R_W1:-?} W2=${R_W2:-?}"
+fi
+
+# Cycling moves the shown view and raises the other one.
+P tab-next >/dev/null || fail "tab-next"
+sleep 0.5
+read -r _ _ TAB_SEL <<EOF
+$(tab_panel)
+EOF
+check_eq "$S_W1" "${TAB_SEL:-}" "tab-next shows the other view"
+R_W1=$(stack_rank "$W1"); R_W2=$(stack_rank "$W2")
+if [ -n "$R_W1" ] && [ -n "$R_W2" ] && [ "$R_W1" -gt "$R_W2" ]; then
+  ok "tab-next raises the newly shown view"
+else
+  bad "tab-next did not raise the shown view: ranks W1=${R_W1:-?} W2=${R_W2:-?}"
+fi
+P tab-prev >/dev/null || fail "tab-prev"
+sleep 0.4
+read -r _ _ TAB_SEL <<EOF
+$(tab_panel)
+EOF
+check_eq "$S_W2" "${TAB_SEL:-}" "tab-prev returns to the previous view"
+
+# The default chord must do the same thing. Cycling by key is the whole point:
+# a tab group the user cannot switch from the keyboard is not a feature.
+if P keys --check | grep -c 'tab-next' >/dev/null; then
+  NEXT_CHORD=$(chord_for tab-next) || fail "tab-next has no chord"
+  xdotool key "$NEXT_CHORD"; sleep 0.5
+  read -r _ _ TAB_SEL <<EOF
+$(tab_panel)
+EOF
+  check_eq "$S_W1" "${TAB_SEL:-}" "the tab-next chord shows the other view"
+  xdotool key "$(chord_for tab-prev)"; sleep 0.4
+  read -r _ _ TAB_SEL <<EOF
+$(tab_panel)
+EOF
+  check_eq "$S_W2" "${TAB_SEL:-}" "the tab-prev chord returns to the first view"
+else
+  bad "tab-next is not bound by default"
+fi
+
+# Closing the shown tab must not collapse the panel: the sibling stays put.
+# The daemon reconciles every 2 s, so give the destroy time to land.
+P tab-select "$S_W1" >/dev/null || fail "tab-select"
+sleep 0.4
+read -r _ _ TAB_SEL <<EOF
+$(tab_panel)
+EOF
+check_eq "$S_W1" "${TAB_SEL:-}" "tab-select shows a named view"
+xdotool windowkill "$W1" >/dev/null 2>&1
+sleep 2.6
+if P tree | grep -c "$S_W2" >/dev/null; then
+  ok "closing one tab leaves its sibling in the layout"
+else
+  bad "closing one tab removed the whole panel"
+fi
+if P tree | grep -c "$S_W1" >/dev/null; then
+  bad "the closed tab is still in the layout"
+else
+  ok "the closed tab is dropped from the layout"
+fi
+if P list | grep -c "^docked.*$W2" >/dev/null; then
+  ok "the surviving tab is still docked and mapped"
+else
+  bad "the surviving tab was lost: $(P list | tr '\n' ' ')"
+fi
+
+say
+say "11. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

@@ -36,7 +36,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Zoom + drag | A drag-out while zoomed converts screen coordinates as if they were world coordinates, so the floating window can land outside the desktop leaf | Untiling while zoomed | 2 | Inverse camera transform for the drop rectangle |
 | Terminal split | `split-terminal` assumes `xfce4-terminal` when `$TERMINAL` is unset, which is wrong on most desktops | Non-XFCE users | 2 | Fall back to the desktop's terminal from `XDG_CURRENT_DESKTOP`, and say which config key to set |
 | Accessibility | No keyboard way to select a tile other than activating its window; the overlay draws no text and exposes no AT-SPI | Keyboard-only / low-vision | 3 | Focus-by-chord across tiles; overlay labels with the tile's size |
-| Tabs | Tab groups are modelled (`views.len() > 1`) but have no UI, chord or palette row | People expecting TrellisWM tabs | 2 | BACKLOG #1 |
+| Tabs | Tab groups work from the command line and default chords (`tab`, `tab-select`, `tab-next`, `tab-prev`) but have no palette row and no drag-to-tab | People expecting TrellisWM tabs; the mouse path is missing | 2 | BACKLOG #1 (commands done, UI pending) |
 
 ## Next three
 

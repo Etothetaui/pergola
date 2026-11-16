@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
+use pergola_core::engine::replace_node;
 use pergola_core::{
     Axis, Camera, CameraAction, Command, Direction, FloatingWindow, GapHandle, IRect, LayoutEngine,
     LayoutFile, LayoutNode, Rect, SeatRecord,
@@ -171,11 +172,10 @@ impl Daemon {
             self.applied.remove(&seat.window);
             self.moves.remove(&seat.window);
             self.seats.retain(|s| s.seat != seat.seat);
-            if self.file.doc.root.node(&seat.panel).is_some() {
-                if let Ok(tree) = self.engine.removing(&seat.panel, &self.file.doc.root) {
-                    self.replace_root(tree);
-                }
-            }
+            // A tab group loses one view, not the whole panel: closing a tab
+            // must leave its siblings where they are. A panel whose last view
+            // goes collapses through the same path.
+            self.detach_seat(&seat)?;
             self.file.doc.floating.retain(|f| f.panel.id != seat.panel);
         }
 
@@ -272,6 +272,49 @@ impl Daemon {
 
     fn seat_for_window(&self, win: u32) -> Option<&SeatRecord> {
         self.seats.iter().find(|s| s.window == win)
+    }
+
+    /// Take one seat out of the tree wherever it lives: out of a tab group
+    /// (only that view — its siblings stay), out of a plain panel (which then
+    /// leaves the tree like any node), or off the desktop layer. The seat
+    /// record stays, so a caller can put the window back somewhere else.
+    fn detach_seat(&mut self, seat: &SeatRecord) -> Result<()> {
+        self.file
+            .doc
+            .floating
+            .retain(|f| !f.panel.views.iter().any(|v| v == &seat.seat));
+        // `removing_view` handles both cases: a group loses one view, and an
+        // empty panel collapses through the same rules as `removing`.
+        if let Ok(tree) = self.engine.removing_view(&seat.seat, &self.file.doc.root) {
+            self.replace_root(tree);
+        }
+        Ok(())
+    }
+
+    /// A panel id the seat can own outright. A seat leaving a tab group needs
+    /// a fresh id because the group keeps its own; a seat that owned its panel
+    /// can keep the id. The seat record is updated so `focused_panel` and
+    /// `list` stay truthful afterwards.
+    fn own_panel_id(&mut self, seat: &SeatRecord) -> String {
+        let taken = |id: &str, root: &LayoutNode| -> bool { root.node(id).is_some() };
+        let mut id = seat.panel.clone();
+        if taken(&id, &self.file.doc.root)
+            || self.file.doc.floating.iter().any(|f| f.panel.id == id)
+        {
+            let base = format!("p-{:x}", seat.window);
+            id = base.clone();
+            let mut n = 1;
+            while taken(&id, &self.file.doc.root)
+                || self.file.doc.floating.iter().any(|f| f.panel.id == id)
+            {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
+        }
+        if let Some(record) = self.seats.iter_mut().find(|s| s.seat == seat.seat) {
+            record.panel = id.clone();
+        }
+        id
     }
 
     // MARK: applying geometry
@@ -527,6 +570,10 @@ impl Daemon {
             "float-all" => self.float_all(),
             "gap" => self.set_gap(rest),
             "overlay" => self.overlay(rest),
+            "tab" => self.tab(rest),
+            "tab-select" => self.tab_select(rest),
+            "tab-next" => self.tab_cycle(true),
+            "tab-prev" => self.tab_cycle(false),
             "keys" => self.keys(),
             "reload" => self.reload(),
             "save" => {
@@ -588,8 +635,26 @@ impl Daemon {
             .iter()
             .filter(|n| matches!(n, LayoutNode::Panel(_)))
             .count();
+        // Views beyond the first of each panel are tabs: mapped at the same
+        // rectangle, only one of them raised.
+        let tabs: usize = self
+            .file
+            .doc
+            .root
+            .flatten()
+            .iter()
+            .filter_map(|n| match n {
+                LayoutNode::Panel(p) => Some(p.views.len().saturating_sub(1)),
+                _ => None,
+            })
+            .sum();
+        let tab_note = if tabs > 0 {
+            format!(" · {tabs} tabs")
+        } else {
+            String::new()
+        };
         Ok(format!(
-            "pergola {} · {}x{} · {} panels, {} floating · depth {} · framed {} · gap {} · overlay {}",
+            "pergola {} · {}x{} · {} panels, {} floating{tab_note} · depth {} · framed {} · gap {} · overlay {}",
             pergola_core::VERSION,
             screen.w,
             screen.h,
@@ -659,7 +724,16 @@ impl Daemon {
         for w in &windows {
             let seat = self.seat_for_window(w.id);
             let where_ = match seat {
-                Some(s) if self.file.doc.root.node(&s.panel).is_some() => "docked",
+                Some(s) if self.file.doc.root.node(&s.panel).is_some() => {
+                    // A view of a tab group that is not the selected one is
+                    // mapped at the tile but covered: report it as a tab, not
+                    // as a tile someone is looking at.
+                    let hidden = match self.file.doc.root.node(&s.panel) {
+                        Some(LayoutNode::Panel(p)) => p.visible() != Some(s.seat.as_str()),
+                        _ => false,
+                    };
+                    if hidden { "tab" } else { "docked" }
+                }
                 Some(_) => "floating",
                 None => "unmanaged",
             };
@@ -714,15 +788,12 @@ impl Daemon {
                 .filter(|p| p != &seat.panel && self.file.doc.root.node(p).is_some())
                 .unwrap_or_else(|| self.file.doc.root.id().to_string());
         }
-        if self.file.doc.root.node(&seat.panel).is_some() {
-            let tree = self.engine.removing(&seat.panel, &self.file.doc.root)?;
-            self.replace_root(tree);
-        }
-        self.file.doc.floating.retain(|f| f.panel.id != seat.panel);
+        self.detach_seat(&seat)?;
+        let panel_id = self.own_panel_id(&seat);
         if self.file.doc.root.node(&target).is_none() {
             target = self.file.doc.root.id().to_string();
         }
-        let node = LayoutNode::panel(seat.panel.clone(), vec![seat.seat.clone()]);
+        let node = LayoutNode::panel(panel_id.clone(), vec![seat.seat.clone()]);
         let tree = self
             .engine
             .inserting(node, &target, edge, &self.file.doc.root)
@@ -733,7 +804,7 @@ impl Daemon {
         self.save()?;
         Ok(format!(
             "docked {} {} of {} (depth {})",
-            seat.panel,
+            panel_id,
             match edge {
                 Direction::Left => "left",
                 Direction::Right => "right",
@@ -785,13 +856,10 @@ impl Daemon {
                     )
             })
             .unwrap_or_else(|| Rect::new(80.0, 80.0, 800.0, 500.0));
-        if self.file.doc.root.node(&seat.panel).is_some() {
-            let tree = self.engine.removing(&seat.panel, &self.file.doc.root)?;
-            self.replace_root(tree);
-        }
-        self.file.doc.floating.retain(|f| f.panel.id != seat.panel);
+        self.detach_seat(&seat)?;
+        let panel_id = self.own_panel_id(&seat);
         self.file.doc.floating.push(FloatingWindow {
-            panel: pergola_core::Panel::new(seat.panel.clone(), vec![seat.seat.clone()]),
+            panel: pergola_core::Panel::new(panel_id.clone(), vec![seat.seat.clone()]),
             rect,
             size: pergola_core::Size::new(rect.w as i32, rect.h as i32),
             z: None,
@@ -800,7 +868,195 @@ impl Daemon {
         self.normalize_camera();
         self.apply()?;
         self.save()?;
-        Ok(format!("floated {}", seat.panel))
+        Ok(format!("floated {panel_id}"))
+    }
+
+    /// Move a window into a panel as a tab. Without `--target` the window joins
+    /// the panel that had focus before it — so `pergola tab` on the active
+    /// window folds it into the neighbouring panel instead of doing nothing.
+    /// A panel that gains a second view becomes a tab group; only its selected
+    /// view is raised.
+    fn tab(&mut self, args: &[String]) -> Result<String> {
+        let win = flag(args, "--window")
+            .and_then(|v| parse_window(&v))
+            .or_else(|| self.x.active_window())
+            .ok_or_else(|| anyhow!("no active window to tab"))?;
+        let seat = self
+            .seat_for_window(win)
+            .ok_or_else(|| anyhow!("window 0x{win:x} is not managed by pergola"))?
+            .clone();
+        let source = self
+            .file
+            .doc
+            .root
+            .panel_containing(&seat.seat)
+            .cloned()
+            .ok_or_else(|| anyhow!("{} is not in the layout", seat.seat))?;
+        let target = match flag(args, "--target") {
+            Some(t) => t,
+            None => match self.focused_panel() {
+                Some(p) if p != source.id => p,
+                _ => self
+                    .last_focus
+                    .clone()
+                    .filter(|p| p != &source.id && self.file.doc.root.node(p).is_some())
+                    .unwrap_or_else(|| self.file.doc.root.id().to_string()),
+            },
+        };
+        let target_id = if self.file.doc.root.node(&target).is_some() {
+            target
+        } else {
+            self.file
+                .doc
+                .root
+                .panel_containing(&target)
+                .map(|p| p.id.clone())
+                .ok_or_else(|| anyhow!("no panel '{target}' to tab into"))?
+        };
+        if target_id == source.id {
+            // Already in the target panel: show it rather than rebuilding.
+            let mut panel = source;
+            panel.select(&seat.seat);
+            let tree = replace_node(&self.file.doc.root, &target_id, &LayoutNode::Panel(panel));
+            self.replace_root(tree);
+            self.apply()?;
+            self.save()?;
+            return Ok(format!("showing {} in {}", seat.seat, target_id));
+        }
+        // Take the seat out of its old panel. A tab group loses one view; a
+        // plain panel goes away like any other node.
+        self.detach_seat(&seat)?;
+        let Some(LayoutNode::Panel(mut target_panel)) =
+            self.file.doc.root.node(&target_id).cloned()
+        else {
+            return Err(anyhow!("no panel '{target_id}' to tab into"));
+        };
+        if !target_panel.views.iter().any(|v| v == &seat.seat) {
+            target_panel.views.push(seat.seat.clone());
+        }
+        target_panel.select(&seat.seat);
+        target_panel.tabbed = Some(true);
+        let views = target_panel.views.len();
+        let tree = replace_node(&self.file.doc.root, &target_id, &LayoutNode::Panel(target_panel));
+        self.replace_root(tree);
+        // The seat now belongs to the target panel; without this `focused_panel`
+        // and `list` keep pointing at the panel it just left.
+        if let Some(record) = self.seats.iter_mut().find(|s| s.seat == seat.seat) {
+            record.panel = target_id.clone();
+        }
+        self.normalize_camera();
+        self.apply()?;
+        // The tabbed window is the one being shown, so give it the keyboard.
+        self.focus_seat(&seat.seat);
+        self.save()?;
+        Ok(format!(
+            "tabbed {} into {target_id} ({views} views)",
+            seat.seat
+        ))
+    }
+
+    /// Show one view of a tab group. Takes a seat id or a window id.
+    fn tab_select(&mut self, args: &[String]) -> Result<String> {
+        let raw = args
+            .first()
+            .ok_or_else(|| anyhow!("usage: pergola tab-select <seat|window>"))?;
+        let seat = match self.seats.iter().find(|s| &s.seat == raw) {
+            Some(s) => s.seat.clone(),
+            None => {
+                let win = parse_window(raw)
+                    .ok_or_else(|| anyhow!("'{raw}' is not a seat or window id"))?;
+                self.seat_for_window(win)
+                    .ok_or_else(|| anyhow!("window 0x{win:x} is not managed by pergola"))?
+                    .seat
+                    .clone()
+            }
+        };
+        let panel = self
+            .file
+            .doc
+            .root
+            .panel_containing(&seat)
+            .cloned()
+            .ok_or_else(|| anyhow!("{seat} is not in the layout"))?;
+        if !panel.is_tab_group() {
+            return Ok(format!("{} is not a tab group", panel.id));
+        }
+        let panel_id = panel.id.clone();
+        let mut panel = panel;
+        if !panel.select(&seat) {
+            return Err(anyhow!("{seat} is not a view of {panel_id}"));
+        }
+        let tree = replace_node(&self.file.doc.root, &panel_id, &LayoutNode::Panel(panel));
+        self.replace_root(tree);
+        self.apply()?;
+        self.focus_seat(&seat);
+        self.save()?;
+        Ok(format!("showing {seat} in {panel_id}"))
+    }
+
+    /// Cycle the visible view of the focused tab group.
+    fn tab_cycle(&mut self, forward: bool) -> Result<String> {
+        // The group to cycle is the one the user is looking at. That is the
+        // panel of the active window when it is a tab group; when the WM has
+        // parked focus elsewhere (a new window, a dialog) fall back to the
+        // group focused last. Both are resolved from the tree, never from the
+        // seat record, which can lag a move.
+        let mut panel_id = self
+            .focused_panel()
+            .filter(|id| self.is_tab_group(id))
+            .or_else(|| {
+                self.last_focus
+                    .clone()
+                    .filter(|id| self.is_tab_group(id))
+            });
+        if panel_id.is_none() {
+            // Last resort: any tab group at all. A user pressing tab-next with
+            // one group on screen means that group.
+            panel_id = self
+                .file
+                .doc
+                .root
+                .flatten()
+                .into_iter()
+                .find_map(|n| match n {
+                    LayoutNode::Panel(p) if p.is_tab_group() => Some(p.id.clone()),
+                    _ => None,
+                });
+        }
+        let Some(panel_id) = panel_id else {
+            return Ok("no tab group to cycle".to_string());
+        };
+        let Some(LayoutNode::Panel(mut panel)) = self.file.doc.root.node(&panel_id).cloned() else {
+            return Ok(format!("{panel_id} is not a panel"));
+        };
+        let Some(seat) = panel.cycle(forward) else {
+            return Ok(format!("{panel_id} has no views"));
+        };
+        let tree = replace_node(&self.file.doc.root, &panel_id, &LayoutNode::Panel(panel));
+        self.replace_root(tree);
+        self.apply()?;
+        self.focus_seat(&seat);
+        self.save()?;
+        Ok(format!("showing {seat} in {panel_id}"))
+    }
+
+    /// Whether a panel id names a tab group in the tree.
+    fn is_tab_group(&self, id: &str) -> bool {
+        matches!(
+            self.file.doc.root.node(id),
+            Some(LayoutNode::Panel(p)) if p.is_tab_group()
+        )
+    }
+
+    /// Give the keyboard to a seat's window. Switching tabs without this leaves
+    /// the user typing into the hidden view, which is the bug the whole feature
+    /// exists to avoid.
+    fn focus_seat(&self, seat: &str) {
+        if let Some(record) = self.seats.iter().find(|s| s.seat == seat) {
+            if let Err(e) = self.x.activate(record.window) {
+                eprintln!("pergola: could not focus 0x{:x}: {e}", record.window);
+            }
+        }
     }
 
     fn arrange(&mut self) -> Result<String> {
@@ -947,12 +1203,9 @@ impl Daemon {
         let target = self
             .focused_panel()
             .unwrap_or_else(|| self.file.doc.root.id().to_string());
-        if self.file.doc.root.node(&seat.panel).is_some() {
-            let tree = self.engine.removing(&seat.panel, &self.file.doc.root)?;
-            self.replace_root(tree);
-        }
-        self.file.doc.floating.retain(|f| f.panel.id != seat.panel);
-        let node = LayoutNode::panel(seat.panel.clone(), vec![seat.seat.clone()]);
+        self.detach_seat(&seat)?;
+        let panel_id = self.own_panel_id(&seat);
+        let node = LayoutNode::panel(panel_id, vec![seat.seat.clone()]);
         let tree = self
             .engine
             .inserting(node, &target, Direction::Right, &self.file.doc.root)
