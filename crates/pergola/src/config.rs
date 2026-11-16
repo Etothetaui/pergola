@@ -117,6 +117,68 @@ impl Default for Config {
     }
 }
 
+/// Every key `pergola config` knows about, in the order it prints them.
+pub const KNOWN_KEYS: &[&str] = &[
+    "gap",
+    "minimum_share",
+    "auto_dock",
+    "overlay",
+    "desktop_share",
+    "terminal",
+    "hotkeys",
+    "edge_dock",
+    "bindings",
+];
+
+/// One complaint about `config.json`, tied to the line that caused it when the
+/// problem comes from the file (a missing terminal is not "." a line's fault).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issue {
+    pub line: usize,
+    pub message: String,
+}
+
+impl std::fmt::Display for Issue {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if self.line > 0 {
+            write!(f, "line {}: {}", self.line, self.message)
+        } else {
+            f.write_str(&self.message)
+        }
+    }
+}
+
+/// What `pergola config` shows: the resolved values, where each one came from,
+/// and everything `--check` would reject.
+pub struct Report {
+    pub path: PathBuf,
+    /// Whether the file existed at all. Missing is not a problem: every key has a
+    /// default.
+    pub found: bool,
+    pub config: Config,
+    /// 1-based line of each key that appears in the file. Absent keys are simply
+    /// not in the map.
+    pub lines: HashMap<&'static str, usize>,
+    pub issues: Vec<Issue>,
+}
+
+impl Report {
+    /// The 1-based line a key appears on, or 0 when it does not (a default).
+    pub fn line_of(&self, key: &str) -> usize {
+        self.lines.get(key).copied().unwrap_or(0)
+    }
+
+    /// `default` or `config.json:<line>`, the source of one key.
+    pub fn source_of(&self, key: &str) -> String {
+        let line = self.line_of(key);
+        if line == 0 {
+            "default".to_string()
+        } else {
+            format!("config.json:{line}")
+        }
+    }
+}
+
 impl Config {
     pub fn load() -> Self {
         let path = config_path();
@@ -127,6 +189,12 @@ impl Config {
             }),
             Err(_) => Config::default(),
         }
+    }
+
+    /// Resolve and validate `config.json` without applying it, for
+    /// `pergola config` and `pergola config --check`.
+    pub fn inspect() -> Report {
+        inspect_at(&config_path())
     }
 
     /// The default binding plan with this config's per-command overrides
@@ -194,6 +262,215 @@ fn write_bindings_at(path: &Path, command: &str, chords: Option<&[String]>) -> R
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// Parse and validate `path` the way the daemon would, collecting the problems
+/// instead of printing them. A syntax error yields the defaults plus one issue,
+/// exactly what `Config::load` falls back to.
+fn inspect_at(path: &Path) -> Report {
+    let mut report = Report {
+        path: path.to_path_buf(),
+        found: false,
+        config: Config::default(),
+        lines: HashMap::new(),
+        issues: Vec::new(),
+    };
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return report,
+        Err(e) => {
+            report.issues.push(Issue {
+                line: 0,
+                message: format!("cannot read {}: {e}", path.display()),
+            });
+            return report;
+        }
+    };
+    report.found = true;
+    if raw.trim().is_empty() {
+        return report;
+    }
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(e) => {
+            report.issues.push(Issue {
+                line: e.line(),
+                message: format!("not valid JSON: {e}"),
+            });
+            return report;
+        }
+    };
+    let Some(object) = value.as_object() else {
+        report.issues.push(Issue {
+            line: 1,
+            message: "the whole file must be a JSON object".to_string(),
+        });
+        return report;
+    };
+    let key_lines = top_level_key_lines(&raw);
+    for key in KNOWN_KEYS {
+        if object.contains_key(*key) {
+            if let Some(line) = key_lines.get(*key) {
+                report.lines.insert(key, *line);
+            }
+        }
+    }
+    for key in object.keys() {
+        if !KNOWN_KEYS.contains(&key.as_str()) {
+            report.issues.push(Issue {
+                line: key_lines.get(key).copied().unwrap_or(0),
+                message: format!(
+                    "unknown key \"{key}\" (known: {})",
+                    KNOWN_KEYS.join(", ")
+                ),
+            });
+        }
+    }
+    report.config = match serde_json::from_str::<Config>(&raw) {
+        Ok(config) => config,
+        Err(e) => {
+            report.issues.push(Issue {
+                line: e.line(),
+                message: e.to_string(),
+            });
+            Config::default()
+        }
+    };
+    check_ranges(&report.config, &report.lines, &mut report.issues);
+    check_bindings(&report.config, &report.lines, &mut report.issues);
+    report
+}
+
+fn check_ranges(config: &Config, lines: &HashMap<&'static str, usize>, issues: &mut Vec<Issue>) {
+    let mut complain = |key: &'static str, message: &str| {
+        issues.push(Issue {
+            line: lines.get(key).copied().unwrap_or(0),
+            message: message.to_string(),
+        });
+    };
+    if !(0.0..=400.0).contains(&config.gap) {
+        complain("gap", "gap must be between 0 and 400 pixels");
+    }
+    if !(config.minimum_share > 0.0 && config.minimum_share <= 0.5) {
+        complain(
+            "minimum_share",
+            "minimum_share must be greater than 0 and at most 0.5",
+        );
+    }
+    if !(0.0..1.0).contains(&config.desktop_share) {
+        complain("desktop_share", "desktop_share must be at least 0 and less than 1");
+    }
+    if !terminal_exists(&config.terminal) {
+        complain(
+            "terminal",
+            &format!(
+                "terminal \"{}\" is not on PATH and is not an executable file",
+                config.terminal
+            ),
+        );
+    }
+}
+
+fn check_bindings(config: &Config, lines: &HashMap<&'static str, usize>, issues: &mut Vec<Issue>) {
+    let line = lines.get("bindings").copied().unwrap_or(0);
+    for (command, chords) in &config.bindings {
+        if command.trim().is_empty() {
+            issues.push(Issue {
+                line,
+                message: "bindings has an empty command name".to_string(),
+            });
+        }
+        for chord in chords {
+            if pergola_x11::parse_binding(chord).is_none() {
+                issues.push(Issue {
+                    line,
+                    message: format!(
+                        "bindings: \"{chord}\" for \"{command}\" is not a chord I understand"
+                    ),
+                });
+            }
+        }
+    }
+}
+
+fn terminal_exists(term: &str) -> bool {
+    if term.trim().is_empty() {
+        return false;
+    }
+    let path = Path::new(term);
+    if path.is_absolute() || term.contains('/') {
+        return path.is_file();
+    }
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(term).is_file()))
+        .unwrap_or(false)
+}
+
+/// The 1-based line each *top-level* key of the object starts on, whether the
+/// file is pretty-printed or one long line. Strings and the braces of nested
+/// objects are tracked, so `{"bindings": {"gap": …}}` does not report the
+/// binding's line for the top-level `gap` key.
+fn top_level_key_lines(raw: &str) -> HashMap<String, usize> {
+    let mut lines: HashMap<String, usize> = HashMap::new();
+    let mut depth = 0i32;
+    let mut line = 1usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut reading_key = false;
+    let mut pending_key: Option<(String, usize)> = None;
+    let mut expect_key = false;
+    let mut key = String::new();
+    let mut key_line = 1usize;
+    for ch in raw.chars() {
+        if ch == '\n' {
+            line += 1;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+                if reading_key {
+                    reading_key = false;
+                    pending_key = Some((key.clone(), key_line));
+                }
+            } else if reading_key {
+                key.push(ch);
+            }
+            continue;
+        }
+        match ch {
+            '"' => {
+                in_string = true;
+                if depth == 1 && expect_key {
+                    reading_key = true;
+                    key.clear();
+                    key_line = line;
+                }
+            }
+            '{' | '[' => {
+                depth += 1;
+                expect_key = ch == '{' && depth == 1;
+            }
+            '}' | ']' => {
+                depth -= 1;
+                expect_key = false;
+            }
+            ':' => {
+                if let Some((finished, at_line)) = pending_key.take() {
+                    lines.entry(finished).or_insert(at_line);
+                }
+                expect_key = false;
+            }
+            ',' => {
+                expect_key = depth == 1;
+            }
+            _ => {}
+        }
+    }
+    lines
 }
 
 pub fn config_dir() -> PathBuf {
@@ -306,6 +583,117 @@ mod tests {
         let path = scratch("missing").join("nested").join("config.json");
         write_bindings_at(&path, "back", Some(&["Super+b".to_string()])).unwrap();
         assert!(path.exists());
+    }
+
+    fn issues_of(raw: &str, name: &str) -> Report {
+        let path = scratch(name);
+        std::fs::write(&path, raw).unwrap();
+        inspect_at(&path)
+    }
+
+    #[test]
+    fn a_missing_file_is_defaults_with_no_complaint() {
+        let path = scratch("absent");
+        let report = inspect_at(&path);
+        assert!(!report.found);
+        assert!(report.issues.is_empty(), "{:#?}", report.issues);
+        assert_eq!(report.config.gap, Config::default().gap);
+        assert_eq!(report.line_of("gap"), 0);
+        assert_eq!(report.source_of("gap"), "default");
+    }
+
+    #[test]
+    fn a_good_file_resolves_every_key_and_names_its_lines() {
+        let report = issues_of(
+            "{\n  \"gap\": 9,\n  \"minimum_share\": 0.1,\n  \"auto_dock\": \"new\",\n  \"overlay\": true,\n  \"desktop_share\": 0.2,\n  \"terminal\": \"/bin/sh\",\n  \"hotkeys\": false,\n  \"edge_dock\": false,\n  \"bindings\": {\"view 3\": [\"Super+9\"]}\n}\n",
+            "good",
+        );
+        assert!(report.issues.is_empty(), "{:#?}", report.issues);
+        assert_eq!(report.config.gap, 9.0);
+        assert_eq!(report.config.auto_dock, AutoDock::New);
+        assert!(report.config.overlay);
+        assert!(!report.config.hotkeys);
+        assert!(!report.config.edge_dock);
+        assert_eq!(report.config.terminal, "/bin/sh");
+        assert_eq!(report.config.bindings["view 3"], vec!["Super+9"]);
+        assert_eq!(report.line_of("gap"), 2);
+        assert_eq!(report.source_of("gap"), "config.json:2");
+    }
+
+    #[test]
+    fn an_unknown_key_is_reported_on_its_line() {
+        let report = issues_of("{\n  \"gap\": 6,\n  \"gaap\": 12\n}\n", "unknown");
+        assert_eq!(report.issues.len(), 1, "{:#?}", report.issues);
+        assert_eq!(report.issues[0].line, 3);
+        assert!(report.issues[0].message.contains("unknown key \"gaap\""));
+        // A typo does not stop the rest of the file from being used.
+        assert_eq!(report.config.gap, 6.0);
+    }
+
+    #[test]
+    fn a_binding_named_after_a_key_does_not_shadow_the_key_line() {
+        let report = issues_of(
+            "{\n  \"gap\": 6,\n  \"bindings\": {\"gap\": [\"Super+g\"]}\n}\n",
+            "shadow",
+        );
+        assert_eq!(report.line_of("gap"), 2);
+        assert!(report.issues.is_empty(), "{:#?}", report.issues);
+    }
+
+    #[test]
+    fn a_one_line_file_still_names_its_source() {
+        // A compact config is one line, so every key is on line 1 — but they must
+        // not be reported as defaults, which would be a lie about where the
+        // value came from.
+        let report = issues_of(
+            "{\"bindings\": {\"gap\": [\"Super+g\"]}, \"gap\": 9}",
+            "compact",
+        );
+        assert_eq!(report.config.gap, 9.0);
+        assert_eq!(report.line_of("gap"), 1);
+        assert_eq!(report.source_of("gap"), "config.json:1");
+        assert!(report.issues.is_empty(), "{:#?}", report.issues);
+    }
+
+    #[test]
+    fn out_of_range_values_are_rejected() {
+        let report = issues_of(
+            "{\n  \"gap\": -4,\n  \"minimum_share\": 0,\n  \"desktop_share\": 1.0\n}\n",
+            "ranges",
+        );
+        let messages: Vec<&str> = report.issues.iter().map(|i| i.message.as_str()).collect();
+        assert!(messages.iter().any(|m| m.contains("gap must be between 0 and 400")), "{messages:#?}");
+        assert!(messages.iter().any(|m| m.contains("minimum_share")), "{messages:#?}");
+        assert!(messages.iter().any(|m| m.contains("desktop_share")), "{messages:#?}");
+        assert_eq!(report.issues[0].line, 2);
+    }
+
+    #[test]
+    fn a_terminal_that_does_not_exist_is_rejected() {
+        let report = issues_of("{\"terminal\": \"/nonexistent/term\"}\n", "terminal");
+        assert_eq!(report.issues.len(), 1, "{:#?}", report.issues);
+        assert!(report.issues[0].message.contains("not on PATH"));
+        // An absolute path that does exist is fine.
+        let report = issues_of("{\"terminal\": \"/bin/sh\"}\n", "terminal-ok");
+        assert!(report.issues.is_empty(), "{:#?}", report.issues);
+    }
+
+    #[test]
+    fn a_chord_that_does_not_parse_is_rejected() {
+        let report = issues_of(
+            "{\"bindings\": {\"view 2\": [\"Super+bracketleft\", \"Super+;;\"]}}\n",
+            "chords",
+        );
+        assert_eq!(report.issues.len(), 1, "{:#?}", report.issues);
+        assert!(report.issues[0].message.contains("is not a chord I understand"));
+    }
+
+    #[test]
+    fn a_syntax_error_is_reported_without_losing_the_defaults() {
+        let report = issues_of("{\n  \"gap\": 6,\n  \"overlay\": tru\n}\n", "syntax");
+        assert_eq!(report.issues.len(), 1, "{:#?}", report.issues);
+        assert!(report.issues[0].message.contains("not valid JSON"));
+        assert_eq!(report.config.gap, Config::default().gap);
     }
 }
 

@@ -54,7 +54,7 @@ copy, and the package was removed afterwards to leave the user install as the li
 The backlog asked for `pergola-bin`; that name is a contract in the AUR (`-bin` = prebuilt, no
 compilation) and there is no release artifact to download, so shipping it would have meant a
 package that lies about itself. The rename and the reason are in `packaging/aur/README.md`; a
-`pergola-bin` package is item 8, blocked on a release pipeline.
+`pergola-bin` package is item 7, blocked on a release pipeline.
 
 Two deliberate deviations from the source install: the packaged unit does not hard-code
 `DISPLAY=:0` (it inherits the graphical session's environment), and `install.sh` remains the path
@@ -73,6 +73,17 @@ layer, and 100 toggles leave the root window's child count unchanged with no win
 `_NET_WM_WINDOW_OPACITY`. The e2e proves the fallback, then a stand-in selection owner proves the
 layer (`scripts/xhelper.py`).
 
+### Config validation and `pergola config` (0.4.0-dev)
+
+`pergola config` prints every key with the value in force and where it came from (`default`, or
+`config.json:<line>`), so a misspelled key can no longer hide behind a default. `pergola config
+--check` exits non-zero and names the line for an unknown key, an out-of-range
+`gap`/`minimum_share`/`desktop_share`, a `terminal` that is not on `PATH`, or a `bindings` chord
+that does not parse; it reads the file itself, so it works with no daemon running. The line finder
+tracks JSON strings and nesting, so a binding named after a command does not shadow the key, and a
+one-line config still names its source. Also fixes the CLI panicking on a closed pipe
+(`pergola config | head`), by restoring the default SIGPIPE handler in `main`.
+
 ### A second window manager in the measured gate (0.4.0-dev)
 
 `scripts/e2e.sh` takes `--wm xfwm4|openbox|i3`, and `pergola-health --e2e` now takes `--wm` too,
@@ -85,16 +96,7 @@ saturation three checks flake (`P list` empty reply, an `arrange` tile left at 0
 that does not step back), and the same three flake at the previous commit, so they are the
 suite's fixed sleeps rather than a product regression (`docs/DESIGN.md`).
 
-## 1. Config validation and `pergola config`
-
-**What:** `pergola config` prints the resolved config with its source; `pergola config --check`
-rejects unknown keys, out-of-range gaps and a terminal that does not exist.
-**Why:** a typo in `config.json` is currently ignored silently (`serde` default), which is a
-mystery for the user and a non-bug in the tracker.
-**Done when:** a bad key is reported with its line, a good file round-trips, and `--check` exits
-non-zero in the failure cases.
-
-## 2. Settings and chords in the palette
+## 1. Settings and chords in the palette
 
 **What:** `pergola settings` opens the palette with the config keys (gap, minimum_share,
 auto_dock, edge_dock, overlay, terminal) and the chord map — the `bindings` map that has
@@ -105,7 +107,7 @@ already exists in `pergola-core` and renders nothing.
 **Done when:** every key in `config.json` is reachable from the menu, a bad value is rejected
 without writing, and `pergola keys --check` equivalents are shown for each chord.
 
-## 3. Layout undo
+## 2. Layout undo
 
 **What:** a bounded snapshot ring of trees with `Ctrl+Alt+z` / palette "Undo layout change";
 redo is out of scope for the first pass.
@@ -114,7 +116,7 @@ not a layout history and users assume it is.
 **Done when:** dock, float, gap drag and arrange each push a snapshot; undo restores the previous
 tree, geometry and floating rects; 10 steps are kept; e2e undoes a keyboard dock.
 
-## 4. Pointer affordances
+## 3. Pointer affordances
 
 **What:** highlight a gap band on hover even with the overlay off, show the target rectangle during
 a window drag, and re-dock a docked tile that settles near another edge.
@@ -123,7 +125,7 @@ only an EnterNotify on the band; the drop target needs pointer tracking during a
 **Done when:** a hovered gap draws a line and leaves no artefact, a dragged window shows where it
 will land, and dragging a docked tile to the opposite edge re-docks it in one gesture.
 
-## 5. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+## 4. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
 
 **What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
 records as newline-delimited JSON over the control socket, so a panel can draw the tree without
@@ -134,7 +136,7 @@ Pergola's socket is request/response only today.
 **Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
 the stream survives a daemon restart, and an e2e assertion reads two records from one session.
 
-## 6. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+## 5. Honour `_NET_ACTIVE_WINDOW` requests from pagers
 
 **What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
 currently only *sets* that property when it focuses a window.
@@ -143,7 +145,7 @@ something it does not listen for. A taskbar's "click to focus" silently does not
 **Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
 reports the same seat as focused; a unit test covers the request path.
 
-## 7. Named workspaces (tags) on top of views
+## 6. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -153,7 +155,7 @@ is a deliberate `MINOR` bump with a loader that keeps reading older documents.
 **Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
 and a document written by the new version loads in the old one without losing its views.
 
-## 8. Release pipeline, so `pergola-bin` can exist
+## 7. Release pipeline, so `pergola-bin` can exist
 
 **What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
 a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays

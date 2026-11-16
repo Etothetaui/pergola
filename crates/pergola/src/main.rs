@@ -15,6 +15,14 @@ use anyhow::Result;
 use pergola_core::{fractal_tree, LayoutEngine, Rect};
 
 fn main() -> ExitCode {
+    // A CLI whose output is piped into something that stops early (`pergola
+    // config | head`) must die quietly like every other Unix tool. Rust ignores
+    // SIGPIPE by default, so the next `println!` panics on a broken pipe and
+    // prints a panic message to a terminal that may no longer be looking.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut socket = config::socket_path();
     let mut rest: Vec<String> = Vec::new();
@@ -48,6 +56,7 @@ fn main() -> ExitCode {
         "palette" => palette::open().map(|()| println!("palette opened — pick an action")),
         "palette-run" => palette::run(),
         "sim" => sim(&rest[1..]),
+        "config" => config_report(&rest[1..]),
         "keys" => keys(&socket, &rest[1..]),
         "bind" => bind(&socket, &rest[1..]),
         "unbind" => unbind(&socket, &rest[1..]),
@@ -349,6 +358,68 @@ fn sim(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `pergola config` — the resolved values and where each one came from, or with
+/// `--check`, the problems a bad file has. Reads the file itself, so it works
+/// with no daemon running, which is when a typo is most confusing.
+fn config_report(args: &[String]) -> Result<()> {
+    let report = config::Config::inspect();
+    let origin = if report.found {
+        format!("{} (found)", report.path.display())
+    } else {
+        format!("{} (not found — every key is its default)", report.path.display())
+    };
+    if args.iter().any(|a| a == "--check") {
+        println!("{origin}");
+        if report.issues.is_empty() {
+            println!("  ok    no problems");
+            return Ok(());
+        }
+        for issue in &report.issues {
+            println!("  FAIL  {issue}");
+        }
+        anyhow::bail!(
+            "{} problem(s) in {}",
+            report.issues.len(),
+            report.path.display()
+        );
+    }
+    println!("{origin}");
+    for key in config::KNOWN_KEYS {
+        println!(
+            "  {:<14} {:<26} ({})",
+            key,
+            config_value(&report.config, key),
+            report.source_of(key)
+        );
+    }
+    Ok(())
+}
+
+fn config_value(config: &config::Config, key: &str) -> String {
+    match key {
+        "gap" => format!("{}", config.gap),
+        "minimum_share" => format!("{}", config.minimum_share),
+        "auto_dock" => match config.auto_dock {
+            config::AutoDock::Off => "off".to_string(),
+            config::AutoDock::New => "new".to_string(),
+            config::AutoDock::All => "all".to_string(),
+        },
+        "overlay" => config.overlay.to_string(),
+        "desktop_share" => format!("{}", config.desktop_share),
+        "terminal" => config.terminal.clone(),
+        "hotkeys" => config.hotkeys.to_string(),
+        "edge_dock" => config.edge_dock.to_string(),
+        "bindings" => {
+            if config.bindings.is_empty() {
+                "{}".to_string()
+            } else {
+                format!("{} command(s)", config.bindings.len())
+            }
+        }
+        other => format!("<{other}>"),
+    }
+}
+
 fn print_help() {
     println!(
         r#"pergola {version} — a fractal window manager layer for X11 desktops
@@ -386,6 +457,10 @@ TABS
   tab [--window <id>] [--target <panel>]  fold a window into a panel as a tab
   tab-select <seat|window>       show one view of a tab group
   tab-next | tab-prev            cycle the shown view of the focused group
+
+CONFIG
+  config                         the resolved config, each key with its source
+  config --check                 reject unknown keys, bad values and bad chords
 
 INSPECTION
   status | tree | list | keys | doctor | sim [--json]

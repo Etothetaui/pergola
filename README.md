@@ -99,6 +99,7 @@ pergola rects            # every panel's current frame rectangle
 | `overlay [on\|off\|toggle]` | draw split lines in the gaps, and dim the tiles when a compositor can render it (off by default) |
 | `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
 | `tab` / `tab-select` / `tab-next` / `tab-prev` | fold a window into a panel as a tab, switch tabs |
+| `config [--check]` | the resolved config with each key's source, or what is wrong with the file |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
 | `reload` `save` `stop` | daemon control |
 
@@ -181,6 +182,12 @@ the edge behaviour off if a drag should never tile.
 edit takes effect without a restart. `overlay` still applies on daemon restart.
 The `gap` and `overlay` commands change the running session only. See
 [docs/SETUP.md](docs/SETUP.md#configuration) for the details.
+
+`pergola config` prints every key with the value actually in force and where it
+came from (`default` or `config.json:<line>`), so a typo cannot hide behind a
+default. `pergola config --check` exits non-zero on an unknown key, an
+out-of-range gap/share, a terminal that does not exist or a chord that does not
+parse, and names the line — a misspelled key is otherwise ignored silently.
 
 ### Remap a key
 
@@ -290,8 +297,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 77 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # ~90 assertions against Xvfb + a real WM + real xterms
+cargo test               # 86 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # 101 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

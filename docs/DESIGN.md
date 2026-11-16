@@ -133,15 +133,14 @@ uses. The action list is static and labelled for people, not for the grammar.
 
 ## Testing
 
-* `cargo test` — 77 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 86 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
   document round-trips, config parsing and repair of malformed weights.
 * `scripts/e2e.sh` — starts Xvfb + a real WM (xfwm4 by default, openbox with
   `--wm openbox`) + three xterms, runs the real daemon, and asserts the geometry
   the X server reports against `pergola rects` after dock, zoom, arrange, gap
   changes, ratio, float, a daemon restart, keyboard docking, a gap drag, an edge
-  drop, tab groups, config/binding errors and the overlay's dim layer — about
-  90 assertions, a check or two fewer when the WM parks a tile off-screen.
+  drop, tab groups, config/binding errors and the overlay's dim layer — 101 assertions, a check or two fewer when the WM parks a tile off-screen.
   It never touches the live session.
 
   The suite uses fixed sleeps, so it assumes the machine is not CPU-saturated.

@@ -602,6 +602,49 @@ else
   bad "the malformed config was overwritten"
 fi
 
+# `pergola config` reads the file itself, so it reports a typo while the daemon
+# is happy with its defaults — and names the line the typo is on.
+printf '%s\n' '{' '  "gap": 6,' '  "gaap": 12' '}' > "$XDG_CONFIG_HOME/pergola/config.json"
+CHECK=$("$BIN" config --check 2>&1); CHECK_RC=$?
+if [ "$CHECK_RC" -ne 0 ]; then ok "config --check rejects an unknown key"; else bad "config --check accepted an unknown key: $CHECK"; fi
+if printf '%s' "$CHECK" | grep -c 'line 3: unknown key "gaap"' >/dev/null; then
+  ok "the unknown key is reported with its line"
+else
+  bad "the unknown key was not reported with line 3: $CHECK"
+fi
+printf '%s\n' '{' '  "gap": -4,' '  "terminal": "/nonexistent/term"' '}' > "$XDG_CONFIG_HOME/pergola/config.json"
+CHECK=$("$BIN" config --check 2>&1); CHECK_RC=$?
+if [ "$CHECK_RC" -ne 0 ] && printf '%s' "$CHECK" | grep -c 'gap must be between 0 and 400' >/dev/null; then
+  ok "config --check rejects an out-of-range gap"
+else
+  bad "the out-of-range gap was not reported: $CHECK"
+fi
+if printf '%s' "$CHECK" | grep -c 'terminal "/nonexistent/term"' >/dev/null; then
+  ok "config --check rejects a terminal that does not exist"
+else
+  bad "the missing terminal was not reported: $CHECK"
+fi
+printf '%s\n' '{"gap": 9, "overlay": true, "terminal": "/bin/sh"}' > "$XDG_CONFIG_HOME/pergola/config.json"
+if "$BIN" config --check >/dev/null 2>&1; then ok "config --check accepts a good file"; else bad "config --check rejected a good file: $("$BIN" config --check 2>&1)"; fi
+RESOLVED=$("$BIN" config 2>&1)
+if printf '%s' "$RESOLVED" | grep -c 'gap            9  ' >/dev/null; then
+  ok "config prints the resolved value"
+else
+  bad "config did not print the resolved gap: $RESOLVED"
+fi
+if printf '%s' "$RESOLVED" | grep -c 'config.json:1' >/dev/null; then
+  ok "config names where a value came from"
+else
+  bad "config did not name the key's source: $RESOLVED"
+fi
+printf '%s' '{"gap": 9}' > "$XDG_CONFIG_HOME/pergola/config.json"
+if "$BIN" config 2>&1 | head -2 | grep -c 'panicked' >/dev/null; then
+  bad "config panicked when its output was piped"
+else
+  ok "config survives a closed pipe instead of panicking"
+fi
+printf '%s' '{}' > "$XDG_CONFIG_HOME/pergola/config.json"
+
 say
 say "10. tab groups"
 # A tab group is one panel holding several windows: every view is mapped at the

@@ -17,6 +17,23 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **`pergola config` and `config --check`.** `pergola config` prints every key
+  with the value actually in force and where it came from — `default`, or
+  `config.json:<line>` — so a misspelled key can no longer hide behind a
+  default. `pergola config --check` exits non-zero and names the line for an
+  unknown key, an out-of-range `gap`/`minimum_share`/`desktop_share`, a
+  `terminal` that is not on `PATH`, or a `bindings` chord that does not parse.
+  It reads the file itself, so it works with no daemon running, which is exactly
+  when a typo is most confusing. The line finder tracks JSON strings and nesting,
+  so a binding named after a command does not shadow the key, and a one-line
+  config still names its source. 86 unit tests (nine new), 101 e2e assertions on
+  xfwm4 and openbox.
+
+* **The CLI no longer panics on a closed pipe.** `pergola config | head` died
+  with `failed printing to stdout: Broken pipe` plus a Rust panic message,
+  because Rust ignores `SIGPIPE`; `main` now restores the default handler, so a
+  piped command ends silently like every other Unix tool.
+
 * **The overlay dims the tiles when a compositor can render it.** `overlay on`
   now draws a full-screen 40% black layer under the split lines whenever a
   compositor owns `_NET_WM_CM_S0` — the selection xfwm4, picom, kwin and mutter

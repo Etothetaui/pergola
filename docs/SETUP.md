@@ -207,6 +207,12 @@ Notes:
   which of the two it did (`dim 40% 0x…` or `dim unavailable`).
 * A malformed file is reported on stderr and ignored (defaults are used); the
   daemon still starts.
+* `pergola config` prints every key with the value in force and where it came
+  from — `default` or `config.json:<line>` — so a typo cannot hide behind a
+  default. `pergola config --check` exits non-zero on an unknown key, an
+  out-of-range `gap`/`minimum_share`/`desktop_share`, a `terminal` that is not
+  on `PATH`, or a `bindings` chord that does not parse, and names the line. It
+  reads the file itself, so it works with no daemon running.
 * `pergola keys --check` lists what was actually bound and which planned chords
   the desktop already owns, including your `bindings` overrides (`off` marks a
   command you unbound with an empty list). `pergola keys --probe <chord>…` tests
