@@ -92,6 +92,10 @@ pub struct Daemon {
     /// auto-repeats a held key by sending a `KeyRelease` and a `KeyPress` with
     /// the *same* timestamp, so that pair is a repeat and the press is dropped.
     last_release: Option<(u8, u32)>,
+    /// False until the daemon's first reconcile finishes. `auto_dock: new`
+    /// docks windows that appear after this, `all` also adopts the ones that
+    /// were already on screen at startup.
+    started: bool,
 }
 
 impl Daemon {
@@ -141,8 +145,10 @@ impl Daemon {
             moves: HashMap::new(),
             last_apply: Instant::now(),
             last_release: None,
+            started: false,
         };
         daemon.reconcile()?;
+        daemon.started = true;
         daemon.normalize_camera();
         daemon.apply()?;
         Ok(daemon)
@@ -211,9 +217,19 @@ impl Daemon {
                 title: w.title.clone(),
             });
             changed = true;
-            if self.config.auto_dock {
+            if self.config.auto_dock.docks(self.started) {
+                // The WM may have already focused the new window, so
+                // `focused_panel` can name a panel that is not in the tree yet
+                // (its own). Dock beside a panel that is actually there, or the
+                // whole tree when nothing docked has focus.
                 let target = self
                     .focused_panel()
+                    .filter(|p| self.file.doc.root.node(p).is_some())
+                    .or_else(|| {
+                        self.last_focus
+                            .clone()
+                            .filter(|p| self.file.doc.root.node(p).is_some())
+                    })
                     .unwrap_or_else(|| self.file.doc.root.id().to_string());
                 let node = LayoutNode::panel(panel.clone(), vec![seat.clone()]);
                 match self
@@ -518,7 +534,7 @@ impl Daemon {
         let meta = pergola_core::PergolaMeta {
             seats: self.seats.clone(),
             gap: Some(self.engine.gap),
-            auto_dock: Some(self.config.auto_dock),
+            auto_dock: Some(self.config.auto_dock != crate::config::AutoDock::Off),
             overlay: Some(self.overlay_on),
         };
         self.file.pergola = Some(meta);
@@ -1490,6 +1506,24 @@ impl Daemon {
                             seat.title = info.title;
                             seat.class = info.class;
                         }
+                    }
+                }
+            }
+            // A window we own is gone. Remove its seat now instead of waiting
+            // up to 2 s for the timer reconcile: a WM may hand the same XID to
+            // a new window inside that window (measured on openbox: a killed
+            // xterm's id came back ~0.4 s later), and the lingering seat would
+            // make the daemon mistake the new window for the dead one —
+            // updating its title and never adopting it.
+            Event::DestroyNotify(destroy) => {
+                if self.seats.iter().any(|s| s.window == destroy.window) {
+                    if self.reconcile()? {
+                        if self.drag.is_some() {
+                            let _ = self.end_gap_drag();
+                        }
+                        self.normalize_camera();
+                        let _ = self.apply();
+                        let _ = self.save();
                     }
                 }
             }

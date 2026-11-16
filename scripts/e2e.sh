@@ -365,7 +365,7 @@ sleep 1.5
 if P list | grep -q "^docked.*$W3"; then ok "a window dragged to the left edge is docked"; else bad "edge drag did not dock $W3"; fi
 # Pulling that tile back off the screen edge floats it where it was dropped.
 for x in 320 400 480; do wmctrl -i -r "$W3" -e "0,$x,220,320,240" >/dev/null 2>&1; sleep 0.15; done
-sleep 1.2
+sleep 2.5
 if P list | grep -q "^floating.*$W3"; then ok "a docked tile dragged away floats again"; else bad "drag-out did not float $W3"; fi
 P arrange >/dev/null; sleep 0.4
 
@@ -455,6 +455,44 @@ if [ "$(P keys | grep -c 'everything')" -ge 1 ]; then
 else
   bad "hotkeys: true did not re-grab"
 fi
+
+# auto_dock is a tri-state. `off` (the default) leaves a new window floating;
+# `new` docks a window that appears after the daemon started. This is the
+# backlog's "no window is adopted into a space it was not opened in": off never
+# adopts, and the three startup windows stay where they were.
+printf '%s' '{"auto_dock":"off","hotkeys":true}' > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1; sleep 0.3
+xterm -T pergola-e2e-autodock-off -geometry 60x18+320+320 -e sh -c 'exec sleep 3600' >/dev/null 2>&1 & AUTO_OFF_PID=$!; XPIDS+=($AUTO_OFF_PID)
+# reconcile runs on a 2 s timer, so poll for the seat instead of guessing a sleep.
+AUTO_OFF=""
+for _ in $(seq 1 40); do
+  AUTO_OFF=$(xdotool search --name pergola-e2e-autodock-off 2>/dev/null | head -1)
+  [ -n "$AUTO_OFF" ] && P list | grep -c "^floating.*$(printf '0x%08x' "$AUTO_OFF")" >/dev/null && break
+  sleep 0.1
+done
+if [ -n "$AUTO_OFF" ] && P list | grep -c "^floating.*$(printf '0x%08x' "$AUTO_OFF")" >/dev/null; then
+  ok "auto_dock off leaves a new window floating"
+else
+  bad "auto_dock off adopted a new window"
+fi
+kill "$AUTO_OFF_PID" 2>/dev/null; sleep 0.4
+printf '%s' '{"auto_dock":"new","hotkeys":true}' > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1; sleep 0.3
+xterm -T pergola-e2e-autodock-new -geometry 60x18+340+340 -e sh -c 'exec sleep 3600' >/dev/null 2>&1 & AUTO_NEW_PID=$!; XPIDS+=($AUTO_NEW_PID)
+AUTO_NEW=""
+for _ in $(seq 1 40); do
+  AUTO_NEW=$(xdotool search --name pergola-e2e-autodock-new 2>/dev/null | head -1)
+  [ -n "$AUTO_NEW" ] && P list | grep -c "^docked.*$(printf '0x%08x' "$AUTO_NEW")" >/dev/null && break
+  sleep 0.1
+done
+if [ -n "$AUTO_NEW" ] && P list | grep -c "^docked.*$(printf '0x%08x' "$AUTO_NEW")" >/dev/null; then
+  ok "auto_dock new docks a window opened after startup"
+else
+  bad "auto_dock new did not dock a new window"
+fi
+kill "$AUTO_NEW_PID" 2>/dev/null; sleep 0.4
+printf '%s' '{"hotkeys":true}' > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1
 
 # The shell commands: `bind` and `unbind` write config.json and reload, so a
 # user never has to edit JSON by hand. They must preserve other settings.

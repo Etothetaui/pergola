@@ -102,7 +102,7 @@ the defaults):
 {
   "gap": 6.0,
   "minimum_share": 0.05,
-  "auto_dock": false,
+  "auto_dock": "off",
   "overlay": false,
   "desktop_share": 0.0,
   "terminal": "xfce4-terminal",
@@ -121,7 +121,7 @@ the defaults):
 |---|---|---|
 | `gap` | `6.0` | pixels between tiles, and width of the overlay divider |
 | `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to when weights are edited |
-| `auto_dock` | `false` | dock new windows automatically instead of leaving them floating |
+| `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
 | `overlay` | `false` | draw split lines in the gaps and a frame around the viewport |
 | `desktop_share` | `0.0` | share of the screen `arrange` gives the desktop leaf; `0` means the desktop gets no strip |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
@@ -308,4 +308,5 @@ stopping returns every window to the desktop layer.
 
 Tuning knobs that answer the most common complaints: `gap` (thicker split
 lines and spacing), `desktop_share` (keep a desktop strip when docking), and
-`auto_dock` (stop new windows from floating).
+`auto_dock` (stop new windows from floating: `new` docks windows opened after
+the daemon started, `all` also adopts the session it found).

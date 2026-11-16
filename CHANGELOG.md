@@ -7,6 +7,20 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **`auto_dock` is a tri-state (`off` / `new` / `all`).** `new` docks a window
+  opened after the daemon started and leaves the session it found alone; `all`
+  also adopts the windows that were already on screen at startup; `off` never
+  adopts (the historical default). The old boolean still parses: `false` is
+  `off`, `true` is `all`. The dock target is the focused panel only if it is in
+  the tree, then the last-focused docked panel, else the whole tree, so the WM
+  focusing the new window does not make it its own target. A `DestroyNotify`
+  handler drops a dead window's seat immediately: the X server can reuse an XID
+  within milliseconds, and on openbox the reused id made a new window look like
+  the dead one, so it was never adopted (measured: `auto_dock: new` passed on
+  xfwm4 and failed on openbox until the seat was removed on destroy). The unit
+  test is the mode table; the e2e asserts a new window floats with `off` and
+  docks with `new`. 85/85 on xfwm4 and openbox.
+
 * **Tab groups work.** A panel can hold several windows as tabs: every view is
   mapped at the panel rectangle and only the selected one is raised. `pergola
   tab --window <id> [--target <panel>]` folds a window into a panel as a tab

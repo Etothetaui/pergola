@@ -6,6 +6,72 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+/// What to do with a window the daemon has not seen before.
+///
+/// `off` leaves it floating (the historical default), `new` docks windows that
+/// appear after the daemon started, and `all` also adopts the windows that were
+/// already on screen when it started. The old boolean form still parses: `false`
+/// is `off` and `true` is `all`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoDock {
+    Off,
+    New,
+    All,
+}
+
+impl Default for AutoDock {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+impl AutoDock {
+    /// Whether a window that appears now should be docked. `after_startup` is
+    /// false only during the daemon's first reconcile, so `new` leaves the
+    /// user's existing session alone and `all` adopts it.
+    pub fn docks(self, after_startup: bool) -> bool {
+        match self {
+            AutoDock::Off => false,
+            AutoDock::New => after_startup,
+            AutoDock::All => true,
+        }
+    }
+}
+
+impl Serialize for AutoDock {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            AutoDock::Off => "off",
+            AutoDock::New => "new",
+            AutoDock::All => "all",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for AutoDock {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = AutoDock;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a boolean or one of \"off\", \"new\", \"all\"")
+            }
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> std::result::Result<AutoDock, E> {
+                Ok(if v { AutoDock::All } else { AutoDock::Off })
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<AutoDock, E> {
+                match v.to_ascii_lowercase().as_str() {
+                    "off" | "false" | "none" | "never" => Ok(AutoDock::Off),
+                    "new" => Ok(AutoDock::New),
+                    "all" | "true" | "on" | "everything" => Ok(AutoDock::All),
+                    other => Err(E::unknown_variant(other, &["off", "new", "all"])),
+                }
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -14,7 +80,7 @@ pub struct Config {
     /// Smallest share a tile may be squeezed to.
     pub minimum_share: f64,
     /// Dock new windows automatically instead of leaving them floating.
-    pub auto_dock: bool,
+    pub auto_dock: AutoDock,
     /// Show the tree overlay when the camera moves.
     pub overlay: bool,
     /// Share of the screen given to the desktop leaf by `arrange`.
@@ -38,7 +104,7 @@ impl Default for Config {
         Self {
             gap: 6.0,
             minimum_share: 0.05,
-            auto_dock: false,
+            auto_dock: AutoDock::Off,
             // The overlay is a debugging aid, not decoration: lines in the gaps
             // and a viewport frame, off unless asked for (or `everything`).
             overlay: false,
@@ -168,6 +234,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("config.json")
+    }
+
+    #[test]
+    fn auto_dock_is_a_tri_state_and_still_reads_the_old_boolean() {
+        // The table the backlog asks for: each mode against a window that was
+        // already on screen at startup and one that appears afterwards.
+        let cases = [
+            (AutoDock::Off, false, false, "off never docks"),
+            (AutoDock::Off, true, false, "off never docks, even later"),
+            (AutoDock::New, false, false, "new leaves the startup session alone"),
+            (AutoDock::New, true, true, "new docks a window opened later"),
+            (AutoDock::All, false, true, "all adopts the startup session"),
+            (AutoDock::All, true, true, "all docks a window opened later"),
+        ];
+        for (mode, after_startup, want, why) in cases {
+            assert_eq!(mode.docks(after_startup), want, "{why}");
+        }
+        // Back-compat: the boolean form keeps meaning what it meant.
+        let old: Config = serde_json::from_str(r#"{"auto_dock":true}"#).unwrap();
+        assert_eq!(old.auto_dock, AutoDock::All);
+        let off: Config = serde_json::from_str(r#"{"auto_dock":false}"#).unwrap();
+        assert_eq!(off.auto_dock, AutoDock::Off);
+        // The new string form round-trips.
+        for (text, want) in [("off", AutoDock::Off), ("new", AutoDock::New), ("all", AutoDock::All)] {
+            let c: Config = serde_json::from_str(&format!(r#"{{"auto_dock":"{text}"}}"#)).unwrap();
+            assert_eq!(c.auto_dock, want);
+        }
+        let encoded = serde_json::to_string(&Config::default()).unwrap();
+        assert!(encoded.contains(r#""auto_dock":"off""#), "{encoded}");
     }
 
     #[test]

@@ -163,7 +163,7 @@ the edge behaviour off if a drag should never tile.
 |---|---|---|
 | `gap` | `6.0` | pixels between tiles and width of the overlay divider |
 | `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to |
-| `auto_dock` | `false` | dock new windows automatically instead of floating them |
+| `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
 | `overlay` | `false` | draw the split lines and viewport frame |
 | `desktop_share` | `0.0` | desktop strip `arrange` keeps; `0` gives it none |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
