@@ -194,6 +194,7 @@ const DAEMON_COMMANDS: &[&str] = &[
     "arrange",
     "float-all",
     "gap",
+    "ratio",
     "overlay",
     "keys",
     "reload",
@@ -373,11 +374,7 @@ LAYOUT
   float-all                      return every window to the desktop layer
   split-terminal                 split the focused window with a new terminal
   gap <pixels>                   change the gap between tiles
-
-TABS
-  tab [--window ID] [--target PANEL]  fold a window into a panel as a tab
-  tab-select <seat|window>       show one tab of a group
-  tab-next | tab-prev            cycle the tabs of the focused group
+  ratio <0.0-1.0>                rebalance the split around the focused panel
 
 KEYS
   keys [--check] [--probe <chord>...]  what each command is bound to

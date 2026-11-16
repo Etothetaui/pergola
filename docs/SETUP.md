@@ -233,7 +233,7 @@ Everything that tiles a window is reachable without a shell:
 | stack it above/below | `Ctrl+Alt+Shift+↑` / `↓` |
 | float it again | `Ctrl+Alt+Shift+W` |
 | choose from a menu | `Ctrl+Alt+M` (needs rofi/zenity/yad/dmenu) |
-| resize a split | drag the gap between the two tiles |
+| resize a split | drag the gap between the two tiles, or `pergola ratio 0.3` |
 | tile by mouse | drag a window to a screen edge and let go |
 | untile by mouse | drag the tile away from the edge |
 | switch tabs in a group | `Ctrl+Alt+Page_Down` / `Page_Up` |
@@ -299,7 +299,7 @@ stopping returns every window to the desktop layer.
 | Tiles sit under the top panel | that is the work-area class of bug: `pergola-health` asserts every tile is inside `_NET_WORKAREA`; upgrade if it fails |
 | Hotkeys do nothing | `pergola keys --check`; the desktop may own the chord; Pergola falls back to `Super` per command and says which ones had no free chord at startup |
 | `Ctrl+Alt+M` does nothing | no menu program: `sudo pacman -S rofi`, or set `PERGOLA_MENU=/path/to/menu` |
-| Dragging a gap does nothing | there must be a gap: set `gap` above 0; the strip is only as wide as the gap |
+| Dragging a gap does nothing | there must be a gap: set `gap` above 0; the strip is only as wide as the gap. With `gap: 0`, use `pergola ratio 0.3` instead |
 | A dropped window landed somewhere nested | edge drops dock against the last focused space by design — drop again on the edge you want, or use `Ctrl+Alt+Shift+arrows` after focusing the target tile |
 | A window peeks at the screen edge when zoomed out | the WM clamps off-screen windows (xfwm4 does); documented limitation |
 | Terminal tiles do not fill the tile exactly | the client's resize hints (a character grid) win; the layout is still the tile |

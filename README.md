@@ -88,6 +88,7 @@ pergola rects            # every panel's current frame rectangle
 | `arrange` / `float-all` | tile everything / float everything |
 | `split-terminal` | split the focused window with a new terminal |
 | `gap <px>` | gap between tiles |
+| `ratio <0.0-1.0>` | rebalance the split around the focused panel |
 | `palette` | a menu of the tile actions, for the mouse (rofi/zenity/dmenu) |
 | `overlay [on\|off\|toggle]` | draw split lines in the gaps (off by default) |
 | `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
@@ -265,8 +266,9 @@ before Pergola and maps every failure class to the fix that answers it.
   `tab-prev`); a floating window can be folded in with `pergola tab`. There is
   no drag-to-tab UI and no tab bar: the shown view is the one you interact with,
   and the hidden ones are only reachable by command.
-* A split's ratio can be changed by dragging its gap, not by a command; there is
-  no `pergola ratio`. With `gap: 0` there is no strip to grab at all.
+* A split's ratio can be changed from the keyboard with `pergola ratio 0.3`,
+  or by dragging its gap. With `gap: 0` there is no strip to grab, so the
+  command is the only way there. Palette rows for half/third are not built yet.
 * The palette is a fixed list of actions, not a context-aware one (it offers
   "Float this window" even for a window that is already floating).
 * Edge docking targets the last focused space; in a deep tree the landing spot may

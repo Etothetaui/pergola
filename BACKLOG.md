@@ -20,6 +20,15 @@ the keyboard follows the view. `Panel::select`/`cycle`/`remove_view` and
 raised, `tree` reporting `selected`, a real chord press, and that closing one tab leaves its
 sibling tiled. 75/75 on xfwm4 and openbox.
 
+### Split ratios without a pointer (0.4.0-dev)
+
+`pergola ratio <0.0-1.0>` rebalances the split that contains the focused panel and reports the
+resulting weights (`ratio 0.30 · split weights [0.30, 0.70]`). Values outside 0–1 are refused, and
+`LayoutEngine::set_ratio` clamps to `minimum_share`, matching a gap drag of the same delta. The
+unit test checks the clamp against `resizing_gap` and rejects NaN; the e2e asserts the reported
+ratio and the new geometry. Palette rows for half/third and a nudge chord are still open (see
+the Ratios row in `docs/UX-NOTES.md`).
+
 ## 1. Auto-dock policy that does not surprise
 
 **What:** `auto_dock` becomes a tri-state: `off` (today), `new` (dock windows opened after the
@@ -67,16 +76,7 @@ mystery for the user and a non-bug in the tracker.
 **Done when:** a bad key is reported with its line, a good file round-trips, and `--check` exits
 non-zero in the failure cases.
 
-## 6. Split ratios without a pointer
-
-**What:** `pergola ratio <0.1-0.9>` rebalances the split that contains the focused panel, plus
-palette rows for half / third / two-thirds.
-**Why:** the only way to change a split today is to drag its gap with a mouse (0.3.0-dev); a
-keyboard user cannot, and `gap: 0` removes the grab strip entirely. `docs/UX-NOTES.md` rows 6.
-**Done when:** `pergola ratio 0.3` moves the boundary to 30 % and `pergola rects` shows the
-weights; the result is identical to a gap drag of the same delta; a unit test covers the clamp.
-
-## 7. Settings and chords in the palette
+## 6. Settings and chords in the palette
 
 **What:** `pergola settings` opens the palette with the config keys (gap, minimum_share,
 auto_dock, edge_dock, overlay, terminal) and the chord map — the `bindings` map that has
@@ -87,7 +87,7 @@ already exists in `pergola-core` and renders nothing.
 **Done when:** every key in `config.json` is reachable from the menu, a bad value is rejected
 without writing, and `pergola keys --check` equivalents are shown for each chord.
 
-## 8. Layout undo
+## 7. Layout undo
 
 **What:** a bounded snapshot ring of trees with `Ctrl+Alt+z` / palette "Undo layout change";
 redo is out of scope for the first pass.
@@ -96,7 +96,7 @@ not a layout history and users assume it is.
 **Done when:** dock, float, gap drag and arrange each push a snapshot; undo restores the previous
 tree, geometry and floating rects; 10 steps are kept; e2e undoes a keyboard dock.
 
-## 9. Pointer affordances
+## 8. Pointer affordances
 
 **What:** highlight a gap band on hover even with the overlay off, show the target rectangle during
 a window drag, and re-dock a docked tile that settles near another edge.
@@ -105,7 +105,7 @@ only an EnterNotify on the band; the drop target needs pointer tracking during a
 **Done when:** a hovered gap draws a line and leaves no artefact, a dragged window shows where it
 will land, and dragging a docked tile to the opposite edge re-docks it in one gesture.
 
-## 10. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+## 9. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
 
 **What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
 records as newline-delimited JSON over the control socket, so a panel can draw the tree without
@@ -116,7 +116,7 @@ Pergola's socket is request/response only today.
 **Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
 the stream survives a daemon restart, and an e2e assertion reads two records from one session.
 
-## 11. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+## 10. Honour `_NET_ACTIVE_WINDOW` requests from pagers
 
 **What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
 currently only *sets* that property when it focuses a window.
@@ -125,7 +125,7 @@ something it does not listen for. A taskbar's "click to focus" silently does not
 **Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
 reports the same seat as focused; a unit test covers the request path.
 
-## 12. Named workspaces (tags) on top of views
+## 11. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -146,4 +146,4 @@ and a document written by the new version loads in the old one without losing it
   desktop's panel leaves; it does not draw a bar or own a tray. A tiler that owns the bar is a
   desktop environment, not a tiler.
 - **Compositing** (57 issues). Opacity and effects belong to the running compositor; the overlay
-  dim planned in item 4 is the only compositor interaction worth having.
+  dim planned in item 3 is the only compositor interaction worth having.

@@ -569,6 +569,7 @@ impl Daemon {
             "arrange" => self.arrange(),
             "float-all" => self.float_all(),
             "gap" => self.set_gap(rest),
+            "ratio" => self.set_ratio(rest),
             "overlay" => self.overlay(rest),
             "tab" => self.tab(rest),
             "tab-select" => self.tab_select(rest),
@@ -1143,6 +1144,45 @@ impl Daemon {
         self.apply()?;
         self.save()?;
         Ok(format!("gap {gap}"))
+    }
+
+    /// Rebalance the split that contains the focused panel: `ratio 0.3` gives
+    /// the focused window 30 % of its split. The siblings keep their relative
+    /// proportions, so a two-child split moves the boundary to exactly 30 % —
+    /// the same result as dragging the gap by the same amount.
+    fn set_ratio(&mut self, args: &[String]) -> Result<String> {
+        let ratio: f64 = args
+            .first()
+            .ok_or_else(|| anyhow!("usage: pergola ratio <0.0-1.0>"))?
+            .parse()
+            .map_err(|_| anyhow!("ratio must be a number"))?;
+        if !(0.0..=1.0).contains(&ratio) {
+            return Err(anyhow!("ratio must be between 0.0 and 1.0"));
+        }
+        let focused = self
+            .focused_panel()
+            .ok_or_else(|| anyhow!("no focused window to rebalance"))?;
+        let tree = self
+            .engine
+            .set_ratio(&focused, ratio, &self.file.doc.root)
+            .map_err(|e| anyhow!("{e}"))?;
+        self.replace_root(tree);
+        self.normalize_camera();
+        self.apply()?;
+        self.save()?;
+        // Report the resulting weights so the change is observable without a UI.
+        let weights = self
+            .file
+            .doc
+            .root
+            .parent(&focused)
+            .map(|s| s.weights.clone())
+            .unwrap_or_default();
+        let shown: Vec<String> = weights.iter().map(|w| format!("{w:.2}")).collect();
+        Ok(format!(
+            "ratio {ratio:.2} · split weights [{}]",
+            shown.join(", ")
+        ))
     }
 
     fn overlay(&mut self, args: &[String]) -> Result<String> {

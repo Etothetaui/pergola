@@ -40,6 +40,13 @@ All notable changes to Pergola. Format follows the versioning rules in
   before anything is written. A malformed `config.json` is never rewritten — the
   user's typo stays and the error is reported. Four unit tests cover preserve,
   unbind/restore, malformed-file refusal and directory creation.
+* **`pergola ratio <0.0-1.0>` rebalances a split without a pointer.** It changes
+  the split containing the focused panel and reports the resulting weights
+  (`ratio 0.30 · split weights [0.30, 0.70]`); values outside 0–1 are refused.
+  `LayoutEngine::set_ratio` clamps to `minimum_share`, so the result matches a
+  gap drag of the same delta; the unit test checks the clamp against
+  `resizing_gap`, covers a three-child split and rejects NaN. The e2e asserts the
+  reported ratio and the new geometry.
 
 ### Changed
 

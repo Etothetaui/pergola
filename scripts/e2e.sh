@@ -267,6 +267,23 @@ DEPTH=$(json_field 'd["doc"]["root"].get("kind") == "split" and len(d["doc"]["ro
 P gap 24 >/dev/null || fail "gap"
 sleep 0.3
 check_geometry "after gap 24"
+# A ratio rebalances the split that holds the focused window; the reply shows
+# the resulting weights so the change is observable without a UI.
+P float-all >/dev/null; sleep 0.4
+P arrange >/dev/null; sleep 0.4
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.3
+RATIO_OUT=$(P ratio 0.3 2>&1)
+case "$RATIO_OUT" in
+  *"ratio 0.30"*) ok "ratio rebalances the focused split" ;;
+  *) bad "ratio did not report a change: $RATIO_OUT" ;;
+esac
+# A ratio outside 0..1 is refused before it touches the tree.
+if P ratio 1.5 >/dev/null 2>&1; then
+  bad "ratio accepted 1.5"
+else
+  ok "ratio refuses a value outside 0..1"
+fi
+check_geometry "after ratio 0.3"
 P float-all >/dev/null || fail "float-all"
 sleep 0.3
 check_eq "desktop" "$(json_field 'd["doc"]["root"]["id"]')" "float-all returns to the desktop leaf"

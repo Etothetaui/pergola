@@ -445,6 +445,87 @@ impl LayoutEngine {
         Ok(result)
     }
 
+    /// Set `id`'s share of its parent split to `ratio` (0..1).
+    ///
+    /// The siblings keep their relative proportions, scaled to fill the
+    /// remainder, so a two-child split with the first child named moves the
+    /// boundary to exactly `ratio` — the same result as a gap drag of
+    /// `ratio - weight[0]`. The ratio is clamped so no child falls below
+    /// `minimum_share`, matching the gap drag's clamp.
+    pub fn set_ratio(
+        &self,
+        id: &str,
+        ratio: f64,
+        root: &LayoutNode,
+    ) -> Result<LayoutNode, LayoutError> {
+        if !ratio.is_finite() {
+            return Err(LayoutError::InvalidCommand(format!(
+                "ratio {ratio} is not a finite number"
+            )));
+        }
+        let s = root
+            .parent(id)
+            .ok_or_else(|| LayoutError::NotFound(format!("parent of '{id}'")))?;
+        let idx = s
+            .children
+            .iter()
+            .position(|c| c.id() == id)
+            .ok_or_else(|| LayoutError::NotFound(format!("'{id}' is not a child of '{}'", s.id)))?;
+        let n = s.children.len();
+        if n < 2 {
+            return Err(LayoutError::InvalidCommand(format!(
+                "split '{}' has only one child; nothing to rebalance",
+                s.id
+            )));
+        }
+        let min = self.minimum_share;
+        let max = (1.0 - min * (n - 1) as f64).max(min);
+        let ratio = ratio.clamp(min, max);
+        let others: f64 = s
+            .weights
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != idx)
+            .map(|(_, w)| *w)
+            .sum();
+        let mut weights = s.weights.clone();
+        for (i, w) in weights.iter_mut().enumerate() {
+            if i == idx {
+                *w = ratio;
+            } else if others > 0.0 {
+                *w = *w / others * (1.0 - ratio);
+            } else {
+                *w = (1.0 - ratio) / (n - 1) as f64;
+            }
+        }
+        let out = Self::replace_split(root, &s.id, &weights);
+        out.validate()?;
+        Ok(out)
+    }
+
+    /// Rebuild `node` with `split_id`'s weights replaced, leaving every other
+    /// node untouched.
+    fn replace_split(node: &LayoutNode, split_id: &str, weights: &[f64]) -> LayoutNode {
+        match node {
+            LayoutNode::Split(s) if s.id == split_id => LayoutNode::Split(Split::with_weights(
+                s.id.clone(),
+                s.axis,
+                s.children.clone(),
+                weights.to_vec(),
+            )),
+            LayoutNode::Split(s) => LayoutNode::Split(Split::with_weights(
+                s.id.clone(),
+                s.axis,
+                s.children
+                    .iter()
+                    .map(|c| Self::replace_split(c, split_id, weights))
+                    .collect(),
+                s.weights.clone(),
+            )),
+            other => other.clone(),
+        }
+    }
+
     fn resize(&self, parent_id: &str, a: usize, b: usize, delta: f64, node: &LayoutNode) -> LayoutNode {
         let LayoutNode::Split(s) = node else {
             return node.clone();
@@ -816,6 +897,37 @@ mod tests {
         let out2 = e.resizing_gap("p-a", "p-b", -0.9, &tree).unwrap();
         let LayoutNode::Split(s2) = &out2 else { panic!() };
         assert!((s2.weights[0] - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn set_ratio_matches_a_gap_drag_and_is_clamped() {
+        let e = LayoutEngine::new(0.0, 0.1);
+        // Two children: a ratio of 0.3 is exactly a gap drag of -0.2 from the
+        // even split. The desktop leaf sits beside the inner split so the tree
+        // stays valid.
+        let inner = LayoutNode::split("inner", Axis::X, vec![panel("a"), panel("b")]);
+        let two = LayoutNode::split("root", Axis::X, vec![inner, LayoutNode::desktop()]);
+        let ratio = e.set_ratio("p-a", 0.3, &two).unwrap();
+        let drag = e.resizing_gap("p-a", "p-b", -0.2, &two).unwrap();
+        let LayoutNode::Split(r) = ratio.node("inner").unwrap() else { panic!() };
+        let LayoutNode::Split(d) = drag.node("inner").unwrap() else { panic!() };
+        assert!((r.weights[0] - 0.3).abs() < 1e-9);
+        assert!((r.weights[0] - d.weights[0]).abs() < 1e-9);
+        assert!((r.weights[1] - d.weights[1]).abs() < 1e-9);
+        // Below the minimum share, the clamp holds.
+        let low = e.set_ratio("p-a", 0.0, &two).unwrap();
+        let LayoutNode::Split(l) = low.node("inner").unwrap() else { panic!() };
+        assert!((l.weights[0] - 0.1).abs() < 1e-9);
+        // A three-child split gives the named child its share and keeps the
+        // siblings' relative proportions.
+        let inner3 = LayoutNode::split("inner", Axis::X, vec![panel("a"), panel("b"), panel("c")]);
+        let three = LayoutNode::split("root", Axis::X, vec![inner3, LayoutNode::desktop()]);
+        let set = e.set_ratio("p-a", 0.4, &three).unwrap();
+        let LayoutNode::Split(t) = set.node("inner").unwrap() else { panic!() };
+        assert!((t.weights[0] - 0.4).abs() < 1e-9);
+        assert!((t.weights[1] - 0.3).abs() < 1e-9);
+        assert!((t.weights[2] - 0.3).abs() < 1e-9);
+        assert!(e.set_ratio("p-a", f64::NAN, &two).is_err());
     }
 
     #[test]

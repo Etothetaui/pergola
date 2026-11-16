@@ -26,7 +26,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Chords | The bound chords differ per desktop (xfwm4 owns `Ctrl+Alt+arrows`, so camera keys are `Super+…`). A `bindings` map in `config.json` now remaps them (0.4.0-dev), and `pergola bind`/`unbind` change one chord without editing JSON (0.4.0-dev). There is still no GUI: seeing or changing a chord needs a shell, and a conflict is printed where the command ran, not as a notification | Anyone whose desktop claims chords | 2 | Chord pane in the palette, and conflicts reported as a notification |
 | Palette | The list is fixed: "Float this window" is offered for an already-floating window, and no row shows what it will act on | Menu users | 2 | Build rows from the focused panel's state; show the window title in the menu prompt |
 | Palette | Needs an external menu program; without one the hotkey fails into the daemon log, where the user never looks | Minimal installs (no rofi) | 3 | `notify-send` fallback naming the fix; `install.sh` warns; palette row "Install rofi" |
-| Ratios | Only a gap drag changes split weights; there is no `pergola ratio`, and `gap: 0` means no drag target at all | Keyboard-only users | 3 | `pergola ratio 0.3` plus palette rows (half/third/two-thirds) and a nudge chord |
+| Ratios | `pergola ratio 0.3` rebalances a split from the keyboard, but there are no palette rows for half/third and no nudge chord; `gap: 0` leaves no drag strip | Keyboard-only users | 2 | Palette rows (half/third/two-thirds) and a nudge chord |
 | Re-dock | Moving a tile to another edge takes two drags (out to float, then to the edge); a docked tile cannot be re-docked directly | Mouse users in nested layouts | 2 | If a docked window settles near a different edge, re-dock it against that edge |
 | Drop target | Edge drops dock against the last focused space, so in a deep tree the window nests there instead of tiling the root — correct by design, surprising in practice | Nested layouts | 3 | Show the target rectangle during the drag (needs pointer tracking), or offer "always dock at the root" |
 | Undo | No layout undo: `back`/`forward` are camera history. A wrong dock has to be reversed by hand | Everyone | 3 | Snapshot ring of trees + `Ctrl+Alt+Z`; palette "Undo layout change" |
@@ -43,8 +43,9 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 1. **Settings** (rows 3, 12): one palette-driven editor for `config.json`
    (including the chord map, now that it lives there) makes the JSON file — the
    last place a person must be a developer — disappear.
-2. **Ratios and context-aware palette rows** (rows 4, 6): `pergola ratio` and rows
-   that change with the focused panel make the menu sufficient on its own.
+2. **Ratios and context-aware palette rows** (rows 4, 6): palette rows for the
+   ratios and rows that change with the focused panel make the menu sufficient
+   on its own.
 3. **On-screen affordances** (rows 1, 2, 7, 9): hover highlight for the gaps, a
    drop target during an edge drag, an undo chord. These are the difference between
    "works if you know it" and "you can find it".
