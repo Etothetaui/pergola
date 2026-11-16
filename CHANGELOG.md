@@ -16,13 +16,24 @@ All notable changes to Pergola. Format follows the versioning rules in
   restart; `pergola keys --check` prints the chords actually grabbed, `off` for
   a deliberate unbind. Two unit tests cover the merge and the add/unbind paths.
   This is a MINOR bump: a new config key, per [docs/VERSIONING.md](docs/VERSIONING.md).
+* **`pergola bind` and `pergola unbind` change a chord without editing JSON.**
+  `pergola bind "gap 12" Super+9` writes `config.json` (preserving every other
+  setting), reloads the daemon and prints its report, so a conflict appears where
+  the command ran instead of only in the journal. `pergola bind <command>` with no
+  chord shows the effective candidates and where they come from; `--default`
+  removes the override. An unknown command or an unparseable chord is rejected
+  before anything is written. A malformed `config.json` is never rewritten — the
+  user's typo stays and the error is reported. Four unit tests cover preserve,
+  unbind/restore, malformed-file refusal and directory creation.
 
 ### Changed
 
 * **`pergola reload` re-grabs the hotkeys.** It used to re-read the config and
   re-apply geometry without touching the grabs, so changing `hotkeys` or `bindings`
   needed a daemon restart. It now reinstalls the bindings, and `hotkeys: false` at
-  reload releases the grabs so the desktop gets its chords back.
+  reload releases the grabs so the desktop gets its chords back. `reload` now
+  returns the grab report (fallbacks and failures) to the caller, so `pergola
+  reload` prints it too.
 
 ## [0.3.4-dev]
 

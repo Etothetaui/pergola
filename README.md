@@ -90,6 +90,7 @@ pergola rects            # every panel's current frame rectangle
 | `gap <px>` | gap between tiles |
 | `palette` | a menu of the tile actions, for the mouse (rofi/zenity/dmenu) |
 | `overlay [on\|off\|toggle]` | draw split lines in the gaps (off by default) |
+| `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
 | `reload` `save` `stop` | daemon control |
 
@@ -174,7 +175,22 @@ The `gap` and `overlay` commands change the running session only. See
 
 ### Remap a key
 
-`bindings` maps a command to the chords to try, in order. Naming a command
+One command, no JSON editing:
+
+```sh
+pergola bind "gap 12" Super+9   # bind a command to a chord and reload
+pergola bind "gap 12"           # show what it is bound to and where it comes from
+pergola bind "gap 12" --default # drop the override, back to the default chord
+pergola unbind "gap 12"         # remove the chord entirely
+```
+
+These write `config.json` for you (preserving every other setting), reload the
+daemon, and print any conflict the daemon reported — a chord the desktop owns,
+for example — so you see it where you ran the command. A daemon that is not
+running is not an error: the change is saved and applies at the next start.
+
+For several changes at once, edit the `bindings` map directly. It maps a command
+to the chords to try, in order. Naming a command
 replaces its default chords entirely; an empty list unbinds it; commands you do
 not mention keep their defaults. Any command the daemon understands can be
 bound, not only the ones in the default plan:
@@ -192,7 +208,8 @@ bound, not only the ones in the default plan:
 
 After saving, run `pergola reload` and check the result with
 `pergola keys --check`: it prints the chord the daemon actually grabbed, or
-`off` for a command you unbound deliberately.
+`off` for a command you unbound deliberately. `pergola bind <command>` with no
+chord shows the same answer for one command.
 
 ## How it works
 

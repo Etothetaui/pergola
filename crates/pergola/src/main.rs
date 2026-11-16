@@ -49,6 +49,8 @@ fn main() -> ExitCode {
         "palette-run" => palette::run(),
         "sim" => sim(&rest[1..]),
         "keys" => keys(&socket, &rest[1..]),
+        "bind" => bind(&socket, &rest[1..]),
+        "unbind" => unbind(&socket, &rest[1..]),
         "version" | "--version" | "-V" => {
             println!("pergola {}", pergola_core::VERSION);
             Ok(())
@@ -179,6 +181,137 @@ fn keys(socket: &PathBuf, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Commands the daemon dispatches by name without going through
+/// `Command::parse`. Kept here so `pergola bind` can reject a typo instead of
+/// writing a binding that silently never fires.
+const DAEMON_COMMANDS: &[&str] = &[
+    "status",
+    "tree",
+    "list",
+    "rects",
+    "dock",
+    "float",
+    "arrange",
+    "float-all",
+    "gap",
+    "overlay",
+    "keys",
+    "reload",
+    "save",
+    "stop",
+    "split-terminal",
+    "palette",
+    "settings",
+    "url",
+    "neighbour",
+    "view",
+    "save-view",
+];
+
+/// Would the daemon understand this as a command? Lenient on purpose: a false
+/// rejection is worse than a binding that turns out to be a no-op. Accepts a
+/// known daemon name, a command URL, or a command plus its arguments.
+fn known_command(command: &str) -> bool {
+    let first = command.split_whitespace().next().unwrap_or("");
+    DAEMON_COMMANDS.contains(&first)
+        || pergola_core::Command::parse(command).is_ok()
+        || pergola_core::Command::parse(first).is_ok()
+}
+
+fn bind(socket: &PathBuf, args: &[String]) -> Result<()> {
+    let Some(command) = args.first() else {
+        anyhow::bail!(
+            "usage: pergola bind <command> [chord...]\n       \
+             pergola bind <command>            show what it is bound to\n       \
+             pergola bind <command> --default  restore the default chords\n\
+             (quote commands with spaces: pergola bind \"view 3\" Super+3)"
+        );
+    };
+    if !known_command(command) {
+        anyhow::bail!(
+            "'{command}' is not a pergola command\nknown commands: {}",
+            DAEMON_COMMANDS.join(", ")
+        );
+    }
+    if args.iter().any(|a| a == "--default") {
+        let path = config::write_bindings(command, None)?;
+        println!("restored the default chords for '{command}' in {}", path.display());
+        reload_and_report(socket);
+        return Ok(());
+    }
+    let chords: Vec<String> = args[1..].to_vec();
+    if chords.is_empty() {
+        return show_binding(command);
+    }
+    for chord in &chords {
+        if pergola_x11::parse_binding(chord).is_none() {
+            anyhow::bail!("cannot parse binding '{chord}' (expected e.g. Super+Up or Ctrl+Alt+3)");
+        }
+    }
+    let path = config::write_bindings(command, Some(&chords))?;
+    println!(
+        "bound '{command}' to {} in {}",
+        chords.join(" / "),
+        path.display()
+    );
+    reload_and_report(socket);
+    Ok(())
+}
+
+fn unbind(socket: &PathBuf, args: &[String]) -> Result<()> {
+    let Some(command) = args.first() else {
+        anyhow::bail!("usage: pergola unbind <command>");
+    };
+    if !known_command(command) {
+        anyhow::bail!(
+            "'{command}' is not a pergola command\nknown commands: {}",
+            DAEMON_COMMANDS.join(", ")
+        );
+    }
+    let path = config::write_bindings(command, Some(&[]))?;
+    println!("unbound '{command}' in {}", path.display());
+    reload_and_report(socket);
+    Ok(())
+}
+
+/// Print one command's effective candidates and where they come from.
+fn show_binding(command: &str) -> Result<()> {
+    let config = config::Config::load();
+    let plan = config.binding_plan();
+    match plan.iter().find(|(c, _)| c == command) {
+        Some((_, specs)) if specs.is_empty() => println!("{command} is unbound"),
+        Some((_, specs)) => println!(
+            "{command}: {} ({})",
+            specs.join(" / "),
+            if config.bindings.contains_key(command) {
+                "from config.json"
+            } else {
+                "default"
+            }
+        ),
+        None => println!(
+            "{command}: not in the default plan — bind it with `pergola bind {command} <chord>`"
+        ),
+    }
+    Ok(())
+}
+
+/// Ask the daemon to reload and print its report. Conflicts and fallbacks come
+/// back in the message, so the user sees them where the command ran instead of
+/// only in the journal. A daemon that is not running is not an error: the
+/// config is already saved and applies at the next start.
+fn reload_and_report(socket: &PathBuf) {
+    match ipc::call(socket, &["reload".to_string()]) {
+        Ok(response) if response.ok => {
+            if !response.message.is_empty() {
+                println!("{}", response.message);
+            }
+        }
+        Ok(response) => eprintln!("pergola: reload failed: {}", response.message),
+        Err(_) => println!("pergola: saved; no daemon is running, so the change applies at the next start"),
+    }
+}
+
 /// Headless check: lay the fixture tree out in a 1600x900 frame and print it.
 fn sim(args: &[String]) -> Result<()> {
     let engine = LayoutEngine::default();
@@ -236,6 +369,12 @@ LAYOUT
   float-all                      return every window to the desktop layer
   split-terminal                 split the focused window with a new terminal
   gap <pixels>                   change the gap between tiles
+
+KEYS
+  keys [--check] [--probe <chord>...]  what each command is bound to
+  bind <command> [chord...]      bind a command to chords (none: show it)
+  bind <command> --default       restore the default chords
+  unbind <command>               remove a command's chords
 
 INSPECTION
   status | tree | list | keys | doctor | sim [--json]

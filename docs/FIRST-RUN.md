@@ -59,8 +59,11 @@ The terminal is only one way in. With a window focused:
 If the desktop already owns a chord (`xfwm4` owns `Ctrl+Alt+arrows`), Pergola
 falls back to `Super` for that command and says so at startup. `pergola keys
 --check` prints the chord actually bound for each command. To pick your own
-chord instead, add a `bindings` map to `config.json` and run `pergola reload`;
-see [Configuration](SETUP.md#remapping-keys).
+chord instead, run `pergola bind "gap 12" Super+9` — it writes the config,
+reloads the daemon and tells you if the chord is taken. `pergola bind "gap 12"`
+with no chord shows what it is bound to; `--default` restores the default. For
+several changes at once, edit the `bindings` map in `config.json` and run
+`pergola reload`; see [Configuration](SETUP.md#remapping-keys).
 
 ## The words on the screen
 

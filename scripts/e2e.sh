@@ -428,6 +428,67 @@ else
   bad "hotkeys: true did not re-grab"
 fi
 
+# The shell commands: `bind` and `unbind` write config.json and reload, so a
+# user never has to edit JSON by hand. They must preserve other settings.
+printf '%s' '{"gap":6.0,"hotkeys":true}' > "$XDG_CONFIG_HOME/pergola/config.json"
+BIND_OUT=$("$BIN" --socket "$SOCK" bind "gap 12" Super+9 2>&1)
+case "$BIND_OUT" in
+  *"bound 'gap 12' to Super+9"*) ok "bind writes the chord and reloads" ;;
+  *) bad "bind did not report the binding: $BIND_OUT" ;;
+esac
+if grep -q '"gap": *6.0' "$XDG_CONFIG_HOME/pergola/config.json"; then
+  ok "bind preserves the other settings in config.json"
+else
+  bad "bind lost the other settings: $(cat "$XDG_CONFIG_HOME/pergola/config.json")"
+fi
+if [ "$(P keys | grep -c 'Super+9')" -ge 1 ]; then
+  ok "a bound chord is live after reload"
+else
+  bad "bind did not take effect: $(P keys | head -3 | tr '\n' ' ')"
+fi
+UNBIND_OUT=$("$BIN" --socket "$SOCK" unbind "gap 12" 2>&1)
+case "$UNBIND_OUT" in
+  *"unbound 'gap 12'"*) ok "unbind clears the chord" ;;
+  *) bad "unbind did not report: $UNBIND_OUT" ;;
+esac
+if [ "$(P keys --check | grep -c '^off .*gap 12')" -ge 1 ]; then
+  ok "an unbound command shows as off"
+else
+  bad "unbind did not show as off: $(P keys --check | grep 'gap 12' || echo 'not listed')"
+fi
+if "$BIN" --socket "$SOCK" bind "not-a-command" Super+9 >/dev/null 2>&1; then
+  bad "bind accepts an unknown command"
+else
+  ok "bind rejects an unknown command"
+fi
+if "$BIN" --socket "$SOCK" bind "gap 12" NotAChord >/dev/null 2>&1; then
+  bad "bind accepts an unparseable chord"
+else
+  ok "bind rejects an unparseable chord"
+fi
+DEFAULT_OUT=$("$BIN" --socket "$SOCK" bind "gap 12" --default 2>&1)
+case "$DEFAULT_OUT" in
+  *"restored the default chords"*) ok "bind --default removes the override" ;;
+  *) bad "bind --default did not report: $DEFAULT_OUT" ;;
+esac
+if grep -q '"bindings"' "$XDG_CONFIG_HOME/pergola/config.json"; then
+  bad "bind --default left an empty bindings map behind"
+else
+  ok "bind --default leaves a clean config"
+fi
+# A malformed config is never silently regenerated: the user's typo stays.
+printf '%s' '{"gap": 6.0, "bindings": {"back": ["Super+b"}' > "$XDG_CONFIG_HOME/pergola/config.json"
+if "$BIN" --socket "$SOCK" bind "back" Super+z >/dev/null 2>&1; then
+  bad "bind rewrote a malformed config"
+else
+  ok "bind refuses to rewrite a malformed config"
+fi
+if grep -q 'Super+b' "$XDG_CONFIG_HOME/pergola/config.json"; then
+  ok "the malformed config is left untouched"
+else
+  bad "the malformed config was overwritten"
+fi
+
 say
 say "10. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"

@@ -904,10 +904,17 @@ impl Daemon {
         self.config = Config::load();
         self.engine = LayoutEngine::new(self.config.gap, self.config.minimum_share)
             .with_desktop_share(self.config.desktop_share);
-        // Re-grab so a `bindings` edit takes effect without a restart.
-        self.reinstall_bindings()?;
+        // Re-grab so a `bindings` edit takes effect without a restart. The
+        // notes come back in the reply so the caller sees a conflict where it
+        // ran the command, not only in the journal.
+        let notes = self.reinstall_bindings()?;
         self.apply()?;
-        Ok("config reloaded".to_string())
+        let mut message = "config reloaded".to_string();
+        for note in notes {
+            message.push_str("\n");
+            message.push_str(&note);
+        }
+        Ok(message)
     }
 
     fn split_terminal(&mut self) -> Result<String> {
@@ -992,8 +999,13 @@ impl Daemon {
             }
         });
 
-        if let Err(e) = self.reinstall_bindings() {
-            eprintln!("pergola: cannot grab hotkeys: {e}");
+        match self.reinstall_bindings() {
+            Ok(notes) => {
+                for note in notes {
+                    eprintln!("pergola: {note}");
+                }
+            }
+            Err(e) => eprintln!("pergola: cannot grab hotkeys: {e}"),
         }
 
         eprintln!(
@@ -1153,7 +1165,11 @@ impl Daemon {
             // A keyboard-map change (layout switch, xmodmap, another client's
             // remap) invalidates both the keycode table and the grabs. Rebuild
             // and re-grab, or every binding silently points at the old layout.
-            Event::MappingNotify(_) => self.reinstall_bindings()?,
+            Event::MappingNotify(_) => {
+                for note in self.reinstall_bindings()? {
+                    eprintln!("pergola: {note}");
+                }
+            }
             // A title or class change is a property change, not a configure:
             // without this the tree keeps the name the window had when it was
             // adopted until the next 2 s reconcile — herbstluftwm#35, bspwm#50.
@@ -1175,47 +1191,49 @@ impl Daemon {
     /// Rebuild the keycode table and re-grab every binding after a keyboard
     /// map change. Ungrabbing first drops chords that still point at the old
     /// map; regrabbing the same client is idempotent.
-    fn reinstall_bindings(&mut self) -> Result<()> {
+    /// Re-grab every binding and return the notes worth telling the user:
+    /// commands with no free key, and commands that fell back to a secondary
+    /// chord because the desktop owns the primary one. `reload` returns these
+    /// to the caller so a conflict is visible where the command ran, not only
+    /// in the journal.
+    fn reinstall_bindings(&mut self) -> Result<Vec<String>> {
         if !self.config.hotkeys {
             // Hotkeys were switched off by a reload: drop the grabs so the
             // desktop gets its chords back instead of the daemon holding them.
             let _ = self.x.ungrab_all_keys();
             self.bindings.clear();
-            return Ok(());
+            return Ok(vec!["hotkeys are off: no chords are grabbed".to_string()]);
         }
         self.keymap = build_keymap(&self.x)?;
         let _ = self.x.ungrab_all_keys();
         let plan = self.config.binding_plan();
+        let mut notes = Vec::new();
         match self.x.install_bindings(&plan) {
             Ok((bound, failures)) => {
                 self.bindings = bound;
                 for failure in &failures {
-                    eprintln!(
-                        "pergola: no free key for '{}' (tried {})",
+                    notes.push(format!(
+                        "no free key for '{}' (tried {})",
                         failure.command,
                         failure.tried.join(", ")
-                    );
+                    ));
                 }
-                // Say when a command fell back to its secondary chord because
-                // the desktop owns the primary one. The README promises this
-                // report; without it the user learns about the fallback only
-                // by pressing a chord the desktop intercepts.
                 for (binding, command) in &self.bindings {
                     if let Some((_, specs)) = plan.iter().find(|(c, _)| c == command) {
                         if let Some(primary) = specs.first() {
                             if binding.label != *primary {
-                                eprintln!(
-                                    "pergola: '{}' bound to {} ({} is owned by the desktop)",
+                                notes.push(format!(
+                                    "'{}' bound to {} ({} is owned by the desktop)",
                                     command, binding.label, primary
-                                );
+                                ));
                             }
                         }
                     }
                 }
             }
-            Err(e) => eprintln!("pergola: cannot grab hotkeys: {e}"),
+            Err(e) => notes.push(format!("cannot grab hotkeys: {e}")),
         }
-        Ok(())
+        Ok(notes)
     }
 
     fn band_for_window(&self, window: u32) -> Option<&GapHandle> {

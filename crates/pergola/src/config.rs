@@ -1,8 +1,9 @@
 //! Configuration and paths.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +71,65 @@ impl Config {
     }
 }
 
+/// Write one command's candidate chords into config.json and return the path.
+///
+/// `Some(list)` replaces the command's candidates (an empty list unbinds it);
+/// `None` removes the override so the command falls back to its default plan.
+/// Every other key in the file is preserved, including keys this binary does
+/// not know about. A file that does not parse as JSON is never rewritten: a
+/// regenerated config would silently discard the user's typo and their edits.
+pub fn write_bindings(command: &str, chords: Option<&[String]>) -> Result<PathBuf> {
+    let path = config_path();
+    write_bindings_at(&path, command, chords)?;
+    Ok(path)
+}
+
+fn write_bindings_at(path: &Path, command: &str, chords: Option<&[String]>) -> Result<()> {
+    let mut root: serde_json::Map<String, serde_json::Value> = match std::fs::read_to_string(path) {
+        Ok(raw) if raw.trim().is_empty() => serde_json::Map::new(),
+        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(serde_json::Value::Object(map)) => map,
+            _ => anyhow::bail!(
+                "refusing to rewrite a malformed {}: fix the JSON first",
+                path.display()
+            ),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("cannot read {}", path.display())))
+        }
+    };
+    let mut bindings = match root.remove("bindings") {
+        Some(serde_json::Value::Object(map)) => map,
+        Some(_) => anyhow::bail!(
+            "refusing to rewrite {}: \"bindings\" is not an object",
+            path.display()
+        ),
+        None => serde_json::Map::new(),
+    };
+    match chords {
+        Some(list) => {
+            bindings.insert(command.to_string(), serde_json::json!(list));
+        }
+        None => {
+            bindings.remove(command);
+        }
+    }
+    if !bindings.is_empty() {
+        root.insert("bindings".to_string(), serde_json::Value::Object(bindings));
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| anyhow::Error::new(e).context(format!("cannot create {}", dir.display())))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let mut text = serde_json::to_string_pretty(&serde_json::Value::Object(root))?;
+    text.push('\n');
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 pub fn config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -96,6 +156,61 @@ pub fn socket_path() -> PathBuf {
         PathBuf::from(runtime).join("pergola.sock")
     } else {
         state_dir().join("pergola.sock")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pergola-config-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("config.json")
+    }
+
+    #[test]
+    fn bind_preserves_unknown_keys_and_other_settings() {
+        let path = scratch("preserve");
+        std::fs::write(&path, r#"{"gap":6.0,"future_option":"keep me"}"#).unwrap();
+        write_bindings_at(&path, "zoom-out", Some(&["Super+Page_Up".to_string()])).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["gap"], 6.0);
+        assert_eq!(value["future_option"], "keep me");
+        assert_eq!(value["bindings"]["zoom-out"][0], "Super+Page_Up");
+        // The daemon must still load it as a valid Config.
+        let config: Config = serde_json::from_str(&raw).unwrap();
+        assert_eq!(config.bindings["zoom-out"], vec!["Super+Page_Up"]);
+    }
+
+    #[test]
+    fn unbind_writes_an_empty_list_and_removing_restores_the_default() {
+        let path = scratch("unbind");
+        write_bindings_at(&path, "overlay", Some(&[])).unwrap();
+        let config: Config = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(config.bindings["overlay"].is_empty());
+        write_bindings_at(&path, "overlay", None).unwrap();
+        let config: Config = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(!config.bindings.contains_key("overlay"));
+    }
+
+    #[test]
+    fn malformed_config_is_never_rewritten() {
+        let path = scratch("malformed");
+        std::fs::write(&path, r#"{"gap": 6.0, "bindings": {"back": ["Super+b"}"#).unwrap();
+        let err = write_bindings_at(&path, "back", Some(&["Super+z".to_string()])).unwrap_err();
+        assert!(err.to_string().contains("refusing to rewrite a malformed"), "{err}");
+        // The user's broken file is still there, untouched.
+        assert!(std::fs::read_to_string(&path).unwrap().contains("Super+b"));
+    }
+
+    #[test]
+    fn creates_the_config_directory_when_missing() {
+        let path = scratch("missing").join("nested").join("config.json");
+        write_bindings_at(&path, "back", Some(&["Super+b".to_string()])).unwrap();
+        assert!(path.exists());
     }
 }
 

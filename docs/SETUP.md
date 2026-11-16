@@ -131,7 +131,22 @@ the defaults):
 
 ### Remapping keys
 
-`bindings` is a map from a command to the chords to try, in order. Naming a
+For one change, use the command line — it writes `config.json` for you, keeps
+every other setting, reloads the daemon and prints any conflict it reported:
+
+```sh
+pergola bind "gap 12" Super+9   # bind a command to a chord and reload
+pergola bind "gap 12"           # show what it is bound to and where it comes from
+pergola bind "gap 12" --default # drop the override, back to the default chord
+pergola unbind "gap 12"         # remove the chord entirely
+```
+
+`pergola bind` rejects an unknown command and an unparseable chord instead of
+writing a binding that would never fire. If no daemon is running the change is
+still saved and applies at the next start.
+
+For several changes at once, edit the `bindings` map directly. It maps a command
+to the chords to try, in order. Naming a
 command replaces its default candidates entirely; an empty list unbinds it;
 commands you do not mention keep the defaults. Any command the daemon
 understands can be bound, not only the ones in the default plan, so `view 3`,
@@ -169,7 +184,11 @@ Notes:
 * `pergola keys --check` lists what was actually bound and which planned chords
   the desktop already owns, including your `bindings` overrides (`off` marks a
   command you unbound with an empty list). `pergola keys --probe <chord>…` tests
-  individual chords without installing anything.
+  individual chords without installing anything. `pergola bind <command>` with no
+  chord shows the same answer for one command.
+* `pergola bind` and `pergola unbind` never rewrite a malformed `config.json`: a
+  typo in the file is reported and the file is left untouched, so your edits are
+  not silently replaced by regenerated defaults.
 
 ## Keyboard and mouse
 
