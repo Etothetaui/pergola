@@ -96,7 +96,7 @@ pergola rects            # every panel's current frame rectangle
 | `gap <px>` | gap between tiles |
 | `ratio <0.0-1.0>` | rebalance the split around the focused panel |
 | `palette` | a menu of the tile actions, for the mouse (rofi/zenity/dmenu) |
-| `overlay [on\|off\|toggle]` | draw split lines in the gaps (off by default) |
+| `overlay [on\|off\|toggle]` | draw split lines in the gaps, and dim the tiles when a compositor can render it (off by default) |
 | `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
 | `tab` / `tab-select` / `tab-next` / `tab-prev` | fold a window into a panel as a tab, switch tabs |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
@@ -170,7 +170,7 @@ the edge behaviour off if a drag should never tile.
 | `gap` | `6.0` | pixels between tiles and width of the overlay divider |
 | `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to |
 | `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
-| `overlay` | `false` | draw the split lines and viewport frame |
+| `overlay` | `false` | draw the split lines and viewport frame, plus a 40% dim layer under them when a compositor is running |
 | `desktop_share` | `0.0` | desktop strip `arrange` keeps; `0` gives it none |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
@@ -281,14 +281,18 @@ before Pergola and maps every failure class to the fix that answers it.
   be nested rather than at the root, which reads as "it went where I was working".
   Aim at the edge you want, not at an empty region of the screen.
 * The overlay is drawn with 2–3 px override-redirect rectangles inside the gaps
-  and around the viewport; there is no dimming without a compositor.
+  and around the viewport. When a compositor owns `_NET_WM_CM_S0` it also draws a
+  full-screen 40% black layer under those lines, so the tree reads at a glance;
+  without a compositor, or without the SHAPE extension that makes the layer
+  click-through, the overlay is borders only.
 * Only one instance per display (one Unix socket).
 
 ## Development
 
 ```bash
-cargo test               # 66 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 43 assertions against Xvfb + xfwm4 + real xterms
+cargo test               # 77 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # ~90 assertions against Xvfb + a real WM + real xterms
+scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite
 cargo build --release

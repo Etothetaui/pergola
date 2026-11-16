@@ -7,6 +7,24 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **The overlay dims the tiles when a compositor can render it.** `overlay on`
+  now draws a full-screen 40% black layer under the split lines whenever a
+  compositor owns `_NET_WM_CM_S0` — the selection xfwm4, picom, kwin and mutter
+  all advertise themselves with — so the 2 px borders read at a glance instead
+  of disappearing into the window contents. Measured under xfwm4's compositor:
+  mean screen brightness 0.162 with the overlay off, 0.098 with it on, 0.159
+  after `overlay off` — a 0.60x factor, which is what 40% black over the
+  content predicts (the absolute value depends on what is on screen). The layer
+  gets an empty SHAPE input region, so pointer events pass through to the tiles
+  (checked at eight screen points: none landed on the dim window); on a server
+  without SHAPE, or without a compositor, the overlay stays borders-only and
+  `overlay on` says `dim unavailable` instead of
+  claiming a layer it cannot draw. `overlay off` destroys the layer; 100 toggles
+  leave the root window's child count unchanged and no window carrying
+  `_NET_WM_WINDOW_OPACITY`. The e2e proves the fallback with no compositor, then
+  starts a stand-in owner and asserts the layer's opacity, click-through and
+  destruction (`scripts/xhelper.py`). About 90 assertions, run under both WMs.
+
 * **An AUR package that builds from source.** `packaging/aur/PKGBUILD`
   (`pergola-git`) compiles from `main` and installs to system paths instead of
   your home: `/usr/bin/pergola`, `/usr/bin/pergola-health`,

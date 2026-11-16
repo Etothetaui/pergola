@@ -335,6 +335,18 @@ impl Daemon {
 
     // MARK: applying geometry
 
+    /// The dim layer the overlay should draw, or `None` when the screen cannot
+    /// show one honestly: a compositor must own `_NET_WM_CM_S<screen>` to read
+    /// `_NET_WM_WINDOW_OPACITY`, and the server needs SHAPE so a full-screen
+    /// layer does not swallow clicks meant for the tiles under it. With either
+    /// missing the split lines alone are the overlay, exactly as before.
+    fn dim_layer(&self, screen: IRect) -> Option<(IRect, u32)> {
+        if !self.overlay_on || !self.x.compositor_active() || !self.x.shape_available() {
+            return None;
+        }
+        Some((screen, DIM_OPACITY))
+    }
+
     fn apply(&mut self) -> Result<()> {
         let screen = self.x.workarea_rect()?;
         // No usable output geometry yet (server still starting, monitor asleep,
@@ -445,6 +457,7 @@ impl Daemon {
         self.last_zoomed = framed.is_some();
         self.place_floating = false;
 
+        let dim = self.dim_layer(screen);
         if self.overlay_on {
             let framed_id = if self.camera.framed == self.file.doc.root.id() {
                 None
@@ -472,7 +485,7 @@ impl Daemon {
                 )
             })
             .collect();
-            self.x.overlay_show(&bars)?;
+            self.x.overlay_show(&bars, dim)?;
         } else {
             self.x.overlay_hide()?;
         }
@@ -1209,8 +1222,13 @@ impl Daemon {
         }
         self.apply()?;
         self.save()?;
+        let dim = match (self.overlay_on, self.x.overlay_dim()) {
+            (false, _) => String::new(),
+            (true, Some(id)) => format!(" · dim 40% 0x{id:x}"),
+            (true, None) => " · dim unavailable (no compositor or SHAPE)".to_string(),
+        };
         Ok(format!(
-            "overlay {}",
+            "overlay {}{dim}",
             if self.overlay_on { "on" } else { "off" }
         ) + &match self.x.active_window() {
             Some(w) => format!(
@@ -1841,6 +1859,11 @@ const DRAG_TRAVEL_PX: f64 = 40.0;
 
 /// How close to a screen edge a dragged window must be dropped to tile.
 const EDGE_SNAP_PX: f64 = 14.0;
+
+/// How dark the overlay's dim layer is, in the X opacity convention: a 32-bit
+/// CARDINAL where `0xffffffff` is opaque. 40% black leaves the tiles readable
+/// while making the 2 px split lines read at a glance.
+const DIM_OPACITY: u32 = 0x6666_6666;
 
 /// The screen edge a rectangle is sitting against, if any. Corners go to the
 /// nearer edge; a window in the middle returns `None`.

@@ -143,7 +143,7 @@ the defaults):
 | `gap` | `6.0` | pixels between tiles, and width of the overlay divider |
 | `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to when weights are edited |
 | `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
-| `overlay` | `false` | draw split lines in the gaps and a frame around the viewport |
+| `overlay` | `false` | draw split lines in the gaps and a frame around the viewport, plus a dim layer when a compositor can render it |
 | `desktop_share` | `0.0` | share of the screen `arrange` gives the desktop leaf; `0` means the desktop gets no strip |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
@@ -199,7 +199,12 @@ Notes:
 * `pergola gap 12` changes the running layout only; put the value in
   `config.json` to keep it across restarts.
 * `pergola overlay on` is likewise a session toggle; the config key is the
-  default at startup.
+  default at startup. With a compositor (any program that owns
+  `_NET_WM_CM_S0`: xfwm4, picom, kwin, mutter) the overlay also dims the tiles
+  with a 40% black layer under the split lines, which makes the tree readable
+  when zoomed out; without one — or without the SHAPE extension that keeps the
+  layer click-through — it draws the lines alone. `pergola overlay on` reports
+  which of the two it did (`dim 40% 0x…` or `dim unavailable`).
 * A malformed file is reported on stderr and ignored (defaults are used); the
   daemon still starts.
 * `pergola keys --check` lists what was actually bound and which planned chords

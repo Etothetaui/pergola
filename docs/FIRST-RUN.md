@@ -80,7 +80,7 @@ The first line `pergola status` prints is dense. Here is what each field means:
 | `depth N` | how many levels deep the split tree nests |
 | `framed <id>` | which node the camera is currently framed on (`split-gen1`, `p-…`, or `desktop`) |
 | `gap N` | the pixel gap between tiles (and the width of the drag strip) |
-| `overlay on/off` | whether split lines are drawn in the gaps |
+| `overlay on/off` | whether split lines (and the dim layer, if a compositor can render it) are drawn |
 | `active 0x… (p-…)` | the focused window and its panel id, or `unmanaged` |
 
 ## Glossary
@@ -96,7 +96,7 @@ The first line `pergola status` prints is dense. Here is what each field means:
 | **framed** | The node the camera is currently centred on. |
 | **depth** | How many split levels the tree nests. |
 | **gap** | Pixels between tiles; also the width of the strip you drag to resize a split. |
-| **overlay** | Split lines drawn with 2–3 px rectangles in the gaps (off by default). |
+| **overlay** | Split lines drawn with 2–3 px rectangles in the gaps (off by default). When a compositor is running it also dims the tiles, so the lines stand out. |
 | **dock** | Move a window into the tree against an edge of its space (tile it). |
 | **float** | Return a window to the desktop layer (untile it). |
 | **view** | A saved camera position (`save-view 1`, `view 1`). Confusingly, a panel's *views* are also its tabs; the command name `tab-select` is used when the tab meaning is meant. |

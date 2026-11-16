@@ -133,11 +133,20 @@ uses. The action list is static and labelled for people, not for the grammar.
 
 ## Testing
 
-* `cargo test` — 66 unit tests over geometry, weights, docking, removal, gap
-  clamping, neighbours, camera history, saved views, command URLs, document
-  round-trips and repair of malformed weights.
-* `scripts/e2e.sh` — starts Xvfb + xfwm4 + three xterms, runs the real daemon,
-  and asserts the geometry the X server reports against `pergola rects` after
-  dock, zoom, arrange, gap changes, float, a daemon restart, keyboard docking, a
-  gap drag and an edge drop (43 assertions).
+* `cargo test` — 77 unit tests over geometry, weights, docking, removal, gap
+  clamping, ratios, neighbours, camera history, saved views, command URLs,
+  document round-trips, config parsing and repair of malformed weights.
+* `scripts/e2e.sh` — starts Xvfb + a real WM (xfwm4 by default, openbox with
+  `--wm openbox`) + three xterms, runs the real daemon, and asserts the geometry
+  the X server reports against `pergola rects` after dock, zoom, arrange, gap
+  changes, ratio, float, a daemon restart, keyboard docking, a gap drag, an edge
+  drop, tab groups, config/binding errors and the overlay's dim layer — about
+  90 assertions, a check or two fewer when the WM parks a tile off-screen.
   It never touches the live session.
+
+  The suite uses fixed sleeps, so it assumes the machine is not CPU-saturated.
+  Measured 2026-11-16 with a local model holding both cores (load 6): three
+  checks flaked — an empty `P list` reply, an `arrange` tile left at 0,0, and a
+  held chord that did not step back — and the same three flaked at the previous
+  commit, so they are the suite's timing, not a product regression. Run the gate
+  on an idle machine; a green run is 0 failed on both WMs.

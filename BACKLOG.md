@@ -54,22 +54,26 @@ copy, and the package was removed afterwards to leave the user install as the li
 The backlog asked for `pergola-bin`; that name is a contract in the AUR (`-bin` = prebuilt, no
 compilation) and there is no release artifact to download, so shipping it would have meant a
 package that lies about itself. The rename and the reason are in `packaging/aur/README.md`; a
-`pergola-bin` package is item 10, blocked on a release pipeline.
+`pergola-bin` package is item 9, blocked on a release pipeline.
 
 Two deliberate deviations from the source install: the packaged unit does not hard-code
 `DISPLAY=:0` (it inherits the graphical session's environment), and `install.sh` remains the path
 for source installs.
 
-## 1. Overlay: dim the unframed region
+### Overlay dim layer (0.4.0-dev)
 
-**What:** when a compositor is present, set `_NET_WM_WINDOW_OPACITY` on a full-screen dim window
-under the overlay borders; fall back to borders only when compositing is off.
-**Why:** the borders are 2 px and easy to miss; the tree should read at a glance when zoomed out.
-**Done when:** `pergola overlay on` shows a dimmed region under xfwm4 with compositing on, nothing
-changes with compositing off, and the dim window is destroyed on `overlay off` (no leaked windows
-after 100 toggles).
+With a compositor owning `_NET_WM_CM_S0`, `overlay on` draws a full-screen 40% black layer under
+the split lines, so 2 px borders read at a glance. The layer carries an empty SHAPE input region,
+so pointer events reach the tiles under it (checked at eight screen points, none of which landed
+on it). Without a compositor, or without SHAPE, the overlay is borders only and `overlay on`
+reports `dim unavailable` rather than claiming a layer it cannot draw. Measured under xfwm4's
+compositor: mean screen brightness 0.162 off → 0.098 on → 0.159 off (a 0.60× factor, as 40%
+black predicts; the absolute value follows the screen content). `overlay off` destroys the
+layer, and 100 toggles leave the root window's child count unchanged with no window carrying
+`_NET_WM_WINDOW_OPACITY`. The e2e proves the fallback, then a stand-in selection owner proves the
+layer (`scripts/xhelper.py`).
 
-## 2. Second measured window manager in CI
+## 1. Second measured window manager in CI
 
 **What:** make `scripts/e2e.sh` take `WM=openbox|xfwm4` and run both; record the size-hint
 deviation per WM.
@@ -78,7 +82,7 @@ different WM would go unnoticed.
 **Done when:** `scripts/e2e.sh --wm openbox` passes with the documented xterm size-hint tolerance,
 and `pergola-health --e2e` reports which WM it ran.
 
-## 3. Config validation and `pergola config`
+## 2. Config validation and `pergola config`
 
 **What:** `pergola config` prints the resolved config with its source; `pergola config --check`
 rejects unknown keys, out-of-range gaps and a terminal that does not exist.
@@ -87,7 +91,7 @@ mystery for the user and a non-bug in the tracker.
 **Done when:** a bad key is reported with its line, a good file round-trips, and `--check` exits
 non-zero in the failure cases.
 
-## 4. Settings and chords in the palette
+## 3. Settings and chords in the palette
 
 **What:** `pergola settings` opens the palette with the config keys (gap, minimum_share,
 auto_dock, edge_dock, overlay, terminal) and the chord map — the `bindings` map that has
@@ -98,7 +102,7 @@ already exists in `pergola-core` and renders nothing.
 **Done when:** every key in `config.json` is reachable from the menu, a bad value is rejected
 without writing, and `pergola keys --check` equivalents are shown for each chord.
 
-## 5. Layout undo
+## 4. Layout undo
 
 **What:** a bounded snapshot ring of trees with `Ctrl+Alt+z` / palette "Undo layout change";
 redo is out of scope for the first pass.
@@ -107,7 +111,7 @@ not a layout history and users assume it is.
 **Done when:** dock, float, gap drag and arrange each push a snapshot; undo restores the previous
 tree, geometry and floating rects; 10 steps are kept; e2e undoes a keyboard dock.
 
-## 6. Pointer affordances
+## 5. Pointer affordances
 
 **What:** highlight a gap band on hover even with the overlay off, show the target rectangle during
 a window drag, and re-dock a docked tile that settles near another edge.
@@ -116,7 +120,7 @@ only an EnterNotify on the band; the drop target needs pointer tracking during a
 **Done when:** a hovered gap draws a line and leaves no artefact, a dragged window shows where it
 will land, and dragging a docked tile to the opposite edge re-docks it in one gesture.
 
-## 7. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+## 6. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
 
 **What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
 records as newline-delimited JSON over the control socket, so a panel can draw the tree without
@@ -127,7 +131,7 @@ Pergola's socket is request/response only today.
 **Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
 the stream survives a daemon restart, and an e2e assertion reads two records from one session.
 
-## 8. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+## 7. Honour `_NET_ACTIVE_WINDOW` requests from pagers
 
 **What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
 currently only *sets* that property when it focuses a window.
@@ -136,7 +140,7 @@ something it does not listen for. A taskbar's "click to focus" silently does not
 **Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
 reports the same seat as focused; a unit test covers the request path.
 
-## 9. Named workspaces (tags) on top of views
+## 8. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -146,7 +150,7 @@ is a deliberate `MINOR` bump with a loader that keeps reading older documents.
 **Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
 and a document written by the new version loads in the old one without losing its views.
 
-## 10. Release pipeline, so `pergola-bin` can exist
+## 9. Release pipeline, so `pergola-bin` can exist
 
 **What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
 a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays
@@ -168,4 +172,4 @@ with a real `sha256sums` installs the same file list as `pergola-git`.
   desktop's panel leaves; it does not draw a bar or own a tray. A tiler that owns the bar is a
   desktop environment, not a tiler.
 - **Compositing** (57 issues). Opacity and effects belong to the running compositor; the overlay
-  dim planned in item 2 is the only compositor interaction worth having.
+  dim done in item 1 is the only compositor interaction worth having.

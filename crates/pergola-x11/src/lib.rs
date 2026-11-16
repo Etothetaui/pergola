@@ -7,7 +7,7 @@
 //! the way `wmctrl` does.
 
 use anyhow::{anyhow, Context, Result};
-use x11rb::connection::Connection;
+use x11rb::connection::{Connection, RequestConnection as _};
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConfigureWindowAux,
     ConnectionExt as _, CreateWindowAux, Cursor, EventMask, GrabMode, ModMask, PropMode, Window,
@@ -15,6 +15,7 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 use pergola_core::{Axis, IRect, Rect};
 
@@ -133,6 +134,10 @@ pub struct X11 {
     pub root: Window,
     atoms: Atoms,
     overlay: Vec<Window>,
+    /// The dim layer drawn under the overlay's split lines when a compositor
+    /// can render it. Kept apart from `overlay` so `overlay off` can prove it
+    /// destroyed the layer and callers can report its id.
+    overlay_dim: Option<Window>,
     /// Invisible input-only windows that turn each split gap into a pointer
     /// drag target. Kept so a layout change can replace them as a set.
     bands: Vec<Window>,
@@ -156,6 +161,10 @@ struct Atoms {
     net_workarea: u32,
     net_current_desktop: u32,
     net_moveresize_window: u32,
+    /// `_NET_WM_CM_S<screen>` — the selection a compositor owns while it is
+    /// running (xfwm4, picom, kwin all follow the freedesktop convention).
+    net_wm_cm: u32,
+    net_wm_window_opacity: u32,
     utf8_string: u32,
     wm_class: u32,
     type_skip: Vec<u32>,
@@ -167,7 +176,7 @@ impl X11 {
             "cannot open the X display (is DISPLAY set? Pergola needs an X11 session)",
         )?;
         let root = conn.setup().roots[screen].root;
-        let atoms = Atoms::new(&conn)?;
+        let atoms = Atoms::new(&conn, screen)?;
         let cursors = make_resize_cursors(&conn).unwrap_or((0, 0));
         Ok(Self {
             conn,
@@ -175,6 +184,7 @@ impl X11 {
             root,
             atoms,
             overlay: Vec::new(),
+            overlay_dim: None,
             bands: Vec::new(),
             cursors,
         })
@@ -497,14 +507,93 @@ impl X11 {
 
     // MARK: overlay
 
-    /// Draw filled bars (each with its own colour). The daemon uses this for
-    /// split lines that live in the gaps and for the viewport frame, so the
-    /// overlay never covers a window's own decorations.
-    pub fn overlay_show(&mut self, bars: &[(IRect, u32)]) -> Result<()> {
+    /// True when a compositor owns the `_NET_WM_CM_S<screen>` selection. That
+    /// selection is the only portable signal: it is set by xfwm4's compositor,
+    /// picom, kwin and mutter alike, and absent when compositing is off.
+    pub fn compositor_active(&self) -> bool {
+        self.conn
+            .get_selection_owner(self.atoms.net_wm_cm)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| reply.owner != x11rb::NONE)
+            .unwrap_or(false)
+    }
+
+    /// True when the server has the SHAPE extension. Without it a full-screen
+    /// dim layer would swallow every click meant for the tiles under it, so the
+    /// daemon must not create one.
+    pub fn shape_available(&self) -> bool {
+        matches!(
+            self.conn
+                .extension_information(x11rb::protocol::shape::X11_EXTENSION_NAME),
+            Ok(Some(_))
+        )
+    }
+
+    /// Draw the overlay: an optional dim layer first (so the split lines sit on
+    /// top of it), then filled bars each with its own colour. The daemon uses
+    /// this for split lines that live in the gaps and for the viewport frame, so
+    /// the overlay never covers a window's own decorations.
+    ///
+    /// `dim` is `(rect, opacity)` with opacity in the X convention — a 32-bit
+    /// CARDINAL where `0xffffffff` is opaque. It is only drawn when the caller
+    /// has already established that a compositor can render it.
+    pub fn overlay_show(&mut self, bars: &[(IRect, u32)], dim: Option<(IRect, u32)>) -> Result<()> {
         self.overlay_hide()?;
         let screen = &self.conn.setup().roots[self.screen];
         let root_visual = screen.root_visual;
         let depth = screen.root_depth;
+        if let Some((rect, opacity)) = dim {
+            if rect.w > 0 && rect.h > 0 {
+                let wid = self.conn.generate_id()?;
+                self.conn.create_window(
+                    depth,
+                    wid,
+                    self.root,
+                    rect.x as i16,
+                    rect.y as i16,
+                    rect.w as u16,
+                    rect.h as u16,
+                    0,
+                    WindowClass::INPUT_OUTPUT,
+                    root_visual,
+                    &CreateWindowAux::new()
+                        .background_pixel(0x000000)
+                        .override_redirect(1)
+                        .event_mask(EventMask::EXPOSURE),
+                )?;
+                // Set the opacity before mapping: a compositor reads the
+                // property on the first frame, and setting it afterwards would
+                // flash a fully opaque black rectangle over the whole screen.
+                self.conn.change_property32(
+                    PropMode::REPLACE,
+                    wid,
+                    self.atoms.net_wm_window_opacity,
+                    AtomEnum::CARDINAL,
+                    &[opacity],
+                )?;
+                // A full-screen INPUT_OUTPUT window would intercept every click
+                // meant for the tiles. An empty input shape makes it a pure
+                // drawing surface: pointer events fall through to what is below.
+                let _ = x11rb::protocol::shape::rectangles(
+                    &self.conn,
+                    x11rb::protocol::shape::SO::SET,
+                    x11rb::protocol::shape::SK::INPUT,
+                    x11rb::protocol::xproto::ClipOrdering::UNSORTED,
+                    wid,
+                    0,
+                    0,
+                    &[],
+                );
+                self.conn.map_window(wid)?;
+                self.conn.configure_window(
+                    wid,
+                    &ConfigureWindowAux::new()
+                        .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+                )?;
+                self.overlay_dim = Some(wid);
+            }
+        }
         let mut ids = Vec::new();
         for (bar, color) in bars {
             if bar.w <= 0 || bar.h <= 0 {
@@ -543,6 +632,9 @@ impl X11 {
     }
 
     pub fn overlay_hide(&mut self) -> Result<()> {
+        if let Some(wid) = self.overlay_dim.take() {
+            let _ = self.conn.destroy_window(wid);
+        }
         for wid in self.overlay.drain(..) {
             let _ = self.conn.destroy_window(wid);
         }
@@ -552,6 +644,12 @@ impl X11 {
 
     pub fn overlay_active(&self) -> bool {
         !self.overlay.is_empty()
+    }
+
+    /// The dim layer's window id while it is mapped, so a caller can report it
+    /// and a test can prove the layer was destroyed on `overlay off`.
+    pub fn overlay_dim(&self) -> Option<Window> {
+        self.overlay_dim
     }
 
     // MARK: pointer grab areas in the gaps
@@ -792,7 +890,7 @@ impl X11 {
 }
 
 impl Atoms {
-    fn new(conn: &RustConnection) -> Result<Self> {
+    fn new(conn: &RustConnection, screen: usize) -> Result<Self> {
         let intern = |name: &str| -> Result<u32> {
             Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
         };
@@ -827,6 +925,8 @@ impl Atoms {
             net_workarea: intern("_NET_WORKAREA")?,
             net_current_desktop: intern("_NET_CURRENT_DESKTOP")?,
             net_moveresize_window: intern("_NET_MOVERESIZE_WINDOW")?,
+            net_wm_cm: intern(&format!("_NET_WM_CM_S{screen}"))?,
+            net_wm_window_opacity: intern("_NET_WM_WINDOW_OPACITY")?,
             utf8_string: intern("UTF8_STRING")?,
             wm_class: AtomEnum::WM_CLASS.into(),
             type_skip,

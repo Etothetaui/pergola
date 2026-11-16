@@ -316,6 +316,53 @@ ROOT=$(json_field 'd["doc"]["root"]["id"]')
 check_eq "$ROOT" "$FRAMED" "Ctrl+Alt+Space frames everything"
 P overlay off >/dev/null
 
+# The dim layer is only honest with a compositor: the daemon reads the
+# _NET_WM_CM_S<screen> selection owner, which is how xfwm4, picom, kwin and
+# mutter advertise themselves. The sandbox runs `xfwm4 --compositor=off`, so the
+# fallback is what runs by default; a stand-in owner then proves the decision,
+# the opacity and the layer's lifetime. Whether the layer is really *rendered*
+# is the compositor's job and was measured against xfwm4's own compositor (mean
+# screen brightness 0.168 -> 0.104 — docs/UX-NOTES.md).
+XH="$(dirname "$0")/xhelper.py"
+check_eq "0" "$(python3 "$XH" cm-owner)" "no compositor owns _NET_WM_CM_S0 in the sandbox"
+OUT=$(P overlay on)
+if printf '%s' "$OUT" | grep -c 'dim unavailable' >/dev/null; then
+  ok "overlay without a compositor draws borders only"
+else
+  bad "overlay claimed a dim layer without a compositor: $OUT"
+fi
+P overlay off >/dev/null
+CHILDREN_BASE=$(python3 "$XH" children)
+DIMS_BASE=$(python3 "$XH" dims)
+python3 "$XH" own-cm >/dev/null 2>&1 & COMPOSITOR=$!
+PIDS+=("$COMPOSITOR")
+for _ in $(seq 1 50); do [ "$(python3 "$XH" cm-owner)" != "0" ] && break; sleep 0.1; done
+OUT=$(P overlay on)
+DIM=$(printf '%s' "$OUT" | sed -n 's/.*dim 40% \(0x[0-9a-f]*\).*/\1/p')
+if [ -n "$DIM" ]; then
+  ok "overlay on draws a dim layer under a compositor"
+  check_eq "1717986918" "$(xprop -id "$DIM" -notype _NET_WM_WINDOW_OPACITY 2>/dev/null | sed 's/.*= //')" "the dim layer is 40% opaque"
+  xdotool mousemove 400 300; sleep 0.2
+  if [ "$(xdotool getmouselocation --shell | sed -n 's/^WINDOW=//p')" = "$((DIM))" ]; then
+    bad "the dim layer swallowed the pointer"
+  else
+    ok "the dim layer passes pointer events through to the tiles"
+  fi
+  P overlay off >/dev/null
+  if xprop -id "$DIM" -notype _NET_WM_WINDOW_OPACITY >/dev/null 2>&1; then
+    bad "the dim layer survived overlay off"
+  else
+    ok "overlay off destroys the dim layer"
+  fi
+else
+  bad "overlay on drew no dim layer with a compositor owner: $OUT"
+fi
+for _ in $(seq 1 100); do P overlay on >/dev/null; P overlay off >/dev/null; done
+check_eq "$DIMS_BASE" "$(python3 "$XH" dims)" "100 overlay toggles leave no dim window"
+check_eq "$CHILDREN_BASE" "$(python3 "$XH" children)" "100 overlay toggles leak no windows"
+kill "$COMPOSITOR" 2>/dev/null
+wait "$COMPOSITOR" 2>/dev/null
+
 say
 say "8. keyboard and mouse tiling"
 P float-all >/dev/null; sleep 0.4
