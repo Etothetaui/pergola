@@ -120,6 +120,7 @@ to `Super` for that command and reports it at startup.
 | `Ctrl+Alt+A` | arrange |
 | `Ctrl+Alt+F` | float-all |
 | `Ctrl+Alt+O` | overlay |
+| `Ctrl+Alt+Page_Down` / `Page_Up` | next / previous tab in a group |
 
 **You can tile with three keys and no terminal:** focus a window, `Ctrl+Alt+Shift+←`,
 focus the next one, `Ctrl+Alt+Shift+→`. That is two tiles side by side.
@@ -261,8 +262,9 @@ before Pergola and maps every failure class to the fix that answers it.
   geometry their toolkit gave them, and a dock request for one fails with
   "not managed by pergola" rather than placing a dialog in a tile.
 * Tab groups work from the command line and the default chords (`tab-next`,
-  `tab-prev`), but there is no drag-to-tab UI and no tab bar: the shown view is
-  the one you interact with, and the hidden ones are only reachable by command.
+  `tab-prev`); a floating window can be folded in with `pergola tab`. There is
+  no drag-to-tab UI and no tab bar: the shown view is the one you interact with,
+  and the hidden ones are only reachable by command.
 * A split's ratio can be changed by dragging its gap, not by a command; there is
   no `pergola ratio`. With `gap: 0` there is no strip to grab at all.
 * The palette is a fixed list of actions, not a context-aware one (it offers

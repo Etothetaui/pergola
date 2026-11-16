@@ -885,21 +885,36 @@ impl Daemon {
             .seat_for_window(win)
             .ok_or_else(|| anyhow!("window 0x{win:x} is not managed by pergola"))?
             .clone();
-        let source = self
-            .file
-            .doc
-            .root
-            .panel_containing(&seat.seat)
-            .cloned()
-            .ok_or_else(|| anyhow!("{} is not in the layout", seat.seat))?;
+        // A seat already in a panel is a tab move; a floating seat is folded in
+        // from the desktop layer. `panel_containing` is None for the latter and
+        // `detach_seat` removes it from the floating layer, so the same code
+        // folds both into the target panel.
+        let source = self.file.doc.root.panel_containing(&seat.seat).cloned();
+        let source_id = source.as_ref().map(|p| p.id.clone());
         let target = match flag(args, "--target") {
             Some(t) => t,
             None => match self.focused_panel() {
-                Some(p) if p != source.id => p,
+                Some(p) if Some(&p) != source_id.as_ref() && self.file.doc.root.node(&p).is_some() => {
+                    p
+                }
                 _ => self
                     .last_focus
                     .clone()
-                    .filter(|p| p != &source.id && self.file.doc.root.node(p).is_some())
+                    .filter(|p| {
+                        Some(p) != source_id.as_ref() && self.file.doc.root.node(p).is_some()
+                    })
+                    .or_else(|| {
+                        // A floating window has no panel of its own and may have
+                        // no last-focused tile; fall back to the first leaf so the
+                        // command folds it somewhere sensible instead of failing.
+                        self.file
+                            .doc
+                            .root
+                            .leaves()
+                            .into_iter()
+                            .find(|n| !n.is_desktop())
+                            .map(|n| n.id().to_string())
+                    })
                     .unwrap_or_else(|| self.file.doc.root.id().to_string()),
             },
         };
@@ -913,9 +928,11 @@ impl Daemon {
                 .map(|p| p.id.clone())
                 .ok_or_else(|| anyhow!("no panel '{target}' to tab into"))?
         };
-        if target_id == source.id {
+        if Some(&target_id) == source_id.as_ref() {
             // Already in the target panel: show it rather than rebuilding.
-            let mut panel = source;
+            let Some(mut panel) = source else {
+                return Err(anyhow!("no panel '{target_id}' to tab into"));
+            };
             panel.select(&seat.seat);
             let tree = replace_node(&self.file.doc.root, &target_id, &LayoutNode::Panel(panel));
             self.replace_root(tree);

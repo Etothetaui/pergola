@@ -9,7 +9,8 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 * **Tab groups work.** A panel can hold several windows as tabs: every view is
   mapped at the panel rectangle and only the selected one is raised. `pergola
-  tab --window <id> [--target <panel>]` folds a window into a panel as a tab;
+  tab --window <id> [--target <panel>]` folds a window into a panel as a tab
+  (a floating window is folded in from the desktop layer and docked);
   `tab-select <seat|window>` shows one view, `tab-next`/`tab-prev` cycle it
   (bound to `Ctrl+Alt+Page_Down`/`Page_Up`, falling back to `Super+Page_Down`/
   `Page_Up` when the desktop owns the primary). Switching a tab gives the shown

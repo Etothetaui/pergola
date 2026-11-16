@@ -637,6 +637,29 @@ else
   bad "the surviving tab was lost: $(P list | tr '\n' ' ')"
 fi
 
+# A floating window can be folded into a panel as a tab too: `tab` accepts a
+# seat off the desktop layer and docks it into the target. W3 is a separate
+# panel after the group above collapsed, so float it and tab it into W2's.
+if P list | grep -c "^docked.*$W3" >/dev/null; then
+  P float --window "$W3" >/dev/null 2>&1 || fail "float W3"
+  sleep 0.5
+  P tab --window "$W3" >/dev/null 2>&1 || fail "tab a floating window"
+  sleep 0.5
+  read -r _ TAB_COUNT TAB_SEL <<EOF
+$(tab_panel)
+EOF
+  check_eq "2" "${TAB_COUNT:-0}" "a floating window folds into a tab group"
+  S_W3=$(printf 's-%x' "$((W3))")
+  check_eq "$S_W3" "${TAB_SEL:-}" "the folded floating window is the shown view"
+  if P list | grep -c "^docked.*$W3" >/dev/null; then
+    ok "the folded window is docked, not floating"
+  else
+    bad "the folded window is still floating: $(P list | tr '\n' ' ')"
+  fi
+else
+  bad "W3 was not a docked panel to float"
+fi
+
 say
 say "11. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"

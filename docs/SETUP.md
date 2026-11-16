@@ -199,10 +199,16 @@ nothing is unmapped or re-laid-out.
 ```sh
 pergola tab                     # fold the focused window into its panel as a tab
 pergola tab --window 0x40000c   # fold a specific window
+pergola tab --window 0x40000c --target p-3176783  # choose the panel
 pergola tab-select 0x40000c     # show a named view (seat or window id)
 pergola tab-next                # cycle to the next view in the focused group
 pergola tab-prev                # cycle back
 ```
+
+A floating window can be folded in too: `tab` takes a seat off the desktop
+layer and docks it into the target panel as a view. Without `--target` it joins
+the last-focused tile (or the first leaf when there is none), so a floating
+window with nowhere obvious to go is docked rather than refused.
 
 Switching a tab also gives the shown window the keyboard, so typing goes to the
 view you can see. Closing the shown tab drops only that view — its siblings keep
