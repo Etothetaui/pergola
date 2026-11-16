@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 /// What to do with a window the daemon has not seen before.
@@ -219,20 +219,7 @@ pub fn write_bindings(command: &str, chords: Option<&[String]>) -> Result<PathBu
 }
 
 fn write_bindings_at(path: &Path, command: &str, chords: Option<&[String]>) -> Result<()> {
-    let mut root: serde_json::Map<String, serde_json::Value> = match std::fs::read_to_string(path) {
-        Ok(raw) if raw.trim().is_empty() => serde_json::Map::new(),
-        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
-            Ok(serde_json::Value::Object(map)) => map,
-            _ => anyhow::bail!(
-                "refusing to rewrite a malformed {}: fix the JSON first",
-                path.display()
-            ),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
-        Err(e) => {
-            return Err(anyhow::Error::new(e).context(format!("cannot read {}", path.display())))
-        }
-    };
+    let mut root = read_object(path)?;
     let mut bindings = match root.remove("bindings") {
         Some(serde_json::Value::Object(map)) => map,
         Some(_) => anyhow::bail!(
@@ -252,16 +239,158 @@ fn write_bindings_at(path: &Path, command: &str, chords: Option<&[String]>) -> R
     if !bindings.is_empty() {
         root.insert("bindings".to_string(), serde_json::Value::Object(bindings));
     }
+    write_object(path, &root)
+}
+
+/// The file as a JSON object. A malformed file is never rewritten: a
+/// regenerated config would silently discard the user's typo and their edits.
+fn read_object(path: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
+    match std::fs::read_to_string(path) {
+        Ok(raw) if raw.trim().is_empty() => Ok(serde_json::Map::new()),
+        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(serde_json::Value::Object(map)) => Ok(map),
+            _ => anyhow::bail!(
+                "refusing to rewrite a malformed {}: fix the JSON first",
+                path.display()
+            ),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
+        Err(e) => Err(anyhow::Error::new(e).context(format!("cannot read {}", path.display()))),
+    }
+}
+
+/// Pretty-print `root` beside `path` and rename it into place, so a reader never
+/// sees half a file.
+fn write_object(path: &Path, root: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| anyhow::Error::new(e).context(format!("cannot create {}", dir.display())))?;
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir).map_err(|e| {
+                anyhow::Error::new(e).context(format!("cannot create {}", dir.display()))
+            })?;
+        }
     }
     let tmp = path.with_extension("json.tmp");
-    let mut text = serde_json::to_string_pretty(&serde_json::Value::Object(root))?;
+    let mut text = serde_json::to_string_pretty(&serde_json::Value::Object(root.clone()))?;
     text.push('\n');
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// Set one scalar key from the words a person typed (`gap`, `12`). The candidate
+/// file is validated with the same checks as `config --check` and only renamed
+/// into place when every one passes, so a bad value never reaches the file.
+pub fn set_value_at(path: &Path, key: &str, text: &str) -> Result<()> {
+    let value = parse_value(key, text)?;
+    let before: std::collections::HashSet<String> =
+        inspect_at(path).issues.into_iter().map(|i| i.message).collect();
+    let mut root = read_object(path)?;
+    root.insert(key.to_string(), value);
+    let tmp = path.with_extension("json.tmp");
+    write_object(&tmp, &root)?;
+    // Only problems this change *introduces* block the write. A file that
+    // already has a typo elsewhere is still editable; the typo keeps its line
+    // and `config --check` still reports it.
+    let introduced: Vec<Issue> = inspect_at(&tmp)
+        .issues
+        .into_iter()
+        .filter(|issue| !before.contains(&issue.message))
+        .collect();
+    if !introduced.is_empty() {
+        let _ = std::fs::remove_file(&tmp);
+        let problems: Vec<String> = introduced.iter().map(|i| i.to_string()).collect();
+        anyhow::bail!("{}", problems.join("; "));
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// The JSON value a typed setting turns into.
+fn parse_value(key: &str, text: &str) -> Result<serde_json::Value> {
+    let text = text.trim();
+    Ok(match key {
+        "gap" | "minimum_share" | "desktop_share" => {
+            let number: f64 = text
+                .parse()
+                .map_err(|_| anyhow!("{key} must be a number, got {text:?}"))?;
+            serde_json::json!(number)
+        }
+        "overlay" | "hotkeys" | "edge_dock" => serde_json::json!(match text.to_ascii_lowercase().as_str() {
+            "on" | "true" | "yes" | "1" => true,
+            "off" | "false" | "no" | "0" => false,
+            _ => anyhow::bail!("{key} must be on or off, got {text:?}"),
+        }),
+        "auto_dock" => serde_json::json!(match text.to_ascii_lowercase().as_str() {
+            "off" | "false" | "none" | "never" => "off",
+            "new" => "new",
+            "all" | "true" | "on" | "everything" => "all",
+            _ => anyhow::bail!("auto_dock must be off, new or all, got {text:?}"),
+        }),
+        "terminal" => {
+            if text.is_empty() {
+                anyhow::bail!("terminal cannot be empty");
+            }
+            serde_json::json!(text)
+        }
+        other => anyhow::bail!("{other} is not a setting I can change from the menu"),
+    })
+}
+
+/// What one row of the settings palette would change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Setting {
+    /// A scalar key, changed through `pergola settings <key> <value>`.
+    Key(&'static str),
+    /// A command's chords, changed through `pergola bind <command> <chord>`.
+    Chord(String),
+}
+
+/// The rows the settings palette shows: every key with the value in force, then
+/// every command with the chords actually bound (the `keys --check` view, so a
+/// chord the desktop owns is visible before it is edited).
+pub fn settings_rows(config: &Config) -> Vec<(String, Setting)> {
+    let mut rows: Vec<(String, Setting)> = Vec::new();
+    for key in KNOWN_KEYS {
+        if *key == "bindings" {
+            continue;
+        }
+        rows.push((format!("{key} = {}", value_text(config, key)), Setting::Key(key)));
+    }
+    for (command, chords) in pergola_x11::binding_plan_with(&config.bindings) {
+        let shown = if chords.is_empty() {
+            "off".to_string()
+        } else {
+            chords.join(", ")
+        };
+        rows.push((format!("chord: {command} = {shown}"), Setting::Chord(command)));
+    }
+    rows
+}
+
+/// The value one key has, as the palette and `settings --list` print it.
+pub fn value_text(config: &Config, key: &str) -> String {
+    match key {
+        "gap" => format!("{}", config.gap),
+        "minimum_share" => format!("{}", config.minimum_share),
+        "auto_dock" => match config.auto_dock {
+            AutoDock::Off => "off".to_string(),
+            AutoDock::New => "new".to_string(),
+            AutoDock::All => "all".to_string(),
+        },
+        "overlay" => config.overlay.to_string(),
+        "desktop_share" => format!("{}", config.desktop_share),
+        "terminal" => config.terminal.clone(),
+        "hotkeys" => config.hotkeys.to_string(),
+        "edge_dock" => config.edge_dock.to_string(),
+        "bindings" => {
+            if config.bindings.is_empty() {
+                "{}".to_string()
+            } else {
+                format!("{} command(s)", config.bindings.len())
+            }
+        }
+        other => format!("<{other}>"),
+    }
 }
 
 /// Parse and validate `path` the way the daemon would, collecting the problems
@@ -686,6 +815,104 @@ mod tests {
         );
         assert_eq!(report.issues.len(), 1, "{:#?}", report.issues);
         assert!(report.issues[0].message.contains("is not a chord I understand"));
+    }
+
+    #[test]
+    fn setting_a_key_writes_it_and_keeps_every_other_key() {
+        let path = scratch("set");
+        std::fs::write(&path, "{\"gap\": 6, \"gaap\": 12, \"overlay\": false}\n").unwrap();
+        set_value_at(&path, "gap", "12").unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["gap"], serde_json::json!(12.0));
+        // The typo is still there, at its line, for `--check` to report.
+        assert_eq!(value["gaap"], serde_json::json!(12));
+        assert_eq!(value["overlay"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn a_bad_value_is_rejected_and_the_file_is_untouched() {
+        let path = scratch("set-bad");
+        std::fs::write(&path, "{\"minimum_share\": 0.05}\n").unwrap();
+        let err = set_value_at(&path, "minimum_share", "2").unwrap_err();
+        assert!(err.to_string().contains("minimum_share"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"minimum_share\": 0.05}\n"
+        );
+        // The temp file is not left behind either.
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn a_terminal_that_is_not_there_is_rejected() {
+        let path = scratch("set-term");
+        std::fs::write(&path, "{}\n").unwrap();
+        let err = set_value_at(&path, "terminal", "/nonexistent/term").unwrap_err();
+        assert!(err.to_string().contains("not on PATH"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}\n");
+    }
+
+    #[test]
+    fn a_typo_elsewhere_does_not_block_an_edit() {
+        let path = scratch("set-typo");
+        std::fs::write(&path, "{\"gaap\": 1}\n").unwrap();
+        set_value_at(&path, "gap", "9").unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["gap"], serde_json::json!(9.0));
+        assert_eq!(value["gaap"], serde_json::json!(1));
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_setting_is_refused() {
+        let path = scratch("set-nope");
+        std::fs::write(&path, "{}\n").unwrap();
+        let err = set_value_at(&path, "bindings", "x").unwrap_err();
+        assert!(err.to_string().contains("not a setting"), "{err}");
+    }
+
+    #[test]
+    fn settings_rows_cover_every_key_and_every_command() {
+        let config = Config::default();
+        let rows = settings_rows(&config);
+        let labels: Vec<&str> = rows.iter().map(|(row, _)| row.as_str()).collect();
+        for key in KNOWN_KEYS {
+            if *key == "bindings" {
+                continue; // edited through its commands' rows, not a scalar prompt
+            }
+            assert!(
+                labels.iter().any(|row| row.starts_with(&format!("{key} = "))),
+                "no row for {key}: {labels:#?}"
+            );
+        }
+        let commands = pergola_x11::binding_plan_with(&config.bindings);
+        assert!(commands.len() > 10);
+        for (command, _) in commands {
+            assert!(
+                labels.iter().any(|row| row.starts_with(&format!("chord: {command} = "))),
+                "no chord row for {command}"
+            );
+        }
+        // Labels are unique, or the menu cannot map a pick back to a row.
+        let mut seen = std::collections::HashSet::new();
+        for label in &labels {
+            assert!(seen.insert(*label), "duplicate row {label}");
+        }
+    }
+
+    #[test]
+    fn a_typed_setting_round_trips_through_parse_value() {
+        assert_eq!(parse_value("gap", "12").unwrap(), serde_json::json!(12.0));
+        assert_eq!(parse_value("overlay", "on").unwrap(), serde_json::json!(true));
+        assert_eq!(parse_value("overlay", "off").unwrap(), serde_json::json!(false));
+        assert_eq!(parse_value("auto_dock", "new").unwrap(), serde_json::json!("new"));
+        assert_eq!(parse_value("auto_dock", "true").unwrap(), serde_json::json!("all"));
+        assert_eq!(parse_value("terminal", "foot").unwrap(), serde_json::json!("foot"));
+        assert!(parse_value("gap", "wide").is_err());
+        assert!(parse_value("overlay", "maybe").is_err());
+        assert!(parse_value("auto_dock", "sometimes").is_err());
+        assert!(parse_value("terminal", "  ").is_err());
     }
 
     #[test]

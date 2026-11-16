@@ -643,6 +643,43 @@ if "$BIN" config 2>&1 | head -2 | grep -c 'panicked' >/dev/null; then
 else
   ok "config survives a closed pipe instead of panicking"
 fi
+
+# `pergola settings` is the same validation driven by a menu. The primitive is
+# `settings <key> <value>`; the menu path is proven with a stand-in dmenu so the
+# test never needs a GUI.
+printf '%s\n' '{"gap": 6, "gaap": 1}' > "$XDG_CONFIG_HOME/pergola/config.json"
+if "$BIN" settings gap 12 >/dev/null 2>&1; then ok "settings sets one key"; else bad "settings gap 12 failed"; fi
+if grep -c '"gap": 12' "$XDG_CONFIG_HOME/pergola/config.json" >/dev/null; then
+  ok "settings wrote the value"
+else
+  bad "settings did not write gap 12: $(cat "$XDG_CONFIG_HOME/pergola/config.json")"
+fi
+if grep -c '"gaap"' "$XDG_CONFIG_HOME/pergola/config.json" >/dev/null; then
+  ok "settings keeps a key it does not know"
+else
+  bad "settings dropped the unknown key"
+fi
+if "$BIN" settings minimum_share 2 >/dev/null 2>&1; then bad "settings accepted an out-of-range value"; else ok "settings rejects an out-of-range value"; fi
+if grep -c '"minimum_share"' "$XDG_CONFIG_HOME/pergola/config.json" >/dev/null; then
+  bad "the rejected value was written anyway"
+else
+  ok "the rejected value was not written"
+fi
+LIST=$("$BIN" settings --list)
+if printf '%s' "$LIST" | grep -c '^gap = ' >/dev/null; then ok "settings --list names the gap"; else bad "settings --list has no gap row"; fi
+if printf '%s' "$LIST" | grep -c '^chord: dock left = ' >/dev/null; then ok "settings --list shows the chord map"; else bad "settings --list has no chord row: $(printf '%s' "$LIST" | head -3)"; fi
+cat > "$TMP/fake-dmenu" <<'EOS'
+#!/bin/sh
+# Stand-in dmenu: list mode picks the first row, entry mode types 9.
+case "$*" in
+  *"-p pergola"*) IFS= read -r first; printf '%s\n' "$first" ;;
+  *) IFS= read -r _; printf '9\n' ;;
+esac
+EOS
+chmod +x "$TMP/fake-dmenu"
+printf '%s\n' '{"gap": 6}' > "$XDG_CONFIG_HOME/pergola/config.json"
+PERGOLA_MENU="$TMP/fake-dmenu" "$BIN" settings-run >/dev/null 2>&1
+check_eq '{"gap":9.0}' "$(tr -d '\n ' < "$XDG_CONFIG_HOME/pergola/config.json")" "a menu pick writes the row"
 printf '%s' '{}' > "$XDG_CONFIG_HOME/pergola/config.json"
 
 say

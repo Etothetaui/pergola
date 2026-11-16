@@ -82,6 +82,111 @@ pub fn run() -> Result<()> {
     run_menu(&menu)
 }
 
+/// Show the settings palette in a detached `pergola settings-run` process, so a
+/// hotkey does not block the daemon's event loop while a menu is open.
+pub fn open_settings() -> Result<()> {
+    if find_menu().is_none() {
+        return Err(missing_menu());
+    }
+    let exe = env::current_exe().context("cannot locate the pergola executable")?;
+    let mut child = Command::new(exe)
+        .arg("settings-run")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| "cannot start the settings process")?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// One pass of the settings menu: pick a row, type a value, apply it. Blocking,
+/// so it runs in its own process (`pergola settings-run`).
+pub fn run_settings() -> Result<()> {
+    let menu = find_menu().ok_or_else(missing_menu)?;
+    let report = crate::config::Config::inspect();
+    let rows = crate::config::settings_rows(&report.config);
+    let labels: Vec<&str> = rows.iter().map(|(label, _)| label.as_str()).collect();
+    let output = show_list(&menu, &labels)?;
+    let label = chosen(&output, menu.kind);
+    if label.is_empty() {
+        return Ok(()); // cancelled
+    }
+    let Some((_, setting)) = rows.iter().find(|(row, _)| row == &label) else {
+        eprintln!("pergola: settings: no row named {label:?}");
+        return Ok(());
+    };
+    let (key, current) = match setting {
+        crate::config::Setting::Key(key) => (key.to_string(), crate::config::value_text(&report.config, key)),
+        crate::config::Setting::Chord(command) => {
+            let current = pergola_x11::binding_plan_with(&report.config.bindings)
+                .into_iter()
+                .find(|(name, _)| name == command)
+                .map(|(_, chords)| chords.join(", "))
+                .unwrap_or_default();
+            (command.clone(), current)
+        }
+    };
+    let typed = entry(&menu, &key, &current)?;
+    let value = chosen(&typed, menu.kind);
+    if value.is_empty() {
+        return Ok(()); // cancelled
+    }
+    let argv: Vec<String> = match setting {
+        crate::config::Setting::Key(key) => vec!["settings".into(), key.to_string(), value],
+        // A chord row is a `bind`: it already validates, writes and reloads.
+        crate::config::Setting::Chord(command) => vec!["bind".into(), command.clone(), value],
+    };
+    spawn_argv(&argv)
+}
+
+/// Ask for one line of text, prefilled with the value in force where the menu
+/// program can do that.
+fn entry(menu: &Menu, prompt: &str, current: &str) -> Result<Output> {
+    match menu.kind {
+        Kind::Stdin => Command::new(&menu.path)
+            .args(["-dmenu", "-p", prompt, "-filter", current])
+            .output()
+            .with_context(|| format!("cannot run {}", menu.path.display())),
+        Kind::Dmenu => run_stdin_menu(&menu.path, &["-p", prompt], &[current]),
+        Kind::Zenity => Command::new(&menu.path)
+            .args(["--entry", &format!("--text={prompt}"), &format!("--entry-text={current}")])
+            .output()
+            .with_context(|| format!("cannot run {}", menu.path.display())),
+        Kind::Yad => Command::new(&menu.path)
+            .args(["--entry", &format!("--text={prompt}"), &format!("--entry-text={current}")])
+            .output()
+            .with_context(|| format!("cannot run {}", menu.path.display())),
+    }
+}
+
+/// The list half of a menu run, shared by the action palette and the settings.
+fn show_list(menu: &Menu, labels: &[&str]) -> Result<Output> {
+    match menu.kind {
+        Kind::Stdin => run_stdin_menu(&menu.path, &["-dmenu", "-i", "-p", "pergola"], labels),
+        Kind::Dmenu => run_stdin_menu(&menu.path, &["-i", "-p", "pergola"], labels),
+        Kind::Zenity => run_list_menu(&menu.path, &["--list", "--title=Pergola"], labels),
+        Kind::Yad => run_list_menu(&menu.path, &["--list", "--no-headers"], labels),
+    }
+}
+
+fn spawn_argv(argv: &[String]) -> Result<()> {
+    let exe = env::current_exe().context("cannot locate the pergola executable")?;
+    let status = Command::new(exe)
+        .args(argv)
+        .status()
+        .with_context(|| format!("cannot run `pergola {}`", argv.join(" ")))?;
+    if !status.success() {
+        eprintln!(
+            "pergola: settings: `pergola {}` exited with {status}",
+            argv.join(" ")
+        );
+    }
+    Ok(())
+}
+
 /// Name the actual problem: a broken `PERGOLA_MENU` is not "no menu program".
 fn missing_menu() -> anyhow::Error {
     let custom = env::var("PERGOLA_MENU").unwrap_or_default();
@@ -166,13 +271,7 @@ fn is_executable(path: &Path) -> bool {
 
 fn run_menu(menu: &Menu) -> Result<()> {
     let labels: Vec<&str> = items().iter().map(|item| item.label).collect();
-    let output = match menu.kind {
-        Kind::Stdin => run_stdin_menu(&menu.path, &["-dmenu", "-i", "-p", "pergola"], &labels)?,
-        // dmenu has no `-dmenu`; its only flags are -i and -p.
-        Kind::Dmenu => run_stdin_menu(&menu.path, &["-i", "-p", "pergola"], &labels)?,
-        Kind::Zenity => run_list_menu(&menu.path, &["--list", "--title=Pergola"], &labels)?,
-        Kind::Yad => run_list_menu(&menu.path, &["--list", "--no-headers"], &labels)?,
-    };
+    let output = show_list(menu, &labels)?;
 
     let label = chosen(&output, menu.kind);
     if label.is_empty() {

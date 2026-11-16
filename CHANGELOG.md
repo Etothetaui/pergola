@@ -29,6 +29,20 @@ All notable changes to Pergola. Format follows the versioning rules in
   config still names its source. 86 unit tests (nine new), 101 e2e assertions on
   xfwm4 and openbox.
 
+* **`pergola settings` — the config and chord editor.** `pergola settings` opens
+  the same menu programs the action palette uses with one row per scalar key
+  (`gap = 6`) and one per command's chords (`chord: dock left = Ctrl+Alt+Shift+Left,
+  Super+Shift+Left`), so the chord map is what `keys --check` prints rather than a
+  guess. Picking a row asks for a value with the current one prefilled and
+  applies it through `pergola settings <key> <value>` — or `pergola bind
+  <command> <chord>` for a chord row — which validates the whole candidate file
+  with the same checks as `config --check`, writes atomically and reloads. Only
+  problems the change *introduces* block it, so a pre-existing typo elsewhere
+  does not make the file uneditable; `config --check` still reports that typo on
+  its line. `settings --list` prints the rows for a script, and the menu path is
+  proven in the e2e with a stand-in dmenu, so no GUI is needed. 93 unit tests,
+  109 e2e assertions on xfwm4 and openbox.
+
 * **The CLI no longer panics on a closed pipe.** `pergola config | head` died
   with `failed printing to stdout: Broken pipe` plus a Rust panic message,
   because Rust ignores `SIGPIPE`; `main` now restores the default handler, so a

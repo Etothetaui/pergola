@@ -55,6 +55,8 @@ fn main() -> ExitCode {
         "doctor" => doctor(),
         "palette" => palette::open().map(|()| println!("palette opened — pick an action")),
         "palette-run" => palette::run(),
+        "settings" => settings(&socket, &rest[1..]),
+        "settings-run" => palette::run_settings(),
         "sim" => sim(&rest[1..]),
         "config" => config_report(&rest[1..]),
         "keys" => keys(&socket, &rest[1..]),
@@ -358,6 +360,44 @@ fn sim(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `pergola settings` — the settings palette, or a one-shot change.
+///
+/// The primitive is `settings <key> <value>`: it validates the whole candidate
+/// file with the same checks as `config --check`, writes atomically and reloads
+/// the daemon, so the menu and a script take the same path.
+fn settings(socket: &PathBuf, args: &[String]) -> Result<()> {
+    let report = config::Config::inspect();
+    match args.first().map(String::as_str) {
+        None => {
+            palette::open_settings()?;
+            println!("settings opened — pick a setting to change");
+            Ok(())
+        }
+        Some("--list") => {
+            for (row, _) in config::settings_rows(&report.config) {
+                println!("{row}");
+            }
+            Ok(())
+        }
+        Some(key) => {
+            let value = args[1..].join(" ");
+            if value.trim().is_empty() {
+                anyhow::bail!("settings {key} needs a value");
+            }
+            config::set_value_at(&config::config_path(), key, &value)?;
+            let changed = format!("{} = {}", key, value.trim());
+            match ipc::call(socket, &["reload".to_string()]) {
+                Ok(response) if response.ok => {
+                    println!("{changed} · {}", response.message.trim());
+                }
+                Ok(response) => eprintln!("pergola: saved {changed}; reload said: {}", response.message),
+                Err(_) => println!("{changed} · saved (no daemon running, applies at next start)"),
+            }
+            Ok(())
+        }
+    }
+}
+
 /// `pergola config` — the resolved values and where each one came from, or with
 /// `--check`, the problems a bad file has. Reads the file itself, so it works
 /// with no daemon running, which is when a typo is most confusing.
@@ -461,6 +501,9 @@ TABS
 CONFIG
   config                         the resolved config, each key with its source
   config --check                 reject unknown keys, bad values and bad chords
+  settings                       menu of every setting and chord (rofi/zenity/dmenu)
+  settings --list                the same rows on stdout
+  settings <key> <value>         set one key, validated, then reload
 
 INSPECTION
   status | tree | list | keys | doctor | sim [--json]

@@ -207,6 +207,10 @@ Notes:
   which of the two it did (`dim 40% 0x…` or `dim unavailable`).
 * A malformed file is reported on stderr and ignored (defaults are used); the
   daemon still starts.
+* `pergola settings` opens a menu with every key and every command's chords;
+  pick a row, type a value, and it is validated and written atomically, then the
+  daemon reloads. `pergola settings gap 12` does the same from a script and
+  `pergola settings --list` prints the rows without a menu program.
 * `pergola config` prints every key with the value in force and where it came
   from — `default` or `config.json:<line>` — so a typo cannot hide behind a
   default. `pergola config --check` exits non-zero on an unknown key, an
