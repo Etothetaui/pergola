@@ -53,8 +53,10 @@ pergola keys --check    # which chords are free on this desktop
 pergola-health          # soak check; exits non-zero on any failure
 ```
 
-Full install, upgrade, uninstall and troubleshooting reference:
-**[docs/SETUP.md](docs/SETUP.md)**.
+New here? **[docs/FIRST-RUN.md](docs/FIRST-RUN.md)** is the five-minute
+walkthrough — two terminals, two docks, and a glossary for every term the
+`status` line prints. Full install, upgrade, uninstall and troubleshooting
+reference: **[docs/SETUP.md](docs/SETUP.md)**.
 
 ## Quick start
 
@@ -121,13 +123,14 @@ to `Super` for that command and reports it at startup.
 focus the next one, `Ctrl+Alt+Shift+→`. That is two tiles side by side.
 
 `Super+…` is the automatic fallback for any chord the desktop already uses (xfwm4
-owns `Ctrl+Alt+arrows`, so the camera keys fall back to `Super+arrows` there).
-`pergola keys --check` prints what was actually bound and which chords the
-desktop already owns; the palette (`Ctrl+Alt+M`) lists the same actions by name.
+owns `Ctrl+Alt+arrows`, so the camera keys fall back to `Super+arrows` there; the
+daemon says so at startup). `pergola keys --check` prints the chord actually bound
+for each command, so it never shows a chord the desktop intercepts; the palette
+(`Ctrl+Alt+M`) lists the same actions by name.
 
 ## Mouse
 
-No pointer interaction needs a command line:
+The drag actions need no command line:
 
 * **Drag a split boundary** — the gap between two tiles is a 6 px grab strip with
   a resize cursor. Drag it to change the split's weights (both neighbours move,
@@ -141,6 +144,8 @@ No pointer interaction needs a command line:
 * **`Ctrl+Alt+M` or `pergola palette`** — a menu of the actions with human names
   ("Tile this window right", "Arrange all windows"); it needs `rofi` (recommended)
   or `zenity`/`yad`/`dmenu`, and is mouse-clickable as well as type-to-filter.
+  Without a menu program the hotkey fails into the daemon log; run
+  `pergola palette` in a terminal to see the error, or set `PERGOLA_MENU`.
 
 Docking is resolved against the last focused space, so in a nested layout a drop
 joins the tile you were last working in. `edge_dock: false` in the config turns
@@ -167,7 +172,8 @@ restart. The `gap` and `overlay` commands change the running session only. See
 
 ## How it works
 
-The window tree is the whole model:
+The window tree is the whole model (every term in this section is defined in
+the [first-run glossary](docs/FIRST-RUN.md#glossary)):
 
 ```text
 Node    := Desktop | Panel | Split

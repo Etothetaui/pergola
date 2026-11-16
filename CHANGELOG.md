@@ -3,10 +3,26 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
-## [0.3.4-dev] — 2026-11-15
+## [0.3.4-dev]
+
+### Added
+
+* **`docs/FIRST-RUN.md` — a five-minute walkthrough for a new user.** Open two
+  terminals, dock left and right, then see the rest of the model; a glossary for
+  every term the `status` line prints; and a first-run troubleshooting table. The
+  README now points to it from Install and from the tree model, and the mouse
+  section no longer claims the palette needs no command line.
 
 ### Fixed
 
+* `pergola keys --check` printed the *planned* chord for every command, so a
+  desktop that owns the primary chord (xfwm4 owns `Ctrl+Alt+arrows`) made it
+  claim `bound Ctrl+Alt+Up` while the daemon had actually bound `Super+Up`.
+  It now prints the label the daemon really grabbed.
+* The daemon announced a chord only when *both* the primary and fallback were
+  taken; the README promises a report when a chord falls back to its secondary
+  binding. It now prints `pergola: '<command>' bound to <chord> (<primary> is
+  owned by the desktop)` at startup. — 2026-11-15
 * **`pergola tree` kept a window's old title after a rename.** The `PropertyNotify`
   handler updated the daemon's own seat records but not the document metadata
   that `tree` serialises, so a title change only reached the tree view after the
