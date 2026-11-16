@@ -46,6 +46,12 @@ permission prompt. `install.sh` installs `pergola` and `pergola-health` into
 adds a systemd user unit plus an XDG autostart entry so the daemon starts with
 your session. `./install.sh --no-start` skips the start.
 
+On Arch there is also a `PKGBUILD` in
+[`packaging/aur/`](packaging/aur/README.md) (`pergola-git`) that installs to
+system paths — `makepkg -si` from that directory. It is not published to the AUR
+yet. Do not use both: the source install's unit and autostart entry shadow the
+packaged ones.
+
 ```bash
 pergola doctor          # display, EWMH client list, running WM
 pergola status          # the daemon's view: screen, panels, depth, gap, overlay

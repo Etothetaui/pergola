@@ -1,0 +1,53 @@
+# shellcheck shell=bash
+# pacman hook scriptlets for pergola-git.
+#
+# The daemon runs as a systemd *user* unit. Pacman runs as root, so it cannot
+# enable a user unit for a specific person; it only reminds the user, once.
+
+_units='pergola.service'
+
+post_install() {
+  cat <<'EOF'
+pergola installed. It runs inside an existing EWMH desktop session; it does not
+replace the window manager.
+
+Start it for your user (the unit is installed but not enabled):
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now pergola.service
+  pergola status
+
+The unit reads DISPLAY from your graphical session. If you need a different
+display, override it without editing the packaged file:
+
+  systemctl --user edit pergola.service
+  # [Service]
+  # Environment=DISPLAY=:1
+
+Optional: an example config is at
+  /usr/share/doc/pergola-git/config.json
+copy it to ~/.config/pergola/config.json to change the defaults. Changing a key
+binding does not need the file: `pergola bind "gap 12" Super+9`.
+
+Check the install:
+  pergola doctor
+  pergola-health
+EOF
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  cat <<'EOF'
+pergola is being removed. Stop the running daemon first, or it keeps holding
+the socket until you log out:
+
+  systemctl --user disable --now pergola.service
+
+Your own configuration and saved layout are not touched by the package:
+  ~/.config/pergola/config.json
+  ~/.local/state/pergola/layout.json
+EOF
+}

@@ -46,6 +46,27 @@ cd pergola
 
 Options: `./install.sh --no-start`, `PREFIX=…`, `BINDIR=…`.
 
+### Arch Linux: the packaged install
+
+`packaging/aur/PKGBUILD` (`pergola-git`) builds the same code and installs it to
+system paths: `/usr/bin/pergola`, `/usr/bin/pergola-health`,
+`/usr/lib/systemd/user/pergola.service`, the XDG autostart entry and the docs.
+It is not published to the AUR yet; build it from the checkout:
+
+```bash
+cd packaging/aur
+makepkg -si
+systemctl --user enable --now pergola.service
+```
+
+Two differences from `install.sh`: the config ships as an example in
+`/usr/share/doc/pergola-git/config.json` (pacman does not write into `$HOME`;
+copy it when you want to change a default), and the packaged unit inherits
+`DISPLAY` from the graphical session instead of baking in the display the
+install ran on. **Use one or the other**, not both — the source install's unit
+and autostart entry shadow the packaged ones. Details and the reason the package
+is named `pergola-git` rather than `pergola-bin`: [packaging/aur/README.md](../packaging/aur/README.md).
+
 ### What lands where
 
 | File | Purpose |

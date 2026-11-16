@@ -7,6 +7,22 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **An AUR package that builds from source.** `packaging/aur/PKGBUILD`
+  (`pergola-git`) compiles from `main` and installs to system paths instead of
+  your home: `/usr/bin/pergola`, `/usr/bin/pergola-health`,
+  `/usr/lib/systemd/user/pergola.service`, the XDG autostart entry, LICENSE,
+  NOTICE and the docs. `install.sh` stays the path for source installs. The
+  file list mirrors what `install.sh` writes; the one difference is the config,
+  which ships as an example in `/usr/share/doc/pergola-git/` because pacman must
+  not write into `$HOME`. The packaged unit also drops the hard-coded
+  `DISPLAY=:0` and inherits the graphical session's environment instead.
+  Verified by building, installing with `pacman -U`, running `pergola doctor`
+  green from `/usr/bin`, and removing the package again. The backlog asked for
+  `pergola-bin`; that name means *prebuilt binary* in the AUR and no release
+  artifact exists, so the honest name is `pergola-git` — the rename and the
+  reason are in `packaging/aur/README.md`, and a `-bin` package is now its own
+  backlog item, blocked on a release pipeline.
+
 * **`auto_dock` is a tri-state (`off` / `new` / `all`).** `new` docks a window
   opened after the daemon started and leaves the session it found alone; `all`
   also adopts the windows that were already on screen at startup; `off` never

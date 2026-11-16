@@ -42,16 +42,25 @@ id was mistaken for the dead window and never adopted (measured on openbox). The
 table over the modes; the e2e asserts a new window floats with `off` and docks with `new`. 85/85
 on xfwm4 and openbox.
 
-## 1. Packaging: AUR `pergola-bin`
+### AUR package: `pergola-git` (0.4.0-dev)
 
-**What:** a PKGBUILD that installs the release binary, the autostart entry, the systemd unit and
-`pergola-health`; `install.sh` stays for source installs.
-**Why:** "clone and run `install.sh`" is a developer path; a distribution package is the difference
-between a project and a tool.
-**Done when:** `makepkg -si` on a clean tree installs, `pergola doctor` is green, and the package
-lists the same files `install.sh` writes.
+`packaging/aur/PKGBUILD` builds from `main` and installs to system paths: `/usr/bin/pergola`,
+`/usr/bin/pergola-health`, `/usr/lib/systemd/user/pergola.service`, the XDG autostart entry, the
+LICENSE/NOTICE and the docs. `makepkg -f` then `pacman -U` was run end to end: the file list
+matches what `install.sh` writes (the config ships as an example in `/usr/share/doc/pergola-git/`,
+since pacman must not write into `$HOME`), `/usr/bin/pergola doctor` was green on the installed
+copy, and the package was removed afterwards to leave the user install as the live one.
 
-## 2. Overlay: dim the unframed region
+The backlog asked for `pergola-bin`; that name is a contract in the AUR (`-bin` = prebuilt, no
+compilation) and there is no release artifact to download, so shipping it would have meant a
+package that lies about itself. The rename and the reason are in `packaging/aur/README.md`; a
+`pergola-bin` package is item 10, blocked on a release pipeline.
+
+Two deliberate deviations from the source install: the packaged unit does not hard-code
+`DISPLAY=:0` (it inherits the graphical session's environment), and `install.sh` remains the path
+for source installs.
+
+## 1. Overlay: dim the unframed region
 
 **What:** when a compositor is present, set `_NET_WM_WINDOW_OPACITY` on a full-screen dim window
 under the overlay borders; fall back to borders only when compositing is off.
@@ -60,7 +69,7 @@ under the overlay borders; fall back to borders only when compositing is off.
 changes with compositing off, and the dim window is destroyed on `overlay off` (no leaked windows
 after 100 toggles).
 
-## 3. Second measured window manager in CI
+## 2. Second measured window manager in CI
 
 **What:** make `scripts/e2e.sh` take `WM=openbox|xfwm4` and run both; record the size-hint
 deviation per WM.
@@ -69,7 +78,7 @@ different WM would go unnoticed.
 **Done when:** `scripts/e2e.sh --wm openbox` passes with the documented xterm size-hint tolerance,
 and `pergola-health --e2e` reports which WM it ran.
 
-## 4. Config validation and `pergola config`
+## 3. Config validation and `pergola config`
 
 **What:** `pergola config` prints the resolved config with its source; `pergola config --check`
 rejects unknown keys, out-of-range gaps and a terminal that does not exist.
@@ -78,7 +87,7 @@ mystery for the user and a non-bug in the tracker.
 **Done when:** a bad key is reported with its line, a good file round-trips, and `--check` exits
 non-zero in the failure cases.
 
-## 5. Settings and chords in the palette
+## 4. Settings and chords in the palette
 
 **What:** `pergola settings` opens the palette with the config keys (gap, minimum_share,
 auto_dock, edge_dock, overlay, terminal) and the chord map — the `bindings` map that has
@@ -89,7 +98,7 @@ already exists in `pergola-core` and renders nothing.
 **Done when:** every key in `config.json` is reachable from the menu, a bad value is rejected
 without writing, and `pergola keys --check` equivalents are shown for each chord.
 
-## 6. Layout undo
+## 5. Layout undo
 
 **What:** a bounded snapshot ring of trees with `Ctrl+Alt+z` / palette "Undo layout change";
 redo is out of scope for the first pass.
@@ -98,7 +107,7 @@ not a layout history and users assume it is.
 **Done when:** dock, float, gap drag and arrange each push a snapshot; undo restores the previous
 tree, geometry and floating rects; 10 steps are kept; e2e undoes a keyboard dock.
 
-## 7. Pointer affordances
+## 6. Pointer affordances
 
 **What:** highlight a gap band on hover even with the overlay off, show the target rectangle during
 a window drag, and re-dock a docked tile that settles near another edge.
@@ -107,7 +116,7 @@ only an EnterNotify on the band; the drop target needs pointer tracking during a
 **Done when:** a hovered gap draws a line and leaves no artefact, a dragged window shows where it
 will land, and dragging a docked tile to the opposite edge re-docks it in one gesture.
 
-## 8. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+## 7. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
 
 **What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
 records as newline-delimited JSON over the control socket, so a panel can draw the tree without
@@ -118,7 +127,7 @@ Pergola's socket is request/response only today.
 **Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
 the stream survives a daemon restart, and an e2e assertion reads two records from one session.
 
-## 9. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+## 8. Honour `_NET_ACTIVE_WINDOW` requests from pagers
 
 **What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
 currently only *sets* that property when it focuses a window.
@@ -127,7 +136,7 @@ something it does not listen for. A taskbar's "click to focus" silently does not
 **Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
 reports the same seat as focused; a unit test covers the request path.
 
-## 10. Named workspaces (tags) on top of views
+## 9. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -136,6 +145,17 @@ are anonymous: there is no way to say "move this window to view 3". This is a fo
 is a deliberate `MINOR` bump with a loader that keeps reading older documents.
 **Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
 and a document written by the new version loads in the old one without losing its views.
+
+## 10. Release pipeline, so `pergola-bin` can exist
+
+**What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
+a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays
+identical to `pergola-git`).
+**Why:** `pergola-git` compiles on the user's machine, which needs a Rust toolchain and ~40 s. A
+`-bin` package is the only AUR option for people who do not want that, and the name is only
+honest once an artifact exists.
+**Done when:** pushing a tag produces a release with both binaries, and a `pergola-bin` PKGBUILD
+with a real `sha256sums` installs the same file list as `pergola-git`.
 
 ## Not planned
 

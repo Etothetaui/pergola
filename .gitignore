@@ -3,3 +3,10 @@
 !docs/*.png
 .DS_Store
 .pi-claim
+
+# makepkg scratch in packaging/aur: cloned source, staging tree, built packages
+/packaging/aur/src/
+/packaging/aur/pkg/
+/packaging/aur/pergola/
+/packaging/aur/*.pkg.tar.zst
+/packaging/aur/*.pkg.tar.xz

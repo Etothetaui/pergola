@@ -1,0 +1,99 @@
+# Maintainer: SyntheticPrometheus <syntheticprometheus@users.noreply.github.com>
+#
+# pergola-git — build Pergola from the main branch.
+#
+# This is a VCS package: it compiles from source and follows `main`. A
+# `pergola-bin` package (prebuilt binary from a GitHub release) is not shipped
+# because no release artifacts exist yet; see packaging/aur/README.md.
+#
+# The file list mirrors what install.sh writes, moved to system locations:
+#
+#   install.sh                                  this package
+#   $BINDIR/pergola                          -> /usr/bin/pergola
+#   $BINDIR/pergola-health                   -> /usr/bin/pergola-health
+#   $CONFIG_DIR/config.json                  -> /usr/share/doc/pergola-git/config.json
+#                                               (an example; pacman never writes to $HOME)
+#   $XDG_CONFIG_HOME/systemd/user/pergola.service
+#                                            -> /usr/lib/systemd/user/pergola.service
+#   $XDG_CONFIG_HOME/autostart/pergola.desktop
+#                                            -> /usr/share/xdg/autostart/pergola.desktop
+#
+# The two session files are rewritten on install: the source copies name
+# `%h/.local/bin/pergola`, which is wrong for a package in /usr/bin, and the
+# unit hard-codes DISPLAY=:0, which is wrong for anyone not on :0. The packaged
+# unit inherits DISPLAY from the graphical session instead.
+
+pkgname=pergola-git
+pkgver=0.4.0.r31.g2250d07
+pkgrel=1
+pkgdesc='Fractal window manager layer for X11 desktops (EWMH, works alongside your WM)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/SyntheticPrometheus/pergola'
+license=('MIT')
+depends=('glibc' 'gcc-libs')
+makedepends=('cargo' 'git' 'rust')
+checkdepends=('xorg-server-xvfb' 'xfwm4' 'xterm' 'xdotool' 'wmctrl' 'xorg-xprop')
+optdepends=(
+  'rofi: action palette (recommended)'
+  'dmenu: action palette'
+  'zenity: action palette'
+  'yad: action palette'
+)
+provides=('pergola')
+conflicts=('pergola' 'pergola-bin')
+# The release profile already sets lto=thin and strip=true, so pacman's strip
+# step finds no symbols and gdb-add-index complains; skip both, and skip the
+# useless -debug package.
+options=('!lto' '!strip' '!debug')
+install=pergola.install
+source=("git+https://github.com/SyntheticPrometheus/pergola.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd pergola
+  local count rev
+  count=$(git rev-list --count HEAD)
+  rev=$(git rev-parse --short HEAD)
+  # The crate version is `0.4.0-dev`; pacman's pkgver cannot contain a hyphen.
+  printf '0.4.0.r%s.g%s' "$count" "$rev"
+}
+
+build() {
+  cd pergola
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked --frozen --offline 2>/dev/null ||
+    cargo build --release --locked
+}
+
+check() {
+  cd pergola
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --locked --offline 2>/dev/null || cargo test --locked
+}
+
+package() {
+  cd pergola
+  install -Dm755 "$srcdir/target/release/pergola" "$pkgdir/usr/bin/pergola"
+  install -Dm755 scripts/health.sh "$pkgdir/usr/bin/pergola-health"
+
+  # Session files: rewrite the binary path and drop the hard-coded display.
+  install -Dm644 systemd/pergola.service "$pkgdir/usr/lib/systemd/user/pergola.service"
+  sed -i \
+    -e 's|%h/\.local/bin/pergola|/usr/bin/pergola|' \
+    -e '/^Environment=DISPLAY=/d' \
+    "$pkgdir/usr/lib/systemd/user/pergola.service"
+  install -Dm644 autostart/pergola.desktop "$pkgdir/usr/share/xdg/autostart/pergola.desktop"
+  sed -i 's|%h/\.local/bin/pergola|/usr/bin/pergola|' \
+    "$pkgdir/usr/share/xdg/autostart/pergola.desktop"
+
+  # Documentation and the example config. Pacman must not write into $HOME, so
+  # the config the daemon would create on first run ships as an example.
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 NOTICE "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 docs/SETUP.md "$pkgdir/usr/share/doc/$pkgname/SETUP.md"
+  install -Dm644 docs/FIRST-RUN.md "$pkgdir/usr/share/doc/$pkgname/FIRST-RUN.md"
+  install -Dm644 docs/UX-NOTES.md "$pkgdir/usr/share/doc/$pkgname/UX-NOTES.md"
+  install -Dm644 docs/HISTORY-LESSONS.md "$pkgdir/usr/share/doc/$pkgname/HISTORY-LESSONS.md"
+  install -Dm644 "$startdir/config.json" "$pkgdir/usr/share/doc/$pkgname/config.json"
+}
