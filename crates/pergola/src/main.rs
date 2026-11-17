@@ -502,6 +502,7 @@ fn config_value(config: &config::Config, key: &str) -> String {
             config::AutoDock::All => "all".to_string(),
         },
         "overlay" => config.overlay.to_string(),
+        "dim" => format!("{}", config.dim),
         "desktop_share" => format!("{}", config.desktop_share),
         "terminal" => config.terminal.clone(),
         "hotkeys" => config.hotkeys.to_string(),

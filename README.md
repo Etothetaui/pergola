@@ -242,7 +242,8 @@ the edge behaviour off if a drag should never tile.
 | `gap` | `6.0` | pixels between tiles and width of the overlay divider |
 | `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to |
 | `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
-| `overlay` | `false` | draw the split lines and viewport frame, plus a 40% dim layer under them when a compositor is running |
+| `overlay` | `false` | draw the split lines and viewport frame, plus a dim layer under them when a compositor is running |
+| `dim` | `0.4` | strength of the overlay's dim layer, `0` (off) to `0.9`; only used with a compositor. At `0` the split lines are drawn 4 px wide instead of 2, so the boundary still reads without a dim layer |
 | `desktop_share` | `0.0` | desktop strip `arrange` keeps; `0` gives it none |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
@@ -398,8 +399,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 122 unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
-scripts/e2e.sh           # 186 assertions against Xvfb + a real WM + real xterms
+cargo test               # 125 unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
+scripts/e2e.sh           # 193 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

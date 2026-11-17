@@ -600,12 +600,28 @@ impl X11 {
                 self.overlay_dim = Some(wid);
             }
         }
+        // Tag each bar so a test (and a debugging session) can tell an overlay
+        // divider from any other override-redirect rectangle without guessing at
+        // geometry: scripts/xhelper.py measures these. The hint layer uses its
+        // own atom, so `overlay on/off` never confuses the two.
+        let atom = self.atom("_PERGOLA_OVERLAY")?;
         let mut ids = Vec::new();
         for (bar, color) in bars {
             if bar.w <= 0 || bar.h <= 0 {
                 continue;
             }
-            ids.push(self.create_bar(*bar, *color, false)?);
+            let wid = self.create_bar(*bar, *color, false)?;
+            // Record the window before the property write: if that write fails,
+            // the window is still in the list, so the next `overlay_hide`
+            // destroys it instead of leaking it until the connection closes.
+            ids.push(wid);
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                wid,
+                atom,
+                AtomEnum::CARDINAL,
+                &[1],
+            )?;
         }
         self.conn.flush()?;
         self.overlay = ids;

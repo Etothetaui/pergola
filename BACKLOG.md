@@ -231,18 +231,19 @@ by measuring the focused window's own width after a real key press (the bound ch
 `pergola keys`, not assumed). Pure parsers (`parse_active`, `state_from_tree`) have unit tests, and
 the palette's label/verb tables are tested for both states.
 
-## 1. A cue that reads without a compositor
+### A cue that reads without a compositor (0.5.0-dev)
 
-**What:** a `dim` key in `config.json` for the overlay's dim strength, and a non-compositor cue for
-the split lines (e.g. a doubled line or a short tick at each boundary) so `overlay on` is legible
-on a bare X server.
-**Why:** the dim layer needs `_NET_WM_CM_S0` + SHAPE; without them the 2 px lines are easy to miss
-and the 40% strength is a constant (UX-NOTES, the Overlay row).
-**Done when:** `pergola config` shows `dim` with its source, an out-of-range value is rejected by
-`config --check`, and the e2e proves the fallback cue draws with no compositor (root-child count
-and pixel run length), while a stand-in compositor still gets the dim layer.
+`dim` in `config.json` (`0.4` default, `0`–`0.9`) sets the overlay's dim strength, so `pergola config`
+shows it with its source and `config --check` rejects an out-of-range value. The split lines are
+drawn 4 px wide on their thin axis whenever no dim layer is created — no compositor, no SHAPE, or
+`dim 0` — so a boundary still reads on a bare X server; with a dim layer they stay 2 px. The e2e
+measures the divider windows themselves (they carry `_PERGOLA_OVERLAY`, so `xhelper.py bars` reads
+their real geometry from the server): 4 px with no compositor, 2 px under a stand-in compositor
+owner, and `dim 0` leaves no layer and reports `dim off (dim 0)`. `dim 0.6` is 60% opaque. The
+width is also unit-tested. The honest gap that remains: nobody has looked at a 4 px line on a real
+bare-X session yet (UX-NOTES, the Overlay row).
 
-## 2. Workspaces one key away
+## 1. Workspaces one key away
 
 **What:** opt-in default chords for `tag-view 1`…`tag-view 9` (a `tags` config key, off by default so
 a desktop that never asked for workspaces cannot blank its screen), palette rows for `tag-view` and

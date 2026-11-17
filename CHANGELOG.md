@@ -75,6 +75,17 @@ text and the "never write an invalid value" rule are unchanged.
   yet: `docs/VERSIONING.md` tags only stable releases, so the pipeline waits for
   the 1.0.0 gate (BACKLOG, *Blocked*).
 
+* **The overlay's dim strength is a config key, and the split lines get wider
+  when there is no dim layer.** `dim` (`0.4` by default, `0`–`0.9`) sets the
+  opacity of the overlay's dim layer, so a bright or a dark desktop can have the
+  strength it needs; `0` turns the layer off without turning the overlay off.
+  Because the layer was the cue that made a 2 px divider visible, the line is
+  drawn 4 px wide whenever no dim layer is created — no compositor, no SHAPE,
+  or `dim 0` — so a boundary still reads on a bare X server. `overlay on` now
+  reports all three outcomes: `dim 40% 0x…`, `dim off (dim 0)` and
+  `dim unavailable`. The width is asserted by unit test and the opacity by the
+  e2e under a stand-in compositor owner (0.6 → 60% opaque, `dim 0` → no layer).
+
 ### Changed
 
 * **The layout document gains `doc.tags` and `doc.active_tag`.** Both are

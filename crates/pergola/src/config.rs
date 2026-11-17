@@ -83,6 +83,9 @@ pub struct Config {
     pub auto_dock: AutoDock,
     /// Show the tree overlay when the camera moves.
     pub overlay: bool,
+    /// Strength of the overlay's dim layer, 0 (off) to 0.9. Only used when a
+    /// compositor can render `_NET_WM_WINDOW_OPACITY`.
+    pub dim: f64,
     /// Share of the screen given to the desktop leaf by `arrange`.
     pub desktop_share: f64,
     /// Terminal used by `split-terminal`.
@@ -108,6 +111,10 @@ impl Default for Config {
             // The overlay is a debugging aid, not decoration: lines in the gaps
             // and a viewport frame, off unless asked for (or `everything`).
             overlay: false,
+            // 40% black keeps the tiles readable while the split lines stand
+            // out; a config key because a bright or a dark desktop wants a
+            // different strength.
+            dim: 0.4,
             desktop_share: 0.0,
             terminal: std::env::var("TERMINAL").unwrap_or_else(|_| "xfce4-terminal".to_string()),
             hotkeys: true,
@@ -123,6 +130,7 @@ pub const KNOWN_KEYS: &[&str] = &[
     "minimum_share",
     "auto_dock",
     "overlay",
+    "dim",
     "desktop_share",
     "terminal",
     "hotkeys",
@@ -309,7 +317,7 @@ pub fn set_value_at(path: &Path, key: &str, text: &str) -> Result<()> {
 fn parse_value(key: &str, text: &str) -> Result<serde_json::Value> {
     let text = text.trim();
     Ok(match key {
-        "gap" | "minimum_share" | "desktop_share" => {
+        "gap" | "minimum_share" | "desktop_share" | "dim" => {
             let number: f64 = text
                 .parse()
                 .map_err(|_| anyhow!("{key} must be a number, got {text:?}"))?;
@@ -355,6 +363,7 @@ pub fn help_text(key: &str) -> &'static str {
         "minimum_share" => "smallest share a tile can be squeezed to; >0 and <=0.5 (default 0.05)",
         "auto_dock" => "off | new | all: tile a window when it appears (default off)",
         "overlay" => "draw split lines in the gaps; on | off (default off)",
+        "dim" => "overlay dim strength under a compositor; 0 (off) to 0.9 (default 0.4)",
         "desktop_share" => "screen share the desktop leaf keeps; 0 to <1 (default 0)",
         "terminal" => "program `split-terminal` runs (default $TERMINAL, else xfce4-terminal)",
         "hotkeys" => "grab the default chords at startup; on | off (default on)",
@@ -405,6 +414,7 @@ pub fn value_text(config: &Config, key: &str) -> String {
             AutoDock::All => "all".to_string(),
         },
         "overlay" => config.overlay.to_string(),
+        "dim" => format!("{}", config.dim),
         "desktop_share" => format!("{}", config.desktop_share),
         "terminal" => config.terminal.clone(),
         "hotkeys" => config.hotkeys.to_string(),
@@ -512,6 +522,9 @@ fn check_ranges(config: &Config, lines: &HashMap<&'static str, usize>, issues: &
             "minimum_share",
             "minimum_share must be greater than 0 and at most 0.5",
         );
+    }
+    if !(0.0..=0.9).contains(&config.dim) {
+        complain("dim", "dim must be at least 0 and at most 0.9");
     }
     if !(0.0..1.0).contains(&config.desktop_share) {
         complain("desktop_share", "desktop_share must be at least 0 and less than 1");
@@ -897,6 +910,17 @@ mod tests {
         std::fs::write(&path, "{}\n").unwrap();
         let err = set_value_at(&path, "bindings", "x").unwrap_err();
         assert!(err.to_string().contains("not a setting"), "{err}");
+    }
+
+    #[test]
+    fn every_known_key_has_help() {
+        for key in KNOWN_KEYS {
+            assert_ne!(
+                help_text(key),
+                "a value this build does not explain",
+                "{key} has no help line"
+            );
+        }
     }
 
     #[test]

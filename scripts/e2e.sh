@@ -458,10 +458,27 @@ check_eq "0" "$(python3 "$XH" cm-owner)" "no compositor owns _NET_WM_CM_S0 in th
 OUT=$(P overlay on)
 if printf '%s' "$OUT" | grep -c 'dim unavailable' >/dev/null; then
   ok "overlay without a compositor draws borders only"
+  # The divider is a real window, so its width is a server fact. With no dim
+  # layer the line has to carry the cue alone, so it is drawn 4 px wide on its
+  # thin axis instead of 2 (a 2 px line in a 6 px gap all but disappears).
+  BARS=$(python3 "$XH" bars)
+  if [ -n "$BARS" ]; then
+    THIN=$(printf '%s\n' "$BARS" | awk '{split($2, d, "x"); print (d[1] < d[2] ? d[1] : d[2])}' | sort -u | paste -sd, -)
+    check_eq "4" "$THIN" "no-dim overlay lines are 4 px wide"
+    if [ "$(printf '%s\n' "$BARS" | wc -l | tr -d ' ')" -ge 1 ]; then
+      ok "overlay drew a divider per split gap"
+    else
+      bad "overlay drew no divider"
+    fi
+  else
+    bad "overlay on drew no divider windows"
+  fi
 else
   bad "overlay claimed a dim layer without a compositor: $OUT"
 fi
 P overlay off >/dev/null
+park_pointer
+check_eq "0" "$(python3 "$XH" bars | wc -l | tr -d ' ')" "overlay off leaves no divider windows"
 park_pointer
 CHILDREN_BASE=$(python3 "$XH" children)
 DIMS_BASE=$(python3 "$XH" dims)
@@ -473,6 +490,8 @@ DIM=$(printf '%s' "$OUT" | sed -n 's/.*dim 40% \(0x[0-9a-f]*\).*/\1/p')
 if [ -n "$DIM" ]; then
   ok "overlay on draws a dim layer under a compositor"
   check_eq "1717986918" "$(xprop -id "$DIM" -notype _NET_WM_WINDOW_OPACITY 2>/dev/null | sed 's/.*= //')" "the dim layer is 40% opaque"
+  THIN=$(python3 "$XH" bars | awk '{split($2, d, "x"); print (d[1] < d[2] ? d[1] : d[2])}' | sort -u | paste -sd, -)
+  check_eq "2" "$THIN" "with a dim layer the lines are 2 px wide"
   xdotool mousemove 400 300; sleep 0.2
   if [ "$(xdotool getmouselocation --shell | sed -n 's/^WINDOW=//p')" = "$((DIM))" ]; then
     bad "the dim layer swallowed the pointer"
@@ -488,6 +507,28 @@ if [ -n "$DIM" ]; then
 else
   bad "overlay on drew no dim layer with a compositor owner: $OUT"
 fi
+# The strength is a config key, not a constant: 0.6 is 60% opaque and 0 turns
+# the layer off entirely (the split lines then carry the cue on their own).
+P settings dim 0.6 >/dev/null || fail "settings dim 0.6"
+OUT=$(P overlay on)
+DIM=$(printf '%s' "$OUT" | sed -n 's/.*dim 60% \(0x[0-9a-f]*\).*/\1/p')
+if [ -n "$DIM" ]; then
+  check_eq "2576980377" "$(xprop -id "$DIM" -notype _NET_WM_WINDOW_OPACITY 2>/dev/null | sed 's/.*= //')" "dim 0.6 is 60% opaque"
+  P overlay off >/dev/null
+else
+  bad "dim 0.6 did not report 60%: $OUT"
+fi
+P settings dim 0 >/dev/null || fail "settings dim 0"
+OUT=$(P overlay on)
+if printf '%s' "$OUT" | grep -c 'dim off (dim 0)' >/dev/null; then
+  ok "dim 0 reports the layer as off"
+else
+  bad "dim 0 did not report the layer as off: $OUT"
+fi
+park_pointer
+check_eq "$DIMS_BASE" "$(python3 "$XH" dims)" "dim 0 draws no dim layer"
+P overlay off >/dev/null
+P settings dim 0.4 >/dev/null || fail "settings dim 0.4"
 for _ in $(seq 1 100); do P overlay on >/dev/null; P overlay off >/dev/null; done
 park_pointer
 check_eq "$DIMS_BASE" "$(python3 "$XH" dims)" "100 overlay toggles leave no dim window"

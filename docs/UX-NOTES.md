@@ -19,6 +19,11 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   change", ten steps): a wrong dock, float, arrange, ratio or gap drag is one
   chord away from where it was. Verified on xfwm4 and openbox in
   `scripts/e2e.sh`.
+* Read the overlay without a compositor: the split lines are drawn 4 px wide
+  when there is no dim layer to carry the cue (2 px when a compositor dims the
+  tiles), and the dim strength is the `dim` key — `0.4` by default, `0` for
+  lines only. Verified in `scripts/e2e.sh` (0.6 is 60% opaque, `dim 0` draws no
+  layer) and by unit test on the line width.
 * See where a gap is before aiming at it: hovering a band draws a thin line down
   its long axis (0.4.0-dev). The hint is click-through, so it never steals the
   pointer from the band it describes.
@@ -62,7 +67,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 
 | Area | Pain point | Who hits it | Sev | Proposed fix |
 |---|---|---|---|---|
-| Overlay | The dim layer needs a compositor that owns `_NET_WM_CM_S0` (measured: mean screen brightness 0.162 → 0.098 under xfwm4 with compositing on, back to 0.159 after `overlay off` — a 0.60x factor, as 40% black predicts). A bare X server, or a compositor without SHAPE, gets the 2 px lines alone, which are easy to miss; the 40% strength is a constant, not a config key | Everyone on a compositor-less session | 2 | A cue that reads without compositing, and `dim` in `config.json` |
+| Overlay | The dim layer needs a compositor that owns `_NET_WM_CM_S0` (measured: mean screen brightness 0.162 → 0.098 under xfwm4 with compositing on, back to 0.159 after `overlay off` — a 0.60x factor, as 40% black predicts). A compositor without SHAPE gets no dim layer either. The `dim` key and the 4 px no-dim lines are in place (0.5.0-dev); what is still unmeasured is whether 4 px reads well enough on a *real* bare-X session — the width is asserted by unit test, not by a person looking at it | Compositor-less sessions | 1 | Look at a 4 px line on a real bare X server and tune the width/gap if it is still easy to miss |
 | Discoverability | Every action is a chord that has to be learned; the palette exists but is one more chord (`Ctrl+Alt+M`) | New user | 3 | Show the palette on first start, or add a panel/applet entry it can be launched from |
 | Chords | The bound chords differ per desktop (xfwm4 owns `Ctrl+Alt+arrows`, so camera keys are `Super+…`). A `bindings` map in `config.json` remaps them, `pergola bind`/`unbind` change one chord without editing JSON, and `pergola settings` (0.4.0-dev) lists every command with the chords actually bound and rebinds the one you pick. A chord the desktop already owns is still only reported in the reload output, not as a notification, and the menu does not say a chord is owned *before* you pick it | Anyone whose desktop claims chords | 1 | Notification for a conflict, and an owned-chord mark in the settings rows |
 | Palette | Needs an external menu program; without one the hotkey fails into the daemon log, where the user never looks | Minimal installs (no rofi) | 3 | `notify-send` fallback naming the fix; `install.sh` warns; palette row "Install rofi" |
@@ -77,10 +82,10 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 
 ## Next three
 
-1. **A cue that reads without a compositor** (the Overlay row) and a `dim` key,
-   plus the same `PERGOLA_NOTIFY` toast for a failed dock/float (the Feedback
-   row): the two remaining places where the desktop does not tell you what
-   happened.
+1. **The same `PERGOLA_NOTIFY` toast for a failed dock/float** (the Feedback
+   row) — the last place where the desktop does not tell you what happened. The
+   overlay cue and the `dim` key are done; what remains is the look-at-it check
+   on a real bare-X server.
 2. **Workspaces one key away** (the Workspaces rows): opt-in default chords for
    `tag-view 1-9`, palette rows for the two verbs, and a small tag indicator in
    the overlay, so a workspace does not need a terminal to exist.

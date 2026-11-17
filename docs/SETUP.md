@@ -144,6 +144,7 @@ the defaults):
 | `minimum_share` | `0.05` | smallest fraction a tile can be squeezed to when weights are edited |
 | `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
 | `overlay` | `false` | draw split lines in the gaps and a frame around the viewport, plus a dim layer when a compositor can render it |
+| `dim` | `0.4` | strength of the overlay's dim layer, `0` (off) to `0.9`; only used with a compositor. At `0` the split lines are 4 px wide instead of 2, so the boundary still reads without a dim layer |
 | `desktop_share` | `0.0` | share of the screen `arrange` gives the desktop leaf; `0` means the desktop gets no strip |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
@@ -201,10 +202,14 @@ Notes:
 * `pergola overlay on` is likewise a session toggle; the config key is the
   default at startup. With a compositor (any program that owns
   `_NET_WM_CM_S0`: xfwm4, picom, kwin, mutter) the overlay also dims the tiles
-  with a 40% black layer under the split lines, which makes the tree readable
-  when zoomed out; without one — or without the SHAPE extension that keeps the
-  layer click-through — it draws the lines alone. `pergola overlay on` reports
-  which of the two it did (`dim 40% 0x…` or `dim unavailable`).
+  with a black layer under the split lines, which makes the tree readable when
+  zoomed out; without one — or without the SHAPE extension that keeps the layer
+  click-through — it draws the lines alone. `pergola overlay on` reports which
+  of the two it did (`dim 40% 0x…`, `dim off (dim 0)` or `dim unavailable`).
+  The layer's strength is the `dim` key: `0.4` (40% black) by default,
+  `pergola settings dim 0.6` for a stronger dim, `0` to turn it off and keep the
+  lines as the only cue. With no dim layer the split lines are drawn 4 px wide
+  instead of 2, so a boundary still reads on a bare X server.
 * A malformed file is reported on stderr and ignored (defaults are used); the
   daemon still starts.
 * `pergola settings` opens a menu with every key and every command's chords;

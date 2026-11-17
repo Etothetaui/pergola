@@ -110,11 +110,20 @@ runs on demand and every two seconds in the event loop.
 
 ## Drawing the tree
 
-The overlay is a *divider*, not a border: one 2 px line per split boundary, centred in the gap
-between the two children, plus a 3 px amber frame around the work area when a node is framed. Lines
-live in the gap, so they never cover a title bar or a window border — the earlier design drew a
-border around every tile and read as a debug artefact. It is off by default; `overlay on` (or
-`everything`) shows it, and the lines are drawn as override-redirect windows raised above the tiles.
+The overlay is a *divider*, not a border: one line per split boundary, centred in the gap between
+the two children, plus a 3 px amber frame around the work area when a node is framed. The line is
+2 px when a compositor can dim the tiles behind it and 4 px when it cannot — with no dim layer the
+line is the only thing that says "boundary", and 2 px in a 6 px gap all but disappears. Lines live
+in the gap, so they never cover a title bar or a window border — the earlier design drew a border
+around every tile and read as a debug artefact. It is off by default; `overlay on` (or `everything`)
+shows it, and the lines are drawn as override-redirect windows raised above the tiles.
+
+The dim layer is a separate click-through window whose opacity comes from the `dim` key
+(`0.4` = 40% black by default, `0.9` at the darkest, `0` for no layer). It is only created when the
+daemon sees a compositor owning `_NET_WM_CM_S0` *and* the SHAPE extension, since without SHAPE the
+layer would swallow the pointer. `overlay on` reports which of the three outcomes happened
+(`dim 40% 0x…`, `dim off (dim 0)`, `dim unavailable`), so a person can tell a missing cue from a
+missing compositor.
 
 ## The human interface: pointer and palette
 
@@ -214,7 +223,7 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
 
 ## Testing
 
-* `cargo test` — 122 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 125 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
   document round-trips, named workspaces (disjoint view sets, pruning of the
   active tag's tree, an empty tag, a tag surviving its last window, a tagged
@@ -234,7 +243,7 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
   activation requests and named workspaces (disjoint tag sets, only the active
   tag laid out, a parked window mostly off the work area, the escape
   hatch, a restart and a `tag` record), settings help and a rejected value's
-  notification, and a ratio nudge chord — 186 assertions on xfwm4. Openbox runs
+  notification, and a ratio nudge chord — 193 assertions on xfwm4. Openbox runs
   the same suite and is also green; it skips the drop-frame assertions because
   it coalesces a drag into one `ConfigureNotify` (a WM capability, not a
   tolerance), and its tree can hold one more tile, so the geometry count is not

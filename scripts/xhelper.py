@@ -6,6 +6,8 @@
   xhelper children            count the root window's children
   xhelper dims                count root children carrying _NET_WM_WINDOW_OPACITY
   xhelper hints               count root children carrying _PERGOLA_HINT
+  xhelper bars                geometry of root children carrying _PERGOLA_OVERLAY
+                              (one "x,y w,h" line per divider, in creation order)
 
 Why this exists: the overlay's dim layer is only honest when a compositor owns
 the `_NET_WM_CM_S<screen>` selection — that is how xfwm4, picom, kwin and mutter
@@ -70,6 +72,18 @@ def _lib():
         ctypes.POINTER(ctypes.c_ulong),
         ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte)),
     ]
+    lib.XGetGeometry.restype = ctypes.c_int
+    lib.XGetGeometry.argtypes = [
+        ctypes.c_void_p,
+        WINDOW,
+        ctypes.POINTER(WINDOW),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+    ]
     lib.XSync.restype = ctypes.c_int
     lib.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
     lib.XFree.restype = ctypes.c_int
@@ -119,6 +133,24 @@ def _has_prop(lib, dpy, win, atom):
     return status == 0 and actual_type.value != 0
 
 
+def _geometry(lib, dpy, win):
+    """x, y, w, h of a window as the server has it (parent-relative: the root)."""
+    root_ret = WINDOW()
+    x = ctypes.c_int()
+    y = ctypes.c_int()
+    w = ctypes.c_uint()
+    h = ctypes.c_uint()
+    border = ctypes.c_uint()
+    depth = ctypes.c_uint()
+    ok = lib.XGetGeometry(
+        dpy, win, ctypes.byref(root_ret), ctypes.byref(x), ctypes.byref(y),
+        ctypes.byref(w), ctypes.byref(h), ctypes.byref(border), ctypes.byref(depth),
+    )
+    if not ok:
+        sys.exit("xhelper: XGetGeometry failed")
+    return x.value, y.value, w.value, h.value
+
+
 def main(argv):
     if not argv:
         sys.exit(__doc__)
@@ -150,6 +182,14 @@ def main(argv):
         # is how the e2e proves a hint appeared and left nothing behind.
         atom = lib.XInternAtom(dpy, b"_PERGOLA_HINT", 0)
         print(sum(1 for w in _children(lib, dpy, root) if _has_prop(lib, dpy, w, atom)))
+    elif cmd == "bars":
+        # The overlay's split lines are real windows, so the line width is a
+        # server fact, not a daemon claim: a 4 px fallback line measures 4.
+        atom = lib.XInternAtom(dpy, b"_PERGOLA_OVERLAY", 0)
+        for w in _children(lib, dpy, root):
+            if _has_prop(lib, dpy, w, atom):
+                x, y, bw, bh = _geometry(lib, dpy, w)
+                print("%d,%d %dx%d" % (x, y, bw, bh))
     else:
         sys.exit("xhelper: unknown command %r\n%s" % (cmd, __doc__))
 

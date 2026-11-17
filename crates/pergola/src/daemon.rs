@@ -442,7 +442,11 @@ impl Daemon {
         if !self.overlay_on || !self.x.compositor_active() || !self.x.shape_available() {
             return None;
         }
-        Some((screen, DIM_OPACITY))
+        let opacity = (self.config.dim.clamp(0.0, 0.9) * u32::MAX as f64).round() as u32;
+        if opacity == 0 {
+            return None;
+        }
+        Some((screen, opacity))
     }
 
     /// The layout as it stands, for the undo ring.
@@ -625,12 +629,16 @@ impl Daemon {
             } else {
                 Some(self.camera.framed.as_str())
             };
+            // Without a dim layer the lines are all the overlay has, so they
+            // are drawn twice as thick: 4 px reads on a bare X server and in a
+            // screenshot, where a 2 px line in a 6 px gap all but disappears.
             let bars: Vec<(IRect, u32)> = overlay_bars(
                 &shown,
                 &rects,
                 framed_id,
                 self.engine.gap,
                 world,
+                dim.is_none(),
             )
             .into_iter()
             .map(|(bar, color)| {
@@ -1745,7 +1753,8 @@ impl Daemon {
         self.save()?;
         let dim = match (self.overlay_on, self.x.overlay_dim()) {
             (false, _) => String::new(),
-            (true, Some(id)) => format!(" · dim 40% 0x{id:x}"),
+            (true, Some(id)) => format!(" · dim {}% 0x{id:x}", dim_percent(self.config.dim)),
+            (true, None) if self.config.dim <= 0.0 => " · dim off (dim 0)".to_string(),
             (true, None) => " · dim unavailable (no compositor or SHAPE)".to_string(),
         };
         Ok(format!(
@@ -2965,7 +2974,11 @@ const UNDO_DEPTH: usize = 10;
 /// How dark the overlay's dim layer is, in the X opacity convention: a 32-bit
 /// CARDINAL where `0xffffffff` is opaque. 40% black leaves the tiles readable
 /// while making the 2 px split lines read at a glance.
-const DIM_OPACITY: u32 = 0x6666_6666;
+/// The dim layer's strength is `config.dim`; this is only the percentage the
+/// command reply and the e2e talk about.
+fn dim_percent(dim: f64) -> u32 {
+    (dim.clamp(0.0, 0.9) * 100.0).round() as u32
+}
 
 /// The screen edge a rectangle is sitting against, if any. Corners go to the
 /// nearer edge; a window in the middle returns `None`.
@@ -3109,9 +3122,13 @@ fn overlay_bars(
     framed: Option<&str>,
     gap: f64,
     viewport: Rect,
+    wide: bool,
 ) -> Vec<(IRect, u32)> {
     const LINE: u32 = 0x00505f6b;
     const ACCENT: u32 = 0x00e8b04b;
+    // 4 px with no dim layer (the line has to carry the cue on its own), 2 px
+    // when a compositor dims the tiles behind it.
+    let t: i32 = if wide { 4 } else { 2 };
     let path = framed.map(|f| ancestors(root, f)).unwrap_or_default();
     let mut bars = Vec::new();
     for node in root.flatten() {
@@ -3134,16 +3151,16 @@ fn overlay_bars(
             };
             match split.axis {
                 Axis::X => {
-                    let x = child.max_x() + gap / 2.0 - 1.0;
+                    let x = child.max_x() + gap / 2.0 - t as f64 / 2.0;
                     bars.push((
-                        IRect::new(x.round() as i32, rect.y.round() as i32, 2, rect.h.round() as i32),
+                        IRect::new(x.round() as i32, rect.y.round() as i32, t, rect.h.round() as i32),
                         color,
                     ));
                 }
                 Axis::Y => {
-                    let y = child.max_y() + gap / 2.0 - 1.0;
+                    let y = child.max_y() + gap / 2.0 - t as f64 / 2.0;
                     bars.push((
-                        IRect::new(rect.x.round() as i32, y.round() as i32, rect.w.round() as i32, 2),
+                        IRect::new(rect.x.round() as i32, y.round() as i32, rect.w.round() as i32, t),
                         color,
                     ));
                 }
@@ -3675,7 +3692,7 @@ mod tests {
         );
         let world = Rect::new(0.0, 0.0, 1000.0, 500.0);
         let rects = engine.rects(&tree, world);
-        let bars = overlay_bars(&tree, &rects, None, 8.0, world);
+        let bars = overlay_bars(&tree, &rects, None, 8.0, world, false);
         assert_eq!(bars.len(), 1, "one boundary for two children");
         let (bar, _) = bars[0];
         // a is 0..496, the gap is 496..504, so the line is centred at 500.
@@ -3684,6 +3701,42 @@ mod tests {
         assert_eq!(bar.h, 500);
         // No bar may overlap a tile: the line is inside the gap.
         assert!(bar.x >= 496 && bar.x + bar.w <= 504);
+    }
+
+    #[test]
+    fn a_line_is_four_pixels_when_it_has_to_carry_the_cue() {
+        // With no dim layer the split line is the only thing that says "this is
+        // a boundary", so it is drawn 4 px wide inside the same gap.
+        let e = LayoutEngine::new(8.0, 0.05);
+        let tree = LayoutNode::split(
+            "r",
+            Axis::X,
+            vec![
+                LayoutNode::panel("p-a", vec!["s-a".into()]),
+                LayoutNode::panel("p-b", vec!["s-b".into()]),
+            ],
+        );
+        let world = Rect::new(0.0, 0.0, 1000.0, 500.0);
+        let rects = e.rects(&tree, world);
+        let thin = overlay_bars(&tree, &rects, None, 8.0, world, false);
+        let wide = overlay_bars(&tree, &rects, None, 8.0, world, true);
+        assert_eq!(thin.len(), wide.len(), "the cue is width, not count");
+        assert_eq!(thin[0].0.w, 2);
+        assert_eq!(wide[0].0.w, 4);
+        // Both stay inside the gap (496..504): the wider line is still a
+        // divider, never a border over a tile.
+        for (bar, _) in &wide {
+            assert!(bar.x >= 496 && bar.x + bar.w <= 504, "{bar:?}");
+        }
+    }
+
+    #[test]
+    fn the_dim_percentage_follows_the_config_value() {
+        assert_eq!(dim_percent(0.4), 40);
+        assert_eq!(dim_percent(0.0), 0);
+        assert_eq!(dim_percent(0.65), 65);
+        // Out-of-range values are clamped, so a reply never claims 240%.
+        assert_eq!(dim_percent(2.4), 90);
     }
 
     #[test]
@@ -3704,7 +3757,7 @@ mod tests {
         );
         let world = Rect::new(0.0, 0.0, 1000.0, 500.0);
         let rects = engine.rects(&tree, world);
-        let bars = overlay_bars(&tree, &rects, Some("p-c"), 8.0, world);
+        let bars = overlay_bars(&tree, &rects, Some("p-c"), 8.0, world, false);
         // root boundary + inner boundary + 4 viewport edges
         assert_eq!(bars.len(), 6);
         let accent = bars.iter().filter(|(_, c)| *c == 0x00e8b04b).count();
