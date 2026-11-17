@@ -107,7 +107,7 @@ pergola rects            # every panel's current frame rectangle
 | `undo` | put the layout back before the last dock, float, arrange, gap change or ratio |
 | `tag-view <name>` / `window-tag <name>` / `tag-remove <name>` | switch a named workspace, move a window to one, delete one |
 | `config [--check]` | the resolved config with each key's source, or what is wrong with the file |
-| `settings` / `settings --list` / `settings <key> <value>` | change a setting from a menu, list the rows, or set one key |
+| `settings` / `settings --list` / `settings <key> <value>` | change a setting from a menu whose rows explain themselves, list the rows, or set one key (a rejected value also raises a desktop notification) |
 | `subscribe` | stream layout, focus, dock, undock and window-closed records as JSON lines (for a status bar) |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
 | `reload` `save` `stop` | daemon control |
@@ -397,8 +397,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 115 unit tests: geometry, tree, camera, commands, document, tags, event diff
-scripts/e2e.sh           # 174 assertions against Xvfb + a real WM + real xterms
+cargo test               # 119 unit tests: geometry, tree, camera, commands, document, tags, settings, event diff
+scripts/e2e.sh           # 178 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

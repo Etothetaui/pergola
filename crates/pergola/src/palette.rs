@@ -138,7 +138,20 @@ pub fn run_settings() -> Result<()> {
     let argv: Vec<String> = match setting {
         crate::config::Setting::Key(key) => vec!["settings".into(), key.to_string(), value],
         // A chord row is a `bind`: it already validates, writes and reloads.
-        crate::config::Setting::Chord(command) => vec!["bind".into(), command.clone(), value],
+        // The entry prefills `Super+a, Super+b`, and `bind` takes one chord per
+        // argument, so the commas are the separator here — the row accepts what
+        // it shows instead of failing to parse its own prefill.
+        crate::config::Setting::Chord(command) => {
+            let mut argv = vec!["bind".to_string(), command.clone()];
+            argv.extend(
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|chord| !chord.is_empty())
+                    .map(str::to_string),
+            );
+            argv
+        }
     };
     spawn_argv(&argv)
 }

@@ -198,19 +198,22 @@ desktop with no tag would blank the screen), and a desktop clamps a parked windo
 reachable at the bottom edge — xfwm4's title bar, openbox's first 66 px of an 862 px client
 (`docs/UX-NOTES.md`).
 
-## 1. Settings help and a toast for a rejected value
+### Settings that explain themselves (0.5.0-dev)
 
-**What:** one help line per row in `pergola settings` (what the key means, its range, its default),
-and report a rejected value as a desktop notification when the menu was opened from a chord, not
-only on the process's stderr.
-**Why:** `pergola settings` reaches every key and chord, but a row shows `gap = 6` with no
-explanation, and a rejected value goes where the person never looks (`docs/UX-NOTES.md`, the
-Settings and Feedback rows). This finishes the last place a person must be a developer.
-**Done when:** `settings --list` prints a help column, an invalid value writes a `notify-send`
-toast (and still exits non-zero), and the e2e asserts both plus the unchanged "bad value is
-rejected before the file is touched" behaviour.
+Every `pergola settings` row now carries its own help — what the key controls, the range the
+validator enforces and the compiled default (`gap = 6 — pixels between tiles; 0 to 400 (default 6)`)
+— so the menu is legible without the manual. A chord row accepts the comma-separated list it
+prefills (`Super+9, Super+8` binds both) instead of failing to parse its own value. A *rejected*
+value is also sent as a desktop notification, because the menu and the palette run detached and
+their stderr goes to the journal; the notifier is `notify-send`, overridable with
+`PERGOLA_NOTIFY` (its own arguments stay), and with no notifier the message stays on stderr with the
+same non-zero exit. The tests: four unit tests over the invocation (default app name, override
+words, empty override, a notify-send override) and an e2e block asserting the help text, the
+comma-separated chord row writing both chords, and a stand-in notifier recording the rejection while
+the value is still refused and the file untouched. `docs/UX-NOTES.md`'s Settings row is closed; the
+Feedback row narrows to dock/float errors.
 
-## 2. Ratios and context-aware palette rows
+## 1. Ratios and context-aware palette rows
 
 **What:** palette rows for half / third / two-thirds ratios, a nudge chord for the split around the
 focused panel, and palette rows built from the focused panel's state (no "Float this window" for a
@@ -222,7 +225,7 @@ Ratios and Palette rows.
 `settings`-style `--list` output, not by opening a menu), and a ratio row changes the geometry to
 the reported weights.
 
-## 3. A cue that reads without a compositor
+## 2. A cue that reads without a compositor
 
 **What:** a `dim` key in `config.json` for the overlay's dim strength, and a non-compositor cue for
 the split lines (e.g. a doubled line or a short tick at each boundary) so `overlay on` is legible
@@ -232,6 +235,18 @@ and the 40% strength is a constant (UX-NOTES, the Overlay row).
 **Done when:** `pergola config` shows `dim` with its source, an out-of-range value is rejected by
 `config --check`, and the e2e proves the fallback cue draws with no compositor (root-child count
 and pixel run length), while a stand-in compositor still gets the dim layer.
+
+## 3. Workspaces one key away
+
+**What:** opt-in default chords for `tag-view 1`…`tag-view 9` (a `tags` config key, off by default so
+a desktop that never asked for workspaces cannot blank its screen), palette rows for `tag-view` and
+`window-tag`, and a small indicator in the overlay naming the active tag.
+**Why:** tags exist but are commands only — no chord, no menu row, no on-screen state beyond
+`pergola status` (`docs/UX-NOTES.md`, the Workspaces rows). A workspace system nobody can reach
+from the desktop is a demo.
+**Done when:** with the key on, `Super+1`/`Super+2` switch between two tags and `Super+Shift+1`
+moves the focused window (asserted with real key presses in the e2e), the palette lists both verbs,
+and `overlay on` draws the active tag's name/indicator while a tag is active.
 
 ## Blocked: Release pipeline, so `pergola-bin` can exist
 

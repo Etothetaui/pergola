@@ -209,8 +209,18 @@ Notes:
   daemon still starts.
 * `pergola settings` opens a menu with every key and every command's chords;
   pick a row, type a value, and it is validated and written atomically, then the
-  daemon reloads. `pergola settings gap 12` does the same from a script and
-  `pergola settings --list` prints the rows without a menu program.
+  daemon reloads. Each row carries its own help — what the key controls, the
+  range the validator enforces and the compiled default — so
+  `gap = 6 — pixels between tiles; 0 to 400 (default 6)` is legible without the
+  manual. `pergola settings gap 12` does the same from a script and
+  `pergola settings --list` prints the rows without a menu program. A chord row
+  accepts a comma-separated list (`Super+9, Super+8`) and binds each chord.
+* A **rejected** value is also shown as a desktop notification, because the menu
+  and the palette run detached and their stderr goes to the journal. The
+  notifier is `notify-send`; set `PERGOLA_NOTIFY` to use another program (its
+  own arguments stay, e.g. `PERGOLA_NOTIFY="dunstify --urgency=critical"`). With
+  no notifier installed the message stays on stderr and the exit code is still
+  non-zero — the value is never written.
 * `pergola config` prints every key with the value in force and where it came
   from — `default` or `config.json:<line>` — so a typo cannot hide behind a
   default. `pergola config --check` exits non-zero on an unknown key, an

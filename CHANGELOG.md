@@ -34,6 +34,18 @@ that tag instead of appearing on the wrong workspace.
   window they must not lose), the escape hatch, a daemon restart and a `tag`
   event. The harvest's **workspace / tag** class was 236 issues.
 
+* **Settings rows explain themselves, and a rejection is a notification.**
+Every `pergola settings` row now carries one line of help — what the key
+controls, the range the validator enforces and the compiled default
+(`gap = 6 — pixels between tiles; 0 to 400 (default 6)`) — and a chord row
+accepts the comma-separated list it prefills (`Super+9, Super+8` binds both; it
+used to hand the whole string to `bind` as one unparseable chord). A rejected
+value is also sent as a desktop notification, because the menu and the palette
+run detached and their stderr goes to the journal: `notify-send` by default,
+`PERGOLA_NOTIFY` to use another program (its own arguments are kept), and with
+no notifier the message stays on stderr with the same non-zero exit. The warning
+text and the "never write an invalid value" rule are unchanged.
+
 * **A release pipeline for prebuilt binaries.** `.github/workflows/release.yml`
   builds `x86_64` and `aarch64` on a `v<version>` tag and attaches
   `pergola-<version>-<arch>-linux-gnu.tar.gz`, its `.sha256`, and a generated

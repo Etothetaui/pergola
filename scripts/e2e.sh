@@ -96,6 +96,18 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------- sandbox ----
+# Desktop notifications: `pergola settings` sends one when it rejects a value.
+# Left alone, `notify-send` would talk to the *parent session's* bus and pop a
+# toast on the real desktop during the test, and whether a window appears would
+# depend on the machine. The stub records every message for the assertions and
+# keeps the display untouched; it is also the user-facing override, not a hook.
+cat > "$TMP/notify.sh" <<'EOS'
+#!/bin/sh
+printf '%s\n' "$*" >> "$PERGOLA_NOTIFY_LOG"
+EOS
+chmod +x "$TMP/notify.sh"
+export PERGOLA_NOTIFY="$TMP/notify.sh"
+export PERGOLA_NOTIFY_LOG="$TMP/notify.log"
 say "pergola e2e: $BIN"
 say "sandbox: Xvfb $DISP ${W}x${H} + $WM + 3 xterms"
 Xvfb "$DISP" -screen 0 "${W}x${H}x24" >"$TMP/xvfb.log" 2>&1 & PIDS+=($!)
@@ -827,6 +839,40 @@ fi
 LIST=$("$BIN" settings --list)
 if printf '%s' "$LIST" | grep -c '^gap = ' >/dev/null; then ok "settings --list names the gap"; else bad "settings --list has no gap row"; fi
 if printf '%s' "$LIST" | grep -c '^chord: dock left = ' >/dev/null; then ok "settings --list shows the chord map"; else bad "settings --list has no chord row: $(printf '%s' "$LIST" | head -3)"; fi
+# Each row explains itself: what the key does, its range and its default. The
+# menu is opened from a chord, with no manual next to it.
+if printf '%s' "$LIST" | grep -c '^gap = .* — pixels between tiles; 0 to 400 (default 6)' >/dev/null; then
+  ok "a settings row explains what it changes"
+else
+  bad "no help on the gap row: $(printf '%s' "$LIST" | grep '^gap = ')"
+fi
+if printf '%s' "$LIST" | grep -c '^chord: dock left = .* — .*' >/dev/null; then
+  ok "a chord row explains what it binds"
+else
+  bad "no help on a chord row: $(printf '%s' "$LIST" | grep '^chord: dock left' | head -1)"
+fi
+# A rejected value is the moment the person needs to know: the menu process is
+# detached, so stderr goes to the journal. The sandbox-wide stub notifier (see
+# the sandbox setup) records the call, and the value must still be refused and
+# not written.
+: > "$PERGOLA_NOTIFY_LOG"
+if "$BIN" settings gap banana >/dev/null 2>&1; then
+  bad "settings accepted a non-numeric gap"
+else
+  ok "settings still rejects a bad value"
+fi
+# spawn() is asynchronous; give the stub a moment to be reaped.
+for _ in $(seq 1 20); do [ -s "$PERGOLA_NOTIFY_LOG" ] && break; sleep 0.1; done
+if grep -c 'gap must be a number' "$PERGOLA_NOTIFY_LOG" >/dev/null; then
+  ok "a rejected setting also reaches a desktop notification"
+else
+  bad "no notification for the rejected value: $(cat "$PERGOLA_NOTIFY_LOG" 2>/dev/null)"
+fi
+if grep -c '"gap": "banana"' "$XDG_CONFIG_HOME/pergola/config.json" >/dev/null; then
+  bad "the notified rejection was written anyway"
+else
+  ok "the notified rejection was not written"
+fi
 cat > "$TMP/fake-dmenu" <<'EOS'
 #!/bin/sh
 # Stand-in dmenu: list mode picks the first row, entry mode types 9.
@@ -839,6 +885,33 @@ chmod +x "$TMP/fake-dmenu"
 printf '%s\n' '{"gap": 6}' > "$XDG_CONFIG_HOME/pergola/config.json"
 PERGOLA_MENU="$TMP/fake-dmenu" "$BIN" settings-run >/dev/null 2>&1
 check_eq '{"gap":9.0}' "$(tr -d '\n ' < "$XDG_CONFIG_HOME/pergola/config.json")" "a menu pick writes the row"
+# The chord row prefills `Ctrl+Alt+Shift+Left, Super+Shift+Left`; typing a
+# comma-separated pair has to bind both, not fail to parse its own prefill.
+cat > "$TMP/fake-dmenu-chord" <<'EOS'
+#!/bin/sh
+# Stand-in dmenu: list mode picks the `dock left` chord row, entry mode types a pair.
+case "$*" in
+  *"-p pergola"*) while IFS= read -r row; do
+      case "$row" in "chord: dock left = "*) printf '%s\n' "$row"; break;; esac
+    done ;;
+  *) IFS= read -r _; printf 'Super+9, Super+8\n' ;;
+esac
+EOS
+chmod +x "$TMP/fake-dmenu-chord"
+printf '%s' '{"gap": 6}' > "$XDG_CONFIG_HOME/pergola/config.json"
+PERGOLA_MENU="$TMP/fake-dmenu-chord" "$BIN" settings-run >/dev/null 2>&1
+# Parse the file instead of grepping it: a pretty-printed array and the space
+# inside `"dock left"` defeat both a naive grep and `tr -d ' '`.
+if python3 - "$XDG_CONFIG_HOME/pergola/config.json" <<'EOS'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+raise SystemExit(0 if cfg.get("bindings", {}).get("dock left") == ["Super+9", "Super+8"] else 1)
+EOS
+then
+  ok "a comma-separated entry binds both chords"
+else
+  bad "the chord row did not honour its own prefill syntax: $(cat "$XDG_CONFIG_HOME/pergola/config.json")"
+fi
 printf '%s' '{}' > "$XDG_CONFIG_HOME/pergola/config.json"
 
 say

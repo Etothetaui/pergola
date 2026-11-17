@@ -38,6 +38,13 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   remembers the window that had the keyboard. Verified on xfwm4 and openbox in
   `scripts/e2e.sh` (disjoint tag sets, only the active tag's panels mapped, the
   parked client area off the work area, a restart, and a `tag` event).
+* Change a setting from a menu that explains itself: every `pergola settings`
+  row carries what the key controls, the range the validator enforces and the
+  compiled default, a chord row takes a comma-separated pair, and a rejected
+  value is also sent as a desktop notification (`notify-send`, or
+  `PERGOLA_NOTIFY` for another program) because the menu runs detached.
+  Verified on xfwm4 in `scripts/e2e.sh` with a stand-in notifier — the value is
+  still refused and the file is not touched.
 * `pergola-health` proves the daemon, layout invariants and work-area fit.
 
 ## Pain points
@@ -51,8 +58,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Palette | Needs an external menu program; without one the hotkey fails into the daemon log, where the user never looks | Minimal installs (no rofi) | 3 | `notify-send` fallback naming the fix; `install.sh` warns; palette row "Install rofi" |
 | Ratios | `pergola ratio 0.3` rebalances a split from the keyboard, but there are no palette rows for half/third and no nudge chord; `gap: 0` leaves no drag strip | Keyboard-only users | 2 | Palette rows (half/third/two-thirds) and a nudge chord |
 | New windows | `auto_dock` is now a tri-state (`off`/`new`/`all`), but there is no palette toggle: changing it means editing `config.json` and reloading | Everyone who tiles | 2 | A palette toggle for `auto_dock` |
-| Feedback | Success and failure of a hotkey action are printed to a terminal the user does not have | Everyone without a terminal | 2 | Optional `notify-send` toast for dock/float/errors |
-| Settings | `pergola settings` (0.4.0-dev) is the menu-driven editor: every scalar key and every chord is reachable, a bad value is rejected before the file is touched, and the daemon reloads afterwards. What is still missing is help: the rows show `gap = 6`, not what a gap is or what range is allowed, and the only feedback for a rejected value is the process's stderr | Everyone who tiles | 1 | One-line help per key in the menu, and a rejected value reported as a toast |
+| Feedback | Success and failure of a hotkey action are printed to a terminal the user does not have. A *rejected setting* is now also a desktop notification (0.5.0-dev), but a failed dock/float/ratio still only reaches the journal | Everyone without a terminal | 2 | Optional `notify-send` toast for dock/float/errors, behind the same `PERGOLA_NOTIFY` override |
 | Zoom + drag | A drag-out while zoomed converts screen coordinates as if they were world coordinates, so the floating window can land outside the desktop leaf | Untiling while zoomed | 2 | Inverse camera transform for the drop rectangle |
 | Terminal split | `split-terminal` assumes `xfce4-terminal` when `$TERMINAL` is unset, which is wrong on most desktops | Non-XFCE users | 2 | Fall back to the desktop's terminal from `XDG_CURRENT_DESKTOP`, and say which config key to set |
 | Accessibility | No keyboard way to select a tile other than activating its window; the overlay draws no text and exposes no AT-SPI | Keyboard-only / low-vision | 3 | Focus-by-chord across tiles; overlay labels with the tile's size |
@@ -62,16 +68,15 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 
 ## Next three
 
-1. **Settings help** (the Settings row): `pergola settings` reaches every key and
-   chord, but a row shows `gap = 6` with no explanation and a rejected value only
-   reaches stderr. One help line per key, and a toast for a rejection, finishes
-   the last place a person must be a developer.
-2. **Ratios and context-aware palette rows** (the Ratios and Palette rows):
+1. **Ratios and context-aware palette rows** (the Ratios and Palette rows):
    palette rows for half/third and rows that change with the focused panel make
    the menu sufficient on its own.
-3. **Feedback and a cue without compositing** (the Feedback and Overlay rows):
-   a `notify-send` toast for dock/float/errors, and a `dim` key so the overlay
-   strength is a choice rather than a constant.
+2. **Feedback and a cue without compositing** (the Feedback and Overlay rows):
+   the same `PERGOLA_NOTIFY` toast for a failed dock/float, and a `dim` key so
+   the overlay strength is a choice rather than a constant.
+3. **Workspaces one key away** (the Workspaces rows): opt-in default chords for
+   `tag-view 1-9`, palette rows for the two verbs, and a small tag indicator in
+   the overlay, so a workspace does not need a terminal to exist.
 
 Measured on Xfwm4 and Openbox. Openbox coalesces a drag into a single
 `ConfigureNotify`, so the mid-drag drop frame is asserted on xfwm4 only; the

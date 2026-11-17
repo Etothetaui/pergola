@@ -6,6 +6,7 @@
 mod config;
 mod daemon;
 mod ipc;
+mod notify;
 mod palette;
 
 use std::io::BufRead;
@@ -417,9 +418,18 @@ fn settings(socket: &PathBuf, args: &[String]) -> Result<()> {
         Some(key) => {
             let value = args[1..].join(" ");
             if value.trim().is_empty() {
-                anyhow::bail!("settings {key} needs a value");
+                let problem = format!("settings {key} needs a value");
+                notify::send(&problem);
+                anyhow::bail!(problem);
             }
-            config::set_value_at(&config::config_path(), key, &value)?;
+            // A rejection is the moment the person needs to know: this process
+            // was started from a menu or a chord, where stderr goes to the
+            // journal. The notification is best effort; the exit code and the
+            // message on stderr are unchanged.
+            if let Err(e) = config::set_value_at(&config::config_path(), key, &value) {
+                notify::send(&format!("{key}: {e:#}"));
+                return Err(e);
+            }
             let changed = format!("{} = {}", key, value.trim());
             match ipc::call(socket, &["reload".to_string()]) {
                 Ok(response) if response.ok => {

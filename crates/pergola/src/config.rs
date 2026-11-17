@@ -345,16 +345,40 @@ pub enum Setting {
     Chord(String),
 }
 
-/// The rows the settings palette shows: every key with the value in force, then
-/// every command with the chords actually bound (the `keys --check` view, so a
-/// chord the desktop owns is visible before it is edited).
+/// One line of help for a settings row: what the key controls, the range the
+/// validator enforces and the compiled default. It is part of the row, so a
+/// person does not need the manual to know what `minimum_share = 0.05` means —
+/// and a menu that is opened from a chord has no manual next to it.
+pub fn help_text(key: &str) -> &'static str {
+    match key {
+        "gap" => "pixels between tiles; 0 to 400 (default 6)",
+        "minimum_share" => "smallest share a tile can be squeezed to; >0 and <=0.5 (default 0.05)",
+        "auto_dock" => "off | new | all: tile a window when it appears (default off)",
+        "overlay" => "draw split lines in the gaps; on | off (default off)",
+        "desktop_share" => "screen share the desktop leaf keeps; 0 to <1 (default 0)",
+        "terminal" => "program `split-terminal` runs (default $TERMINAL, else xfce4-terminal)",
+        "hotkeys" => "grab the default chords at startup; on | off (default on)",
+        "edge_dock" => "tile a window dropped on a screen edge; on | off (default on)",
+        "bindings" => "per-command chord overrides; change them through the chord rows",
+        _ => "a value this build does not explain",
+    }
+}
+
+/// The rows the settings palette shows: every key with the value in force and
+/// one line of help, then every command with the chords actually bound (the
+/// `keys --check` view, so a chord the desktop owns is visible before it is
+/// edited). The label is the prompt's identity: `run_settings` maps a pick back
+/// to its `Setting` by exact match, so labels must stay unique.
 pub fn settings_rows(config: &Config) -> Vec<(String, Setting)> {
     let mut rows: Vec<(String, Setting)> = Vec::new();
     for key in KNOWN_KEYS {
         if *key == "bindings" {
             continue;
         }
-        rows.push((format!("{key} = {}", value_text(config, key)), Setting::Key(key)));
+        rows.push((
+            format!("{key} = {} — {}", value_text(config, key), help_text(key)),
+            Setting::Key(key),
+        ));
     }
     for (command, chords) in pergola_x11::binding_plan_with(&config.bindings) {
         let shown = if chords.is_empty() {
@@ -362,7 +386,10 @@ pub fn settings_rows(config: &Config) -> Vec<(String, Setting)> {
         } else {
             chords.join(", ")
         };
-        rows.push((format!("chord: {command} = {shown}"), Setting::Chord(command)));
+        rows.push((
+            format!("chord: {command} = {shown} — the chords that run it; a comma makes several"),
+            Setting::Chord(command),
+        ));
     }
     rows
 }
