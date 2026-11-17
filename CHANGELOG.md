@@ -17,6 +17,25 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **`pergola subscribe` — a push stream for status bars.** The control socket
+  stops being request/response only: a client sends `subscribe` and the daemon
+  pushes newline-delimited JSON — a state snapshot on connect (so a bar that
+  starts late is not blind), then `dock`, `undock`, `window-opened`,
+  `window-closed`, `layout` (carrying the new tree) and `focus` records. Events
+  are diffs of *committed* state between event-loop passes, so the several
+  mutations of one command collapse into one transition instead of a burst of
+  phantom focus events, and nothing is emitted from a half-applied tree. Writes
+  are non-blocking and per-client: a 256-record queue, a remembered
+  partial-write offset (a plain `write_all` on a non-blocking socket accepts a
+  prefix and then fails, which would resend the record and hand the client a
+  duplicated line) and a ten-second idle drop, so a bar that stops reading
+  cannot stall the window manager — measured at load 5.6, a subscriber whose
+  stdout went to an undrained fifo left `pergola status` answering in 47 ms.
+  When the daemon exits the client prints a note and exits 0, so a supervisor
+  restarts it. The diff has its own unit tests (new window, dock, undock,
+  close, layout, focus, no-change) and the e2e reads a whole session's stream,
+  asserting every required record names the window.
+
 * **`pergola undo` — one chord back from a wrong dock.** `Ctrl+Alt+Z` (`Super+Z`
   where the desktop owns the primary chord) or the palette row "Undo the last
   layout change" restores the layout from before the last change: a dock, a

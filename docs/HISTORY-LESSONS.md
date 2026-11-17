@@ -224,10 +224,10 @@ current code. They are listed so the gap is visible rather than assumed away.
 
 | Class | Issues | Why it is out of scope today |
 |---|---|---|
-| workspace / tag | 236 | Pergola has views over a single work area, not named tags with their own clients. A "move this window to view 3" chord does not exist. **Filed as `BACKLOG.md` item 13** (a document-format change, so a deliberate `MINOR` bump). |
-| ipc / scripting | 227 | The control socket is line-oriented commands and a JSON tree; there is no subscribe/event stream for a status bar to consume. **Filed as `BACKLOG.md` item 11.** |
+| workspace / tag | 236 | Pergola has views over a single work area, not named tags with their own clients. A "move this window to view 3" chord does not exist. **Filed as `BACKLOG.md` item 2** (a document-format change, so a deliberate `MINOR` bump). |
+| ipc / scripting | 227 | The control socket was request/response only, so every bar re-implemented state from `pergola tree`. **Closed in 0.4.0-dev:** `pergola subscribe` pushes committed transitions as JSON lines, with a bounded per-client queue so a stalled bar cannot stall the WM. |
 | tray / panel | 132 | Pergola does not own the tray or the panel; it reads the work area the desktop's panel leaves. **Deliberately not planned** — a tiler that owns the bar is a desktop environment. |
-| ewmh / icccm | 168 | Partial: `_NET_CLIENT_LIST`, `_NET_WM_STATE_*`, `_NET_FRAME_EXTENTS` and `_NET_WORKAREA` are read, and `_NET_ACTIVE_WINDOW` is *set* when the daemon focuses a window. A pager's `_NET_ACTIVE_WINDOW` *request* is not read, so an external taskbar cannot ask Pergola to focus a window. **Filed as `BACKLOG.md` item 12.** |
+| ewmh / icccm | 168 | Partial: `_NET_CLIENT_LIST`, `_NET_WM_STATE_*`, `_NET_FRAME_EXTENTS` and `_NET_WORKAREA` are read, and `_NET_ACTIVE_WINDOW` is *set* when the daemon focuses a window. A pager's `_NET_ACTIVE_WINDOW` *request* is not read, so an external taskbar cannot ask Pergola to focus a window. **Filed as `BACKLOG.md` item 1.** |
 | compositing | 57 | No compositor interaction; the daemon runs with whatever the desktop provides. **Deliberately not planned** beyond the overlay dim in item 4. |
 | build / packaging | 172 | Distributions are not supported yet; the repo-root `./install.sh` targets a local build into `~/.local/bin`. **Filed as `BACKLOG.md` item 3** (AUR package). |
 | lock / screensaver | 62 | Screen locking is the desktop's job; Pergola only avoids grabbing keys the locker needs. |

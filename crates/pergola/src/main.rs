@@ -8,6 +8,7 @@ mod daemon;
 mod ipc;
 mod palette;
 
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -55,6 +56,7 @@ fn main() -> ExitCode {
         "doctor" => doctor(),
         "palette" => palette::open().map(|()| println!("palette opened — pick an action")),
         "palette-run" => palette::run(),
+        "subscribe" => subscribe(&socket),
         "settings" => settings(&socket, &rest[1..]),
         "settings-run" => palette::run_settings(),
         "sim" => sim(&rest[1..]),
@@ -85,6 +87,35 @@ fn main() -> ExitCode {
 fn run_daemon(socket: &PathBuf) -> Result<()> {
     let mut daemon = daemon::Daemon::new()?;
     daemon.run(socket)
+}
+
+/// Stream the daemon's event records to stdout, one JSON object per line, until
+/// the daemon goes away. This is the status-bar interface: a panel reads this
+/// instead of polling `pergola tree` every second.
+fn subscribe(socket: &PathBuf) -> Result<()> {
+    let reader = ipc::subscribe(socket)?;
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        // The daemon answers a refused subscription with a Response instead of
+        // a record; records never carry an `ok` field, so this is unambiguous.
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+            if value.get("ok") == Some(&serde_json::Value::Bool(false)) {
+                anyhow::bail!(
+                    "{}",
+                    value
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("the daemon refused the subscription")
+                );
+            }
+        }
+        println!("{line}");
+    }
+    eprintln!("pergola: the daemon closed the event stream");
+    Ok(())
 }
 
 fn forward(socket: &PathBuf, argv: &[String]) -> Result<()> {

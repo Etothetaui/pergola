@@ -136,18 +136,22 @@ under xfwm4 (openbox coalesces a drag into one `ConfigureNotify`, so there is no
 mid-drag), and the one-gesture re-dock. `HINT_COLOR`, `hint_line`, `frame_bars` and `pointer_edge`
 are unit-tested.
 
-## 1. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+### Event stream for status bars (0.4.0-dev)
 
-**What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
-records as newline-delimited JSON over the control socket, so a panel can draw the tree without
-polling `pergola tree`.
-**Why:** the harvest's second-largest class is **ipc / scripting** (227 issues) — tilers whose only
-interface is "run a command and parse the output" leave every status bar re-implementing state.
-Pergola's socket is request/response only today.
-**Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
-the stream survives a daemon restart, and an e2e assertion reads two records from one session.
+`pergola subscribe` turns the control socket into a push stream of newline-delimited JSON: a state
+snapshot on connect, then `dock`, `undock`, `window-opened`, `window-closed`, `layout` and `focus`
+records. Events are diffs of committed state between event-loop passes, so one command's several
+mutations collapse into one transition and no event is emitted from a half-applied tree. Writes are
+non-blocking and per-client, with a 256-record queue, a remembered partial-write offset (a plain
+`write_all` would resend a record after `WouldBlock` and corrupt the stream) and a ten-second
+idle drop, so a bar that stops reading cannot stall the window manager — measured at load 5.6: a
+subscriber whose stdout went to an undrained fifo left `pergola status` answering in 47 ms. When
+the daemon exits, the client prints a note and exits 0 so a supervisor restarts it. Unit tests
+cover the transition table (new window, dock, undock, close, layout, focus, no-change); the e2e
+reads the whole stream from one session and asserts every required record names the window.
+The harvest's **ipc / scripting** class was 227 issues.
 
-## 2. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+## 1. Honour `_NET_ACTIVE_WINDOW` requests from pagers
 
 **What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
 currently only *sets* that property when it focuses a window.
@@ -156,7 +160,7 @@ something it does not listen for. A taskbar's "click to focus" silently does not
 **Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
 reports the same seat as focused; a unit test covers the request path.
 
-## 3. Named workspaces (tags) on top of views
+## 2. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -166,7 +170,7 @@ is a deliberate `MINOR` bump with a loader that keeps reading older documents.
 **Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
 and a document written by the new version loads in the old one without losing its views.
 
-## 4. Release pipeline, so `pergola-bin` can exist
+## 3. Release pipeline, so `pergola-bin` can exist
 
 **What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
 a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays

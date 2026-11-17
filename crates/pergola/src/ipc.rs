@@ -34,6 +34,25 @@ impl Response {
     }
 }
 
+/// Open a streaming subscription. The daemon takes the socket over and pushes
+/// newline-delimited JSON records; the reader ends when the daemon exits.
+pub fn subscribe(socket: &Path) -> Result<BufReader<UnixStream>> {
+    let mut stream = UnixStream::connect(socket).with_context(|| {
+        format!(
+            "cannot reach the pergola daemon at {} (start it with `pergola daemon`)",
+            socket.display()
+        )
+    })?;
+    let request = Request {
+        argv: vec!["subscribe".into()],
+    };
+    let mut line = serde_json::to_string(&request)?;
+    line.push('\n');
+    stream.write_all(line.as_bytes())?;
+    stream.flush()?;
+    Ok(BufReader::new(stream))
+}
+
 /// Send one request and read one response.
 pub fn call(socket: &Path, argv: &[String]) -> Result<Response> {
     let mut stream = UnixStream::connect(socket).with_context(|| {

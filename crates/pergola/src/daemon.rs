@@ -50,6 +50,41 @@ enum Hint {
     Drop,
 }
 
+/// A status-bar client of `pergola subscribe`. The socket is non-blocking so a
+/// bar that stops reading can never stall the event loop (bspwm's synchronous
+/// `fflush` is the failure this avoids): events queue up to `SUB_QUEUE_MAX`
+/// lines, and a client that has not drained anything for `SUB_TIMEOUT` is
+/// dropped, so a dead bar cannot pin memory either.
+struct Subscriber {
+    stream: UnixStream,
+    queue: std::collections::VecDeque<String>,
+    /// Bytes of the front record already written. A non-blocking `write` can
+    /// accept a prefix and then return `WouldBlock`; without this the retry
+    /// would send the record from the start and the client would see a
+    /// duplicated, unparseable line.
+    partial: usize,
+    /// When the queue was last fully drained; the timeout is measured from it.
+    drained: Instant,
+}
+
+/// Where a managed window currently lives, for the event stream's diff.
+#[derive(Clone, PartialEq)]
+enum Placement {
+    Docked(String),
+    Floating(String),
+}
+
+/// A committed state, cheap to compare. Only built when a subscriber exists.
+#[derive(Clone, PartialEq)]
+struct EventSig {
+    /// The tree as JSON, so a `layout` record can carry it without a second
+    /// serialisation.
+    root: String,
+    /// Window -> (placement, title). A window that leaves this map closed.
+    placements: std::collections::BTreeMap<u32, (Placement, String)>,
+    active: u32,
+}
+
 /// One undoable layout state: the document (tree, floating rects, tabs), the
 /// engine (so a gap change is undone too) and where the camera was looking.
 #[derive(Clone, PartialEq)]
@@ -122,6 +157,9 @@ pub struct Daemon {
     /// The edge the drop frame is showing, so a stream of ConfigureNotify
     /// events does not rebuild the same four windows on every pixel.
     drop_edge: Option<Direction>,
+    /// `pergola subscribe` clients: panel/status-bar processes that want the
+    /// layout pushed instead of polling `pergola tree` (i3 IPC, bspwm report).
+    subscribers: Vec<Subscriber>,
 }
 
 impl Daemon {
@@ -175,6 +213,7 @@ impl Daemon {
             undo: History::new(UNDO_DEPTH),
             hint: Hint::None,
             drop_edge: None,
+            subscribers: Vec::new(),
         };
         daemon.reconcile()?;
         daemon.started = true;
@@ -1394,6 +1433,136 @@ impl Daemon {
         Ok(format!("split with {} (0x{win:x})", self.config.terminal))
     }
 
+    // MARK: event stream (`pergola subscribe`)
+
+    /// Register a status-bar client. The first record is the committed state,
+    /// so a bar that connects after startup does not have to poll for what it
+    /// missed (bspwm's startup-state gap).
+    fn subscribe_stream(&mut self, stream: &UnixStream) -> Result<()> {
+        if self.subscribers.len() >= SUB_MAX_CLIENTS {
+            anyhow::bail!("too many subscribers (limit {SUB_MAX_CLIENTS})");
+        }
+        // Keep a duplicate handle so the caller still owns one and can answer a
+        // refusal on the same socket; the duplicate shares the socket, so the
+        // client cannot tell which descriptor writes.
+        let stream = stream.try_clone()?;
+        stream.set_nonblocking(true)?;
+        self.subscribers.push(Subscriber {
+            stream,
+            queue: std::collections::VecDeque::new(),
+            partial: 0,
+            drained: Instant::now(),
+        });
+        let state = self.state_record();
+        let last = self.subscribers.len() - 1;
+        self.push_record(last, state);
+        self.flush_subscribers();
+        Ok(())
+    }
+
+    fn state_record(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "state",
+            "tree": serde_json::to_value(&self.file.doc.root).unwrap_or(serde_json::Value::Null),
+            "gap": self.engine.gap,
+            "overlay": self.overlay_on,
+            "active": self.x.active_window().unwrap_or(0),
+        })
+    }
+
+    fn push_record(&mut self, idx: usize, record: serde_json::Value) {
+        let Ok(mut line) = serde_json::to_string(&record) else {
+            return;
+        };
+        line.push('\n');
+        let Some(client) = self.subscribers.get_mut(idx) else {
+            return;
+        };
+        // A full queue means the client is not reading. The flush below drops
+        // it once the timeout expires; dropping the record instead of growing
+        // without bound keeps a stuck bar from taking the daemon down.
+        if client.queue.len() < SUB_QUEUE_MAX {
+            client.queue.push_back(line);
+        }
+    }
+
+    fn publish(&mut self, record: serde_json::Value) {
+        for idx in 0..self.subscribers.len() {
+            self.push_record(idx, record.clone());
+        }
+    }
+
+    /// Write what the subscribers can take without blocking. A `WouldBlock` is
+    /// not an error: the rest stays queued and the next loop pass retries.
+    fn flush_subscribers(&mut self) {
+        if self.subscribers.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        self.subscribers.retain_mut(|client| {
+            while let Some(line) = client.queue.pop_front() {
+                // Slice bytes, not chars: a partial write can end mid-UTF-8, and
+                // the next attempt must resume there, not at a char boundary.
+                let rest = &line.as_bytes()[client.partial..];
+                match client.stream.write(rest) {
+                    Ok(0) => return false,
+                    Ok(written) => {
+                        client.drained = now;
+                        client.partial += written;
+                        if client.partial < line.len() {
+                            client.queue.push_front(line);
+                            break;
+                        }
+                        client.partial = 0;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        client.queue.push_front(line);
+                        break;
+                    }
+                    // A closed peer, or any other write error: forget it.
+                    Err(_) => return false,
+                }
+            }
+            now.duration_since(client.drained) < SUB_TIMEOUT
+        });
+    }
+
+    /// The committed state, or `None` when nobody is listening — the diff is
+    /// only worth computing for a client that will read it.
+    fn event_sig(&self) -> Option<EventSig> {
+        if self.subscribers.is_empty() {
+            return None;
+        }
+        let mut placements = std::collections::BTreeMap::new();
+        for seat in &self.seats {
+            let placement = if self.file.doc.root.node(&seat.panel).is_some() {
+                Placement::Docked(seat.panel.clone())
+            } else if self.file.doc.floating.iter().any(|f| f.panel.id == seat.panel) {
+                Placement::Floating(seat.panel.clone())
+            } else {
+                // Not in the tree and not floating: a hidden or unmanaged
+                // window. It is not part of the streamed state.
+                continue;
+            };
+            placements.insert(seat.window, (placement, seat.title.clone()));
+        }
+        Some(EventSig {
+            root: serde_json::to_string(&self.file.doc.root).ok()?,
+            placements,
+            active: self.x.active_window().unwrap_or(0),
+        })
+    }
+
+    fn emit_diff(&mut self, before: EventSig) {
+        let Some(after) = self.event_sig() else {
+            return;
+        };
+        for record in diff_events(&before, &after) {
+            self.publish(record);
+        }
+        self.flush_subscribers();
+    }
+
     // MARK: event loop
 
     pub fn run(&mut self, socket: &std::path::Path) -> Result<()> {
@@ -1448,6 +1617,11 @@ impl Daemon {
 
         let mut last_reconcile = Instant::now();
         while self.running {
+            // One committed snapshot per loop pass: every mutation inside the
+            // pass (reconcile, a request, a drag settling) is diffed against
+            // the state the previous pass left, so a bar sees transitions, not
+            // intermediate half-applied trees (i3#3893's phantom focus).
+            let before = self.event_sig();
             if last_reconcile.elapsed() >= Duration::from_secs(2) {
                 last_reconcile = Instant::now();
                 match self.reconcile() {
@@ -1464,6 +1638,18 @@ impl Daemon {
                 }
             }
             while let Ok((request, mut stream)) = rx.try_recv() {
+                // `subscribe` turns the request/response socket into a stream:
+                // the daemon keeps this client and pushes records to it.
+                if request.argv.first().map(String::as_str) == Some("subscribe") {
+                    if let Err(e) = self.subscribe_stream(&stream) {
+                        // A refused client must hear why: it is waiting on a
+                        // read that would otherwise never return.
+                        eprintln!("pergola: subscribe: {e:#}");
+                        let response = Response::err(format!("subscribe: {e:#}"));
+                        let _ = writeln!(stream, "{}", serde_json::to_string(&response)?);
+                    }
+                    continue;
+                }
                 let response = match self.handle(&request.argv) {
                     Ok(message) => Response::ok(message),
                     Err(e) => Response::err(format!("{e:#}")),
@@ -1497,6 +1683,9 @@ impl Daemon {
                     eprintln!("pergola: X connection lost: {e}");
                     break;
                 }
+            }
+            if let Some(before) = before {
+                self.emit_diff(before);
             }
         }
 
@@ -2162,6 +2351,57 @@ impl Daemon {
     }
 }
 
+/// The records an event-stream client is sent when the committed state
+/// changes. Pure, so the transition table is unit-tested without X: a `dock`
+/// is a window that moved into the tree, `undock` is one that left it for the
+/// desktop, `window-opened`/`window-closed` are appearance and disappearance,
+/// `layout` is any other change to the tree, and `focus` is a change of the
+/// active window.
+fn diff_events(before: &EventSig, after: &EventSig) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let mut out = Vec::new();
+    for (window, (placement, title)) in &after.placements {
+        match before.placements.get(window) {
+            None => {
+                let (kind, panel) = match placement {
+                    Placement::Docked(p) => ("dock", p),
+                    Placement::Floating(p) => ("window-opened", p),
+                };
+                out.push(json!({"type": kind, "window": window, "title": title, "panel": panel}));
+            }
+            Some((old, _)) if old != placement => {
+                let (kind, panel) = match placement {
+                    Placement::Docked(p) => ("dock", p),
+                    Placement::Floating(p) => ("undock", p),
+                };
+                out.push(json!({"type": kind, "window": window, "title": title, "panel": panel}));
+            }
+            Some(_) => {}
+        }
+    }
+    for (window, (_, title)) in &before.placements {
+        if !after.placements.contains_key(window) {
+            out.push(json!({"type": "window-closed", "window": window, "title": title}));
+        }
+    }
+    if before.root != after.root {
+        out.push(json!({
+            "type": "layout",
+            "tree": serde_json::from_str::<serde_json::Value>(&after.root)
+                .unwrap_or(serde_json::Value::Null),
+        }));
+    }
+    if before.active != after.active {
+        let title = after
+            .placements
+            .get(&after.active)
+            .map(|(_, t)| t.clone())
+            .unwrap_or_default();
+        out.push(json!({"type": "focus", "window": after.active, "title": title}));
+    }
+    out
+}
+
 /// Colour of a pointer hint: the accent the overlay uses for the framed
 /// split, so a hint reads as "pergola" and not as a client window.
 const HINT_COLOR: u32 = 0x00e8b04b;
@@ -2170,6 +2410,13 @@ const HINT_COLOR: u32 = 0x00e8b04b;
 /// a drop target. Larger than the docking slack: the frame appears while the
 /// user is still aiming, the dock itself happens on release.
 const DROP_EDGE_PX: f64 = 70.0;
+
+/// Event-stream limits. A bar that stops reading is dropped after this long
+/// without draining anything, and never holds more than this many records in
+/// its queue — i3's bounded per-client queue and 10 s `kill_timeout`.
+const SUB_TIMEOUT: Duration = Duration::from_secs(10);
+const SUB_QUEUE_MAX: usize = 256;
+const SUB_MAX_CLIENTS: usize = 16;
 
 /// A gap band as a 3 px line down its narrow axis. The band itself is a strip
 /// the width of the gap, too faint to see as a highlight.
@@ -2547,6 +2794,90 @@ fn build_keymap(x: &X11) -> Result<Vec<(u8, u32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a committed-state signature for the diff tests.
+    fn sig(root: &str, placements: &[(u32, Placement, &str)], active: u32) -> EventSig {
+        EventSig {
+            root: root.to_string(),
+            placements: placements
+                .iter()
+                .map(|(window, placement, title)| (*window, (placement.clone(), title.to_string())))
+                .collect(),
+            active,
+        }
+    }
+
+    fn kinds(records: &[serde_json::Value]) -> Vec<String> {
+        records
+            .iter()
+            .map(|r| r["type"].as_str().unwrap_or("").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_new_window_is_reported_as_docked_or_opened() {
+        let before = sig("tree", &[(1, Placement::Docked("p-a".into()), "one")], 1);
+        let after = sig(
+            "tree",
+            &[
+                (1, Placement::Docked("p-a".into()), "one"),
+                (2, Placement::Docked("p-a".into()), "two"),
+                (3, Placement::Floating("p-c".into()), "three"),
+            ],
+            1,
+        );
+        let records = diff_events(&before, &after);
+        assert_eq!(kinds(&records), vec!["dock", "window-opened"]);
+        assert_eq!(records[0]["window"], 2);
+        assert_eq!(records[0]["panel"], "p-a");
+        assert_eq!(records[1]["window"], 3);
+        assert_eq!(records[1]["title"], "three");
+    }
+
+    #[test]
+    fn a_docked_window_that_starts_floating_is_reported_as_undocked() {
+        let before = sig("tree", &[(7, Placement::Docked("p-a".into()), "seven")], 7);
+        let after = sig("tree", &[(7, Placement::Floating("p-a".into()), "seven")], 7);
+        let records = diff_events(&before, &after);
+        assert_eq!(kinds(&records), vec!["undock"]);
+        assert_eq!(records[0]["window"], 7);
+    }
+
+    #[test]
+    fn a_window_that_disappears_is_reported_as_closed() {
+        let before = sig(
+            "tree",
+            &[
+                (1, Placement::Docked("p-a".into()), "one"),
+                (2, Placement::Docked("p-a".into()), "two"),
+            ],
+            1,
+        );
+        let after = sig("tree", &[(1, Placement::Docked("p-a".into()), "one")], 1);
+        let records = diff_events(&before, &after);
+        assert_eq!(kinds(&records), vec!["window-closed"]);
+        assert_eq!(records[0]["window"], 2);
+        assert_eq!(records[0]["title"], "two");
+    }
+
+    #[test]
+    fn a_tree_change_is_one_layout_record_and_a_focus_change_one_focus_record() {
+        let before = sig(r#"{"id":"a"}"#, &[(1, Placement::Docked("p-a".into()), "one")], 1);
+        let after = sig(r#"{"id":"b"}"#, &[(1, Placement::Docked("p-a".into()), "one")], 2);
+        let records = diff_events(&before, &after);
+        // Focus 2 is not in the placement map, so its title is empty rather
+        // than a stale one.
+        assert_eq!(kinds(&records), vec!["layout", "focus"]);
+        assert_eq!(records[0]["tree"]["id"], "b");
+        assert_eq!(records[1]["window"], 2);
+        assert_eq!(records[1]["title"], "");
+    }
+
+    #[test]
+    fn an_unchanged_state_produces_no_records() {
+        let state = sig("tree", &[(1, Placement::Docked("p-a".into()), "one")], 1);
+        assert!(diff_events(&state, &state).is_empty());
+    }
 
     #[test]
     fn a_hint_line_is_three_pixels_across_the_narrow_axis() {

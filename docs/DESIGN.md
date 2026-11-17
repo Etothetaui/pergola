@@ -148,22 +148,54 @@ uses. The action list is static and labelled for people, not for the grammar.
 | Malformed `layout.json` | start from a bare desktop, keep the file untouched |
 | Window closes while docked | panel removed, split collapsed, layout re-applied |
 | Two daemons | the second refuses: the socket accepts a connection, so it is a live daemon |
+| A bar that stops reading | its queue is bounded and it is dropped after 10 s, so the event loop keeps running |
+| Daemon restarts under a subscriber | the socket closes, the client exits 0 with a note, a supervisor restarts it |
+
+## The event stream (`pergola subscribe`)
+
+The socket is request/response for commands, and it becomes a push stream for a
+status bar: a client sends `{"argv":["subscribe"]}` and the daemon keeps the
+connection. The first record is a state snapshot — a bar that starts after the
+session did would otherwise draw an empty tree until the next change (bspwm's
+startup gap).
+
+Events are *diffs of committed state*, not notifications fired from inside
+mutators. The loop takes a signature (`EventSig`: the tree as JSON, each window's
+placement and title, the active window) at the top of a pass and diffs it at the
+bottom, so the several mutations of one command (detach, insert, apply) collapse
+into one transition instead of a burst of phantom focus events (i3#3893's
+failure) and no event is emitted from a half-applied tree. The signature is only
+built when a subscriber exists, so the cost is zero for everyone else.
+
+A slow bar must never stall the WM. That is why the writes are non-blocking and
+per-client: records queue up to 256 per client, a `WouldBlock` keeps the queue
+for the next pass, and `partial` remembers how many bytes of the front record
+already went out — a plain `write_all` on a non-blocking socket can accept a
+prefix and then fail, which would resend the record from the start and hand the
+client a duplicated line. A client that has not drained anything for ten seconds
+is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
 
 ## Testing
 
-* `cargo test` — 100 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 105 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
   document round-trips, config parsing and repair of malformed weights,
-  pointer-edge picking and hint geometry.
+  pointer-edge picking, hint geometry, and the event stream's transition table
+  (new window, dock, undock, close, layout, focus, no-change).
 * `scripts/e2e.sh` — starts Xvfb + a real WM (xfwm4 by default, openbox with
   `--wm openbox`) + three xterms, runs the real daemon, and asserts the geometry
   the X server reports against `pergola rects` after dock, zoom, arrange, gap
   changes, ratio, float, a daemon restart, keyboard docking, a gap drag, an edge
   drop, tab groups, config/binding errors, the overlay's dim layer, hover
-  hints, the drop frame and one-gesture re-dock — 124 assertions, a check or
-  two fewer when the WM parks a tile off-screen. Openbox coalesces a drag into
-  one `ConfigureNotify`, so the mid-drag drop frame is asserted on xfwm4 only;
-  the frame's existence is a WM capability, not a tolerance.
+  hints, the drop frame, one-gesture re-dock and the event stream — 138
+  assertions, two fewer on openbox (the drop frame) and a check or two fewer
+  when the WM parks a tile off-screen. Openbox coalesces a drag into one
+  `ConfigureNotify`, so the mid-drag drop frame is asserted on xfwm4 only; the
+  frame's existence is a WM capability, not a tolerance. The event-stream block
+  proves the state-first record, dock/undock/close records naming the window,
+  valid JSON on every line, that a subscriber whose output goes to an undrained
+  fifo does not delay `pergola status` (measured 47 ms at load 5.6), and that a
+  client exits cleanly when the daemon stops.
   It never touches the live session.
 
   The suite uses fixed sleeps, so it assumes the machine is not CPU-saturated.

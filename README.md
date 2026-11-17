@@ -102,11 +102,41 @@ pergola rects            # every panel's current frame rectangle
 | `undo` | put the layout back before the last dock, float, arrange, gap change or ratio |
 | `config [--check]` | the resolved config with each key's source, or what is wrong with the file |
 | `settings` / `settings --list` / `settings <key> <value>` | change a setting from a menu, list the rows, or set one key |
+| `subscribe` | stream layout, focus, dock, undock and window-closed records as JSON lines (for a status bar) |
 | `status` `tree` `list` `rects` `keys` `doctor` `sim` | inspection |
 | `reload` `save` `stop` | daemon control |
 
 Every command also has a URL form: `pergola://zoom-in`,
 `pergola://neighbour?dir=left`, `pergola://view?n=3`.
+
+### Status bars: `pergola subscribe`
+
+A panel should not have to poll `pergola tree` and re-implement the diff. The
+daemon pushes newline-delimited JSON instead, one object per line:
+
+```bash
+pergola subscribe
+{"type":"state","tree":{…},"gap":6.0,"overlay":false,"active":10485772}
+{"type":"dock","window":2097164,"title":"xterm","panel":"p-20000c"}
+{"type":"layout","tree":{…}}
+{"type":"focus","window":10485772,"title":""}
+{"type":"undock","window":2097164,"title":"xterm","panel":"p-20000c"}
+{"type":"window-closed","window":2097164,"title":"xterm"}
+```
+
+The first line is a state snapshot, so a client that starts after the session
+did is not blind. After that the daemon diffs committed state between event-loop
+passes: `dock` and `undock` are a window entering or leaving the tree,
+`window-opened`/`window-closed` are appearance and disappearance, `layout` is
+any other change to the tree (with the new tree), and `focus` is a change of the
+active window — so a move that emits several intermediate mutations still
+produces one record per transition, not a burst of phantom focus events.
+
+The stream is non-blocking and per-client bounded: a bar that stops reading
+never stalls the window manager, and it is dropped after ten seconds without
+draining anything rather than pinning memory. When the daemon exits, the socket
+closes: the client prints a line to stderr and exits 0, so a supervisor can
+restart it.
 
 ## Hotkeys
 
@@ -311,13 +341,18 @@ before Pergola and maps every failure class to the fix that answers it.
   an empty SHAPE input region, so they never swallow a click. Without the SHAPE
   extension the hints are not drawn at all — the bands still work, the cue is
   simply missing.
+* `pergola subscribe` is a stream, not a poll: the daemon pushes one record per
+  committed transition (plus a state snapshot on connect). A subscriber that
+  stops reading is dropped after ten seconds; when the daemon exits the client
+  exits 0 so a supervisor can restart it. There is no per-event subscription
+  filter yet — a client that wants only `focus` reads and discards the rest.
 * Only one instance per display (one Unix socket).
 
 ## Development
 
 ```bash
-cargo test               # 100 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 124 assertions against Xvfb + a real WM + real xterms
+cargo test               # 105 unit tests: geometry, tree, camera, commands, document, event diff
+scripts/e2e.sh           # 138 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

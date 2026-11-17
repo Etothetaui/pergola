@@ -922,6 +922,17 @@ fi
 # A floating window can be folded into a panel as a tab too: `tab` accepts a
 # seat off the desktop layer and docks it into the target. W3 is a separate
 # panel after the group above collapsed, so float it and tab it into W2's.
+# Under load the 2 s reconcile may not have adopted W3 yet (measured
+# 2026-11-16: one flaked run out of three failed this precondition), so wait
+# for it and dock it explicitly instead of assuming the timer fired.
+for _ in $(seq 1 20); do
+  P list | grep -c "^docked.*$W3" >/dev/null && break
+  sleep 0.1
+done
+if ! P list | grep -c "^docked.*$W3" >/dev/null; then
+  P dock left --window "$W3" >/dev/null 2>&1
+  sleep 0.5
+fi
 if P list | grep -c "^docked.*$W3" >/dev/null; then
   P float --window "$W3" >/dev/null 2>&1 || fail "float W3"
   sleep 0.5
@@ -943,7 +954,110 @@ else
 fi
 
 say
-say "11. screenshot"
+say "11. event stream (pergola subscribe)"
+# A status bar should not have to poll `pergola tree` and re-implement the diff:
+# the daemon pushes committed transitions, starting with a state snapshot so a
+# client that joins late is not blind (bspwm's startup gap).
+printf '%s' '{"gap":6.0,"hotkeys":true}' > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1
+sleep 0.3
+SUBLOG="$TMP/sub.jsonl"
+"$BIN" --socket "$SOCK" subscribe >"$SUBLOG" 2>"$TMP/sub.err" & SUB_PID=$!
+PIDS+=("$SUB_PID")
+for _ in $(seq 1 30); do [ -s "$SUBLOG" ] && break; sleep 0.1; done
+if head -1 "$SUBLOG" 2>/dev/null | grep -c '"type":"state"' >/dev/null; then
+  ok "a subscriber is sent the state first"
+else
+  bad "the first record was not a state snapshot: $(head -1 "$SUBLOG" 2>/dev/null)"
+fi
+
+# The three transitions the backlog names, on a real window: dock, undock, close.
+P dock left --window "$W2" >/dev/null 2>&1; sleep 0.6
+P float --window "$W2" >/dev/null 2>&1; sleep 0.6
+xdotool windowkill "$W2" >/dev/null 2>&1; sleep 2.6
+kill "$SUB_PID" 2>/dev/null
+wait "$SUB_PID" 2>/dev/null || true
+
+# Count the records, and the ones that name this window. Prints eight numbers.
+SUB_COUNTS=$(python3 - "$SUBLOG" "$W2" <<'EOS'
+import json, sys
+path, want = sys.argv[1], int(sys.argv[2], 16)
+types, bad = {}, 0
+for line in open(path):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        record = json.loads(line)
+    except Exception:
+        bad += 1
+        continue
+    kind = record.get("type", "")
+    types[kind] = types.get(kind, 0) + 1
+    if record.get("window") == want:
+        key = "w2:" + kind
+        types[key] = types.get(key, 0) + 1
+print(types.get("state", 0), types.get("dock", 0), types.get("undock", 0),
+      types.get("window-closed", 0), types.get("w2:dock", 0),
+      types.get("w2:undock", 0), types.get("w2:window-closed", 0), bad)
+EOS
+)
+read -r N_STATE N_DOCK N_UNDOCK N_CLOSED W2_DOCK W2_UNDOCK W2_CLOSED N_BAD <<<"$SUB_COUNTS"
+check_eq "1" "$N_STATE" "one state record on connect"
+check_eq "0" "$N_BAD" "every record is valid JSON"
+if [ "${N_DOCK:-0}" -ge 1 ]; then ok "a dock produced a record"; else bad "no dock record: $(cat "$SUBLOG" | head -3 | tr '\n' ' ')"; fi
+if [ "${N_UNDOCK:-0}" -ge 1 ]; then ok "an undock produced a record"; else bad "no undock record"; fi
+if [ "${N_CLOSED:-0}" -ge 1 ]; then ok "a window close produced a record"; else bad "no window-closed record"; fi
+if [ "${W2_DOCK:-0}" -ge 1 ]; then ok "the dock record names the window"; else bad "the dock record does not name $W2"; fi
+if [ "${W2_UNDOCK:-0}" -ge 1 ]; then ok "the undock record names the window"; else bad "the undock record does not name $W2"; fi
+if [ "${W2_CLOSED:-0}" -ge 1 ]; then ok "the close record names the window"; else bad "the close record does not name $W2"; fi
+
+# A bar that stops reading must never stall the window manager. The socket is
+# non-blocking and the queue is bounded, so the daemon keeps answering commands
+# while a stalled subscriber has thousands of bytes waiting for it.
+mkfifo "$TMP/sub.fifo"
+exec 9<>"$TMP/sub.fifo"
+"$BIN" --socket "$SOCK" subscribe >"$TMP/sub.fifo" 2>"$TMP/sub3.err" & SUB3=$!
+PIDS+=("$SUB3")
+sleep 0.5
+for i in $(seq 1 60); do P gap $((6 + i % 3)) >/dev/null 2>&1; done
+START=$(date +%s%N)
+P status >/dev/null 2>&1
+END=$(date +%s%N)
+STALLED_MS=$(( (END - START) / 1000000 ))
+exec 9<&-
+if [ "$STALLED_MS" -lt 2000 ]; then
+  ok "a stalled subscriber does not stall the daemon (${STALLED_MS}ms)"
+else
+  bad "the daemon took ${STALLED_MS}ms while a subscriber was stalled"
+fi
+kill "$SUB3" 2>/dev/null
+wait "$SUB3" 2>/dev/null || true
+P gap 6 >/dev/null 2>&1
+
+# The daemon going away ends the stream cleanly, so a supervisor can restart the
+# bar; a client hung on a dead socket would be a leak.
+"$BIN" --socket "$SOCK" subscribe >"$TMP/sub-end.jsonl" 2>"$TMP/sub-end.err" & SUB_END=$!
+sleep 0.5
+P stop >/dev/null 2>&1
+for _ in $(seq 1 40); do kill -0 "$SUB_END" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$SUB_END" 2>/dev/null; then
+  bad "the subscriber hung after the daemon stopped"
+  kill "$SUB_END" 2>/dev/null
+else
+  ok "the subscriber exits when the daemon stops"
+fi
+SUB_RC=0
+wait "$SUB_END" 2>/dev/null || SUB_RC=$?
+check_eq "0" "$SUB_RC" "the subscriber exits cleanly"
+if grep -c 'closed the event stream' "$TMP/sub-end.err" >/dev/null; then
+  ok "the subscriber says why it stopped"
+else
+  bad "the subscriber did not say why: $(cat "$TMP/sub-end.err")"
+fi
+
+say
+say "12. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

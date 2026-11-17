@@ -288,8 +288,16 @@ pergola doctor        # display, EWMH client list, running WM, version
 pergola status        # the running daemon's view: screen, panels, depth, gap, overlay
 pergola dock left      # dock the focused window — the real end-to-end test
 pergola rects         # frame rectangles, as the daemon believes them
+pergola subscribe     # live JSON records of layout/focus/dock/undock/close (Ctrl+C to stop)
 pergola-health        # soak check; exits non-zero on any failure
 ```
+
+`pergola subscribe` is what a status bar or panel reads instead of polling
+`pergola tree` every second: one JSON object per line, starting with a state
+snapshot. Feed it to `while read -r line; do …; done`, or point a bar at it.
+The stream is non-blocking on the daemon's side, so a reader that stops reading
+cannot slow the window manager, and the client exits 0 when the daemon stops so
+a supervisor can restart it.
 
 `pergola-health` checks daemon liveness, CPU use, layout invariants, geometry
 drift against what the X server reports, docked windows that no longer exist,
