@@ -269,9 +269,11 @@ Everything that tiles a window is reachable without a shell:
 | stack it above/below | `Ctrl+Alt+Shift+↑` / `↓` |
 | float it again | `Ctrl+Alt+Shift+W` |
 | choose from a menu | `Ctrl+Alt+M` (needs rofi/zenity/yad/dmenu) |
+| find a split to resize | hover near the gap: the band lights up as a thin line |
 | resize a split | drag the gap between the two tiles, or `pergola ratio 0.3` |
-| tile by mouse | drag a window to a screen edge and let go |
+| tile by mouse | drag a window to a screen edge and let go — a frame shows the target while you drag |
 | untile by mouse | drag the tile away from the edge |
+| move a tile to another edge | drag the docked tile out and settle it near the edge you want — one gesture, no float step |
 | switch tabs in a group | `Ctrl+Alt+Page_Down` / `Page_Up` |
 | undo the last layout change | `Ctrl+Alt+Z`, or `pergola undo` |
 
@@ -340,7 +342,8 @@ stopping returns every window to the desktop layer.
 | Hotkeys do nothing | `pergola keys --check`; the desktop may own the chord; Pergola falls back to `Super` per command and says which ones had no free chord at startup |
 | `Ctrl+Alt+M` does nothing | no menu program: `sudo pacman -S rofi`, or set `PERGOLA_MENU=/path/to/menu` |
 | Dragging a gap does nothing | there must be a gap: set `gap` above 0; the strip is only as wide as the gap. With `gap: 0`, use `pergola ratio 0.3` instead |
-| A dropped window landed somewhere nested | edge drops dock against the last focused space by design — drop again on the edge you want, or use `Ctrl+Alt+Shift+arrows` after focusing the target tile |
+| A dropped window landed somewhere nested | edge drops dock against the last focused space by design — the frame shown during the drag is exactly where it will land; drop again on the edge you want, or use `Ctrl+Alt+Shift+arrows` after focusing the target tile |
+| Hovering a gap draws nothing | the hints need the SHAPE extension; without it the bands still work but the cue is missing (`pergola doctor` reports the extension) |
 | A window peeks at the screen edge when zoomed out | the WM clamps off-screen windows (xfwm4 does); documented limitation |
 | Terminal tiles do not fill the tile exactly | the client's resize hints (a character grid) win; the layout is still the tile |
 | Second daemon will not start | expected: one instance per display, guarded by the Unix socket |

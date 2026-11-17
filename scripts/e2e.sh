@@ -189,6 +189,18 @@ check_geometry() {
 
 json_field() { P tree | python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
+# Park the pointer inside the first tile. A gap band under the pointer shows a
+# hover hint, and a hint is a window of its own, so any check that counts root
+# children must first take the pointer off every gap — otherwise the count
+# depends on where the last mouse gesture happened to leave it.
+park_pointer() {
+  local _ x y w h
+  read -r _ x y w h <<<"$(P rects | awk 'NR==1 {print $1, $2, $3, $4, $5}')"
+  [ -n "${w:-}" ] || return 0
+  xdotool mousemove $((x + w / 2)) $((y + h / 2))
+  sleep 0.2
+}
+
 # ------------------------------------------------------------------ tests ----
 say
 say "1. dock three windows"
@@ -332,6 +344,7 @@ else
   bad "overlay claimed a dim layer without a compositor: $OUT"
 fi
 P overlay off >/dev/null
+park_pointer
 CHILDREN_BASE=$(python3 "$XH" children)
 DIMS_BASE=$(python3 "$XH" dims)
 python3 "$XH" own-cm >/dev/null 2>&1 & COMPOSITOR=$!
@@ -358,6 +371,7 @@ else
   bad "overlay on drew no dim layer with a compositor owner: $OUT"
 fi
 for _ in $(seq 1 100); do P overlay on >/dev/null; P overlay off >/dev/null; done
+park_pointer
 check_eq "$DIMS_BASE" "$(python3 "$XH" dims)" "100 overlay toggles leave no dim window"
 check_eq "$CHILDREN_BASE" "$(python3 "$XH" children)" "100 overlay toggles leak no windows"
 kill "$COMPOSITOR" 2>/dev/null
@@ -393,6 +407,76 @@ for x in $((GX+30)) $((GX+70)) $((GX+120)); do xdotool mousemove "$x" 400; sleep
 xdotool mouseup 1; sleep 0.5
 NEW_W1=$(P rects | awk 'NR==1 {print $4}')
 if [ "$NEW_W1" -gt $((GW1+80)) ]; then ok "dragging the gap resizes the split ($GW1 -> $NEW_W1)"; else bad "gap drag did not resize ($GW1 -> $NEW_W1)"; fi
+
+# A gap lights up under the pointer even with the overlay off: the strip is only
+# as wide as the gap and nothing else says it can be dragged (UX-NOTES row 1).
+# The hint is its own layer, never the overlay, and it takes its window away
+# when the pointer leaves.
+read -r HX _ _ <<<"$(P rects | awk 'NR==1 {x=$2; w=$4} NR==2 {print x+w+($2-(x+w))/2, w, $4; exit}')"
+xdotool mousemove $((HX + 250)) 400; sleep 0.3
+# Capture the status first: `P status | grep -c` under `set -o pipefail` fails
+# when the pipeline does, and a failing pipeline in the `if` condition takes the
+# negative branch — which would report a false pass.
+STATUS=$(P status) || bad "status failed while checking for a hint"
+if grep -c 'hint' <<<"$STATUS" >/dev/null; then bad "a hint appeared with the pointer on a tile"; else ok "no hint with the pointer on a tile"; fi
+xdotool mousemove "$HX" 400; sleep 0.3
+STATUS=$(P status)
+if grep -c 'hint hover' <<<"$STATUS" >/dev/null; then ok "a hovered gap reports a hint"; else bad "a hovered gap reported no hint: $STATUS"; fi
+# The hint is one window of its own, tagged on the server, so a test can see
+# it without trusting the daemon's own bookkeeping.
+check_eq "1" "$(python3 "$XH" hints)" "the hover hint is one tagged window"
+xdotool mousemove $((HX + 250)) 400; sleep 0.3
+STATUS=$(P status)
+if grep -c 'hint' <<<"$STATUS" >/dev/null; then bad "the hint stayed after the pointer left the gap"; else ok "leaving the gap removes the hint"; fi
+check_eq "0" "$(python3 "$XH" hints)" "the hover hint leaves no window behind"
+
+# While a window is dragged, a frame shows the rectangle it will land in. The
+# grab is the window's middle: grabbing 12 px from its right edge gives ~9 px of
+# travel to the screen edge, which the daemon's 40 px drag threshold never sees
+# (measured 2026-11-15: openbox dropped the gesture, so the window never moved).
+P float --window "$W3" >/dev/null 2>&1; sleep 0.4
+eval "$(xdotool getwindowgeometry --shell "$W3")"
+GRABX=$((X + WIDTH / 2))
+xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.3
+xdotool mousemove "$GRABX" $((Y + 12)) sleep 0.15 keydown alt sleep 0.1 mousedown 1 sleep 0.15
+for x in 1200 1400 1520 1592; do xdotool mousemove "$x" $((Y + 12)); sleep 0.12; done
+# The frame is four override-redirect windows tagged on the server, so the
+# assertion reads the screen rather than the daemon's own status text.
+#
+# Only xfwm4 streams ConfigureNotify during a drag. Openbox reports the gesture
+# as one event at the end, so the daemon has nothing to draw a frame *from* —
+# the daemon cannot know a window is being dragged until the WM says it moved.
+# That is a WM capability, not a tolerance: the frame is asserted where the
+# events exist, and the drop itself is asserted on both.
+if [ "$WM" = "xfwm4" ]; then
+  saw_hint=0
+  for _ in $(seq 1 15); do
+    if [ "$(python3 "$XH" hints)" = 4 ]; then saw_hint=1; break; fi
+    sleep 0.1
+  done
+  STATUS=$(P status)
+  if [ "$saw_hint" = 1 ]; then ok "a dragged window shows its drop target (4 frame bars on the server)"; else bad "no drop target during a drag: $(python3 "$XH" hints) hint windows, status: $STATUS"; fi
+  if grep -c 'hint drop' <<<"$STATUS" >/dev/null; then ok "the daemon reports the drop hint"; else bad "the daemon did not report the drop hint: $STATUS"; fi
+else
+  say "       (drop frame not asserted on $WM: it reports one ConfigureNotify per drag)"
+fi
+xdotool mouseup 1 sleep 0.1 keyup alt
+sleep 1.6
+check_eq "0" "$(python3 "$XH" hints)" "the drop hint leaves no window behind"
+if P list | grep -c "^docked.*$W3" >/dev/null; then ok "a window dropped on the right edge docks"; else bad "the drop did not dock $W3"; fi
+
+# A docked tile dragged to the opposite edge re-docks against it in one
+# gesture, instead of the old float-then-dock two-step (UX-NOTES row 7).
+eval "$(xdotool getwindowgeometry --shell "$W3")"
+GRABX=$((X + WIDTH - 12))
+xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.3
+xdotool mousemove "$GRABX" $((Y + 12)) sleep 0.15 keydown alt sleep 0.1 mousedown 1 sleep 0.15
+for x in $((GRABX - 200)) 900 400 60 2; do xdotool mousemove "$x" $((Y + 12)); sleep 0.1; done
+xdotool mouseup 1 sleep 0.1 keyup alt
+sleep 2
+eval "$(xdotool getwindowgeometry --shell "$W3")"
+check_near 0 "$X" 8 "a docked tile dragged to the opposite edge re-docks on the left"
+if P list | grep -c "^docked.*$W3" >/dev/null; then ok "the re-docked tile is still docked"; else bad "the re-docked tile floated"; fi
 
 # Mouse tiling: *drag* a floating window to the left screen edge and let go.
 # The gesture, not a geometry poke: wmctrl -e is interpreted per WM (openbox

@@ -146,13 +146,21 @@ for each command, so it never shows a chord the desktop intercepts; the palette
 
 The drag actions need no command line:
 
+* **Hover a gap** — the band you are over lights up (a 3 px line down its long
+  axis), so a 6 px strip is findable without hunting with the cursor. The hint
+  is click-through: it never takes the pointer away from the band.
 * **Drag a split boundary** — the gap between two tiles is a 6 px grab strip with
   a resize cursor. Drag it to change the split's weights (both neighbours move,
   never below `minimum_share`). It works while zoomed, and the pointer keeps the
   grab even though the boundary moves under it.
 * **Drag a window to a screen edge** — let go within 14 px of the left, right, top
-  or bottom of the work area and it docks to that edge. Drop a second window on
-  the opposite edge and you have two tiles.
+  or bottom of the work area and it docks to that edge. While the pointer is
+  within 70 px of an edge, a 3 px frame shows the rectangle the window will get,
+  so the landing spot is visible before you let go. Drop a second window on the
+  opposite edge and you have two tiles.
+* **Drag a docked tile to another edge** — a tile that leaves its own rectangle
+  and settles near a different edge re-docks there in one gesture, no float step
+  in between.
 * **Drag a tile away from the edge** — it floats again where you dropped it, so
   the mouse can undo a tile without a command.
 * **`Ctrl+Alt+M` or `pergola palette`** — a menu of the actions with human names
@@ -292,19 +300,24 @@ before Pergola and maps every failure class to the fix that answers it.
   "Float this window" even for a window that is already floating).
 * Edge docking targets the last focused space; in a deep tree the landing spot may
   be nested rather than at the root, which reads as "it went where I was working".
-  Aim at the edge you want, not at an empty region of the screen.
+  The drop frame shows that rectangle while you drag, so aim at the edge you want
+  rather than at an empty region of the screen.
 * The overlay is drawn with 2–3 px override-redirect rectangles inside the gaps
   and around the viewport. When a compositor owns `_NET_WM_CM_S0` it also draws a
   full-screen 40% black layer under those lines, so the tree reads at a glance;
   without a compositor, or without the SHAPE extension that makes the layer
   click-through, the overlay is borders only.
+* The pointer hints (hovered gap, drop frame) are override-redirect windows with
+  an empty SHAPE input region, so they never swallow a click. Without the SHAPE
+  extension the hints are not drawn at all — the bands still work, the cue is
+  simply missing.
 * Only one instance per display (one Unix socket).
 
 ## Development
 
 ```bash
-cargo test               # 97 unit tests: geometry, tree, camera, commands, document
-scripts/e2e.sh           # 114 assertions against Xvfb + a real WM + real xterms
+cargo test               # 100 unit tests: geometry, tree, camera, commands, document
+scripts/e2e.sh           # 124 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

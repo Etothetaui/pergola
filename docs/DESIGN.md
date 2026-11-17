@@ -112,6 +112,24 @@ validation the CLI has. A chord the desktop already owns is skipped and the
   wake window), and waits for three geometry changes followed by 300 ms of quiet.
   A settle within 14 px of a work-area edge docks; anywhere else floats. This
   keeps an application opening at `0,51` from tiling itself.
+* A docked tile that is dragged out of its own rectangle and settles near a
+  *different* edge re-docks against that edge in one gesture: the same settle
+  path calls `float_window` then `dock_window`, so the two-drag detour is gone.
+  Requiring the midpoint to leave the old rectangle is what stops a full-width
+  row (which touches both left and right) from reading as "already there".
+* Two pointer hints answer "what will happen if I let go" without changing the
+  tree: `Hint::Hover` draws a 3 px line down the long axis of the gap band under
+  the pointer, and `Hint::Drop` draws a 4-bar frame around the rectangle
+  `preview_dock()` computes for the edge the pointer is nearest. The preview
+  runs the *same* three steps as `dock_window` — choose the target, take the
+  seat out of the tree, insert it against the edge — so the frame cannot be
+  drawn where the window will not land. Both hints are override-redirect
+  windows with an empty SHAPE input region: a hint sits under the pointer by
+  definition, so without pass-through the band would get a `LeaveNotify`, take
+  the hint down and hand the pointer back in a storm. Without SHAPE the hints
+  are skipped entirely and the bands still work. `settle_moves()` clears the
+  drop hint (`hide_drop_hint`) but leaves the hover hint alone, because it runs
+  on every loop pass and would otherwise erase the hover the band just set.
 
 ### Palette
 
@@ -133,14 +151,19 @@ uses. The action list is static and labelled for people, not for the grammar.
 
 ## Testing
 
-* `cargo test` — 97 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 100 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
-  document round-trips, config parsing and repair of malformed weights.
+  document round-trips, config parsing and repair of malformed weights,
+  pointer-edge picking and hint geometry.
 * `scripts/e2e.sh` — starts Xvfb + a real WM (xfwm4 by default, openbox with
   `--wm openbox`) + three xterms, runs the real daemon, and asserts the geometry
   the X server reports against `pergola rects` after dock, zoom, arrange, gap
   changes, ratio, float, a daemon restart, keyboard docking, a gap drag, an edge
-  drop, tab groups, config/binding errors and the overlay's dim layer — 114 assertions, a check or two fewer when the WM parks a tile off-screen.
+  drop, tab groups, config/binding errors, the overlay's dim layer, hover
+  hints, the drop frame and one-gesture re-dock — 124 assertions, a check or
+  two fewer when the WM parks a tile off-screen. Openbox coalesces a drag into
+  one `ConfigureNotify`, so the mid-drag drop frame is asserted on xfwm4 only;
+  the frame's existence is a WM capability, not a tolerance.
   It never touches the live session.
 
   The suite uses fixed sleeps, so it assumes the machine is not CPU-saturated.

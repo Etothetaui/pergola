@@ -40,6 +40,16 @@ struct GapDrag {
     snapshot: LayoutNode,
 }
 
+/// What a pointer hint is showing. Enter/Leave arrive for every band window,
+/// so the identity of the hovered one is kept: without it a Leave for the band
+/// the pointer just left would erase the hint for the band it just entered.
+#[derive(Clone, Copy, PartialEq)]
+enum Hint {
+    None,
+    Hover(u32),
+    Drop,
+}
+
 /// One undoable layout state: the document (tree, floating rects, tabs), the
 /// engine (so a gap change is undone too) and where the camera was looking.
 #[derive(Clone, PartialEq)]
@@ -107,6 +117,11 @@ pub struct Daemon {
     started: bool,
     /// Layout states to come back to, newest last. Bounded: ten steps.
     undo: History<Snapshot>,
+    /// The pointer hint currently on screen (hover line or drop frame).
+    hint: Hint,
+    /// The edge the drop frame is showing, so a stream of ConfigureNotify
+    /// events does not rebuild the same four windows on every pixel.
+    drop_edge: Option<Direction>,
 }
 
 impl Daemon {
@@ -158,6 +173,8 @@ impl Daemon {
             last_release: None,
             started: false,
             undo: History::new(UNDO_DEPTH),
+            hint: Hint::None,
+            drop_edge: None,
         };
         daemon.reconcile()?;
         daemon.started = true;
@@ -324,23 +341,29 @@ impl Daemon {
     /// can keep the id. The seat record is updated so `focused_panel` and
     /// `list` stay truthful afterwards.
     fn own_panel_id(&mut self, seat: &SeatRecord) -> String {
-        let taken = |id: &str, root: &LayoutNode| -> bool { root.node(id).is_some() };
+        let id = self.free_panel_id(seat);
+        if let Some(record) = self.seats.iter_mut().find(|s| s.seat == seat.seat) {
+            record.panel = id.clone();
+        }
+        id
+    }
+
+    /// The same id `own_panel_id` would pick, without touching the seat record.
+    /// A preview must not move a seat it is only drawing a frame for.
+    fn free_panel_id(&self, seat: &SeatRecord) -> String {
+        let taken = |id: &str| -> bool {
+            self.file.doc.root.node(id).is_some()
+                || self.file.doc.floating.iter().any(|f| f.panel.id == id)
+        };
         let mut id = seat.panel.clone();
-        if taken(&id, &self.file.doc.root)
-            || self.file.doc.floating.iter().any(|f| f.panel.id == id)
-        {
+        if taken(&id) {
             let base = format!("p-{:x}", seat.window);
             id = base.clone();
             let mut n = 1;
-            while taken(&id, &self.file.doc.root)
-                || self.file.doc.floating.iter().any(|f| f.panel.id == id)
-            {
+            while taken(&id) {
                 id = format!("{base}-{n}");
                 n += 1;
             }
-        }
-        if let Some(record) = self.seats.iter_mut().find(|s| s.seat == seat.seat) {
-            record.panel = id.clone();
         }
         id
     }
@@ -538,6 +561,7 @@ impl Daemon {
         // mid-drag, where replacing the windows under the pointer would abort
         // the drag.
         if self.drag.is_none() {
+            self.hide_hint()?;
             self.refresh_gap_bands()?;
         }
         self.last_apply = Instant::now();
@@ -739,8 +763,15 @@ impl Daemon {
         } else {
             String::new()
         };
+        // A hint is state worth reporting: it proves the pointer affordance
+        // is up (or that it is not left behind) without a screen capture.
+        let hint = match self.hint {
+            Hint::None => "",
+            Hint::Hover(_) => " · hint hover",
+            Hint::Drop => " · hint drop",
+        };
         Ok(format!(
-            "pergola {} · {}x{} · {} panels, {} floating{tab_note} · depth {} · framed {} · gap {} · overlay {}",
+            "pergola {} · {}x{} · {} panels, {} floating{tab_note} · depth {} · framed {} · gap {} · overlay {}{hint}",
             pergola_core::VERSION,
             screen.w,
             screen.h,
@@ -1561,6 +1592,11 @@ impl Daemon {
                 self.update_gap_drag(motion.root_x as i32, motion.root_y as i32)?;
             }
             Event::ButtonRelease(_) => self.end_gap_drag()?,
+            // The gaps carry input-only band windows. Entering one is the only
+            // cue that a narrow strip is draggable, so light it up even with
+            // the overlay off (UX-NOTES row 1).
+            Event::EnterNotify(enter) => self.on_band_enter(enter.event)?,
+            Event::LeaveNotify(leave) => self.on_band_leave(leave.event)?,
             Event::ConfigureNotify(configure) => self.note_configure(&configure)?,
             // A keyboard-map change (layout switch, xmodmap, another client's
             // remap) invalidates both the keycode table and the grabs. Rebuild
@@ -1661,6 +1697,170 @@ impl Daemon {
             .map(|(_, handle)| handle)
     }
 
+    /// Highlight the gap band under the pointer. This is a hint, not the
+    /// overlay: it is a separate layer, so it neither claims the overlay is on
+    /// nor disappears when the user runs `overlay off`.
+    fn on_band_enter(&mut self, window: u32) -> Result<()> {
+        if std::env::var_os("PERGOLA_DEBUG").is_some() {
+            eprintln!(
+                "pergola: enter 0x{window:x} band={} hint={}",
+                self.band_for_window(window).is_some(),
+                match self.hint {
+                    Hint::None => "none",
+                    Hint::Hover(_) => "hover",
+                    Hint::Drop => "drop",
+                }
+            );
+        }
+        if self.hint == Hint::Hover(window) {
+            return Ok(());
+        }
+        // A gap drag owns the pointer, and the drop frame is the useful cue
+        // while a window is being dragged — not whichever band the pointer
+        // happens to cross. Neither can happen while the WM holds the pointer
+        // grab, but the state is checked so a stale watch cannot suppress the
+        // hover for good.
+        if self.hint == Hint::Drop || self.drag.is_some() {
+            return Ok(());
+        }
+        // Without SHAPE a hint over the gap would take the pointer from the
+        // band and flicker; the band still works, it is just not highlighted.
+        if !self.x.shape_available() {
+            return Ok(());
+        }
+        let Some(rect) = self
+            .band_for_window(window)
+            .map(|handle| hint_line(handle.band))
+        else {
+            return Ok(());
+        };
+        self.x.hint_show(&[(rect, HINT_COLOR)])?;
+        self.hint = Hint::Hover(window);
+        Ok(())
+    }
+
+    fn on_band_leave(&mut self, window: u32) -> Result<()> {
+        if self.hint == Hint::Hover(window) {
+            self.hide_hint()?;
+        }
+        Ok(())
+    }
+
+    fn hide_hint(&mut self) -> Result<()> {
+        self.drop_edge = None;
+        // Unconditional: `hint_show` can fail after creating some windows and
+        // before `self.hint` is set, and a guarded call would leave those on
+        // screen until the connection closed. `hint_hide` is a no-op when the
+        // list is empty.
+        self.x.hint_hide()?;
+        self.hint = Hint::None;
+        Ok(())
+    }
+
+    /// Take down a drop frame without touching a hover hint. `settle_moves`
+    /// runs on every loop pass, so a blanket `hide_hint` there would erase the
+    /// hover line ~50 ms after the pointer entered a gap.
+    fn hide_drop_hint(&mut self) -> Result<()> {
+        if self.hint == Hint::Drop {
+            self.hide_hint()?;
+        }
+        Ok(())
+    }
+
+    /// While a managed window is being dragged, draw the rectangle it will
+    /// occupy if it is dropped against the edge the pointer is nearest. The
+    /// frame comes from the same `inserting` call the dock itself uses, so it
+    /// is the real target, not a half-screen guess — a nested tree docks
+    /// against the last focused space, and the hint shows that.
+    fn update_drop_hint(&mut self, window: u32) -> Result<()> {
+        if self.drag.is_some() || !self.config.edge_dock {
+            return Ok(());
+        }
+        let dragging = self.moves.get(&window).is_some_and(is_drag);
+        if !dragging {
+            if self.hint == Hint::Drop {
+                self.hide_hint()?;
+            }
+            return Ok(());
+        }
+        let screen = self.x.workarea_rect()?.to_rect();
+        let (px, py) = self.x.pointer()?;
+        let edge = pointer_edge(px as f64, py as f64, screen, DROP_EDGE_PX);
+        let Some(edge) = edge else {
+            if self.hint == Hint::Drop {
+                self.hide_hint()?;
+            }
+            return Ok(());
+        };
+        if self.hint == Hint::Drop && self.drop_edge == Some(edge) {
+            return Ok(());
+        }
+        if !self.x.shape_available() {
+            return Ok(());
+        }
+        let Some(rect) = self.preview_dock(window, edge) else {
+            if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                eprintln!("pergola: drop hint: no preview for 0x{window:x} {edge:?}");
+            }
+            return Ok(());
+        };
+        if std::env::var_os("PERGOLA_DEBUG").is_some() {
+            eprintln!("pergola: drop hint 0x{window:x} {edge:?} -> {rect:?}");
+        }
+        self.x.hint_show(&frame_bars(rect))?;
+        self.hint = Hint::Drop;
+        self.drop_edge = Some(edge);
+        Ok(())
+    }
+
+    /// The screen rectangle the tree would give a window docked against
+    /// `edge`, following the same three steps as `dock_window`: choose the
+    /// target, take the seat out of the tree, then insert it against the edge.
+    /// A preview that skipped the detach would draw the frame from a tree that
+    /// still holds the window, so the frame would not be where the dock lands.
+    fn preview_dock(&self, window: u32, edge: Direction) -> Option<Rect> {
+        let screen = self.x.workarea_rect().ok()?.to_rect();
+        let world = screen;
+        let seat = self.seat_for_window(window)?;
+        // Selection order copied from `dock_window` verbatim: a preview that
+        // chose a different target would draw its frame where the window is
+        // not going to land.
+        let mut target = self
+            .focused_panel()
+            .unwrap_or_else(|| self.file.doc.root.id().to_string());
+        if target == seat.panel {
+            target = self
+                .last_focus
+                .clone()
+                .filter(|p| p != &seat.panel && self.file.doc.root.node(p).is_some())
+                .unwrap_or_else(|| self.file.doc.root.id().to_string());
+        }
+        // A seat that is already floating is not in the tree, so `removing_view`
+        // fails and the tree stands as it is — the same branch `detach_seat`
+        // takes.
+        let detached = self
+            .engine
+            .removing_view(&seat.seat, &self.file.doc.root)
+            .unwrap_or_else(|_| self.file.doc.root.clone());
+        if detached.node(&target).is_none() {
+            target = detached.id().to_string();
+        }
+        let probe = self.free_panel_id(&seat);
+        let node = LayoutNode::panel(probe.clone(), vec![seat.seat.clone()]);
+        let tree = self.engine.inserting(node, &target, edge, &detached).ok()?;
+        let rects = self.engine.rects(&tree, world);
+        let rect = rects.iter().find(|(id, _)| id == &probe).map(|(_, r)| *r)?;
+        let framed = if self.camera.framed != self.file.doc.root.id() {
+            rects
+                .iter()
+                .find(|(id, _)| id == &self.camera.framed)
+                .map(|(_, r)| *r)
+        } else {
+            None
+        };
+        Some(transform(rect, framed, world))
+    }
+
     /// Start dragging a split boundary. The tree is snapshotted so that every
     /// motion is absolute, not incremental.
     fn begin_gap_drag(&mut self, window: u32, x: i32, y: i32) -> Result<()> {
@@ -1678,6 +1878,10 @@ impl Daemon {
         if self.drag.is_some() {
             self.end_gap_drag()?;
         }
+        // The hover hint belongs to the band about to be replaced by this
+        // gesture; `end_gap_drag` rebuilds the bands, so the hovered window
+        // would never send the LeaveNotify that takes the hint down.
+        self.hide_hint()?;
         if std::env::var_os("PERGOLA_DEBUG").is_some() {
             eprintln!(
                 "pergola: gap drag {first}|{second} axis {axis:?} extent {extent:.0}px"
@@ -1791,7 +1995,18 @@ impl Daemon {
             );
         }
         if let Some(applied) = self.applied.get(&event.window) {
-            if same_rect(applied.to_rect(), rect) {
+            // An echo of our own apply reports the rect we asked for. A drag
+            // already in progress is different: the WM is reporting real
+            // motion, and a drop that lands exactly on the rect we last placed
+            // the window at is still a drop — the user dragged it away and
+            // back, or the tile was already against that edge. Skipping it
+            // left the watch on the previous intermediate rect, so a corner
+            // drop docked against the wrong edge and the pointer's final
+            // position never drew its hint (measured 2026-11-15, e2e
+            // 'no drop target during a drag': the reported rect was 83 px from
+            // the right edge because only the intermediate events counted).
+            let drag_in_progress = self.moves.get(&event.window).is_some_and(is_drag);
+            if same_rect(applied.to_rect(), rect) && !drag_in_progress {
                 return Ok(());
             }
         }
@@ -1815,6 +2030,7 @@ impl Daemon {
             watch.rect = rect;
             watch.at = Instant::now();
         }
+        self.update_drop_hint(event.window)?;
         Ok(())
     }
 
@@ -1824,6 +2040,7 @@ impl Daemon {
     fn settle_moves(&mut self) -> Result<()> {
         if !self.config.edge_dock {
             self.moves.clear();
+            self.hide_drop_hint()?;
             return Ok(());
         }
         if self.drag.is_some() {
@@ -1848,8 +2065,16 @@ impl Daemon {
             }
         }
         if ready.is_empty() {
+            // No watch counts as a drag any more: a frame still up belongs to
+            // a gesture that ended without a dockable drop. Only the drop
+            // frame: a hover hint is not this function's business.
+            if !self.moves.values().any(|w| is_drag(w)) {
+                self.hide_drop_hint()?;
+            }
             return Ok(());
         }
+        // The gesture is over: the drop frame has done its job.
+        self.hide_drop_hint()?;
         let screen = self.x.workarea_rect()?.to_rect();
         let world = screen;
         let desk = self
@@ -1880,6 +2105,39 @@ impl Daemon {
                 marked = true;
             }
             if self.file.doc.root.node(&seat.panel).is_some() {
+                // A tile dragged onto a different edge re-docks against it in
+                // one gesture, instead of the two drags float-then-dock took
+                // (UX-NOTES row 7). Dropping it back on its own edge keeps the
+                // old float behaviour, so "pull it off the edge" still works.
+                let here = rects
+                    .iter()
+                    .find(|(id, _)| id == &seat.panel)
+                    .map(|(_, r)| transform(*r, framed, world));
+                // A tile that merely spans the edge it was dropped on (a
+                // full-width row touches left and right alike) must not look
+                // like "it is already there": what counts is whether the drag
+                // took the window out of its own rectangle at all.
+                let moved_out = here.is_none_or(|h| {
+                    !(rect.mid_x() >= h.x
+                        && rect.mid_x() <= h.max_x()
+                        && rect.mid_y() >= h.y
+                        && rect.mid_y() <= h.max_y())
+                });
+                if let Some(edge) = snap_edge(rect, screen, EDGE_SNAP_PX) {
+                    if moved_out {
+                        if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                            eprintln!("pergola: re-dock 0x{window:x} -> {edge:?}");
+                        }
+                        // `dock_window` takes the seat out of the tree and
+                        // inserts it against the edge in one step. Floating in
+                        // between would save a layout the user never asked for
+                        // and, if the dock then failed, leave the tile floating.
+                        if let Err(e) = self.dock_window(window, edge, None) {
+                            eprintln!("pergola: re-dock: {e:#}");
+                        }
+                        continue;
+                    }
+                }
                 // A tile pulled off the tree: float it where it was dropped.
                 if std::env::var_os("PERGOLA_DEBUG").is_some() {
                     eprintln!("pergola: drag out 0x{window:x} -> floating");
@@ -1902,6 +2160,63 @@ impl Daemon {
         }
         Ok(())
     }
+}
+
+/// Colour of a pointer hint: the accent the overlay uses for the framed
+/// split, so a hint reads as "pergola" and not as a client window.
+const HINT_COLOR: u32 = 0x00e8b04b;
+
+/// How close the pointer must be to a screen edge for a dragged window to show
+/// a drop target. Larger than the docking slack: the frame appears while the
+/// user is still aiming, the dock itself happens on release.
+const DROP_EDGE_PX: f64 = 70.0;
+
+/// A gap band as a 3 px line down its narrow axis. The band itself is a strip
+/// the width of the gap, too faint to see as a highlight.
+fn hint_line(band: Rect) -> IRect {
+    const W: f64 = 3.0;
+    let (x, y, w, h) = if band.w <= band.h {
+        (band.x + (band.w - W) / 2.0, band.y, W, band.h)
+    } else {
+        (band.x, band.y + (band.h - W) / 2.0, band.w, W)
+    };
+    IRect::new(
+        x.floor() as i32,
+        y.floor() as i32,
+        w.round().max(1.0) as i32,
+        h.round().max(1.0) as i32,
+    )
+}
+
+/// A drop target as its four edges: a frame over the content instead of a
+/// filled rectangle that would hide the windows underneath it.
+fn frame_bars(rect: Rect) -> Vec<(IRect, u32)> {
+    const W: f64 = 3.0;
+    let (x, y) = (rect.x.round() as i32, rect.y.round() as i32);
+    let (w, h) = (rect.w.round().max(1.0) as i32, rect.h.round().max(1.0) as i32);
+    let vertical = |left: i32| IRect::new(left, y, W as i32, h);
+    let horizontal = |top: i32| IRect::new(x, top, w, W as i32);
+    vec![
+        (vertical(x), HINT_COLOR),
+        (vertical(x + w - W as i32), HINT_COLOR),
+        (horizontal(y), HINT_COLOR),
+        (horizontal(y + h - W as i32), HINT_COLOR),
+    ]
+}
+
+/// The edge of `screen` the pointer is nearest, if it is within `slack`.
+fn pointer_edge(x: f64, y: f64, screen: Rect, slack: f64) -> Option<Direction> {
+    let candidates = [
+        (x - screen.x, Direction::Left),
+        (screen.max_x() - x, Direction::Right),
+        (y - screen.y, Direction::Up),
+        (screen.max_y() - y, Direction::Down),
+    ];
+    candidates
+        .into_iter()
+        .filter(|(distance, _)| *distance <= slack)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, direction)| direction)
 }
 
 /// A settled window counts as dragged when it produced a burst of configure
@@ -2232,6 +2547,55 @@ fn build_keymap(x: &X11) -> Result<Vec<(u8, u32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hint_line_is_three_pixels_across_the_narrow_axis() {
+        // A vertical boundary: the band is a narrow strip; the line goes down
+        // its middle, never as wide as the strip itself.
+        let vertical = hint_line(Rect::new(100.0, 40.0, 6.0, 200.0));
+        assert_eq!(vertical.w, 3);
+        assert_eq!(vertical.h, 200);
+        assert_eq!(vertical.x, 101); // 100 + (6 - 3) / 2
+        // A horizontal boundary: the same, rotated.
+        let horizontal = hint_line(Rect::new(40.0, 100.0, 200.0, 6.0));
+        assert_eq!(horizontal.w, 200);
+        assert_eq!(horizontal.h, 3);
+        assert_eq!(horizontal.y, 101);
+    }
+
+    #[test]
+    fn a_drop_frame_is_four_bars_and_none_of_them_covers_the_rect() {
+        let rect = Rect::new(0.0, 0.0, 800.0, 450.0);
+        let bars = frame_bars(rect);
+        assert_eq!(bars.len(), 4);
+        for (bar, _) in &bars {
+            assert!(bar.w > 0 && bar.h > 0, "{bar:?}");
+            // A bar is 3 px in one dimension, never a filled rectangle: the
+            // window under the frame must stay visible.
+            assert!(bar.w == 3 || bar.h == 3, "{bar:?}");
+        }
+        // Every edge of the rectangle is covered.
+        assert!(bars.iter().any(|(b, _)| b.x == 0));
+        assert!(bars.iter().any(|(b, _)| b.x + b.w == 800));
+        assert!(bars.iter().any(|(b, _)| b.y == 0));
+        assert!(bars.iter().any(|(b, _)| b.y + b.h == 450));
+    }
+
+    #[test]
+    fn pointer_edge_only_fires_near_an_edge_and_prefers_the_nearest() {
+        let screen = Rect::new(0.0, 0.0, 1600.0, 900.0);
+        assert_eq!(pointer_edge(10.0, 450.0, screen, 70.0), Some(Direction::Left));
+        assert_eq!(pointer_edge(1590.0, 450.0, screen, 70.0), Some(Direction::Right));
+        assert_eq!(pointer_edge(800.0, 20.0, screen, 70.0), Some(Direction::Up));
+        assert_eq!(pointer_edge(800.0, 880.0, screen, 70.0), Some(Direction::Down));
+        // Middle of the screen: no drop target.
+        assert_eq!(pointer_edge(800.0, 450.0, screen, 70.0), None);
+        // A corner that is 5 px from both edges is a tie; the first edge in
+        // the list wins, so the answer is deterministic rather than arbitrary.
+        assert_eq!(pointer_edge(5.0, 895.0, screen, 70.0), Some(Direction::Left));
+        // Two pixels from the bottom and five from the left: the nearer edge.
+        assert_eq!(pointer_edge(5.0, 898.0, screen, 70.0), Some(Direction::Down));
+    }
 
     #[test]
     fn a_held_key_is_one_press_not_eleven() {

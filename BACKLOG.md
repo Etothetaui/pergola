@@ -121,16 +121,22 @@ snapshot are dropped by the reconcile, so undo cannot resurrect a dead seat. `Hi
 `pergola-core` with its own tests for the bound and the de-duplication; the e2e docks a window by
 chord and undoes it.
 
-## 1. Pointer affordances
+### Pointer affordances (0.4.0-dev)
 
-**What:** highlight a gap band on hover even with the overlay off, show the target rectangle during
-a window drag, and re-dock a docked tile that settles near another edge.
-**Why:** the mouse paths work but are invisible until used (UX-NOTES rows 1, 7, 8). Hover needs
-only an EnterNotify on the band; the drop target needs pointer tracking during a drag.
-**Done when:** a hovered gap draws a line and leaves no artefact, a dragged window shows where it
-will land, and dragging a docked tile to the opposite edge re-docks it in one gesture.
+The mouse paths are visible now. Hovering a gap band draws a 3 px line down its long axis, so the
+6 px strip is findable without hunting; the hint is a separate override-redirect layer with an
+empty SHAPE input region, so it never takes the pointer from the band. Dragging a window within
+70 px of a work-area edge draws a 4-bar frame around the rectangle the drop would produce: the
+preview runs the same three steps as `dock_window` (choose the target, take the seat out of the
+tree, insert against the edge), so the frame cannot point somewhere the window will not land. A
+docked tile dragged out of its own rectangle and settled near a different edge re-docks there in
+one gesture. Hints are skipped when the SHAPE extension is missing; the bands still work. The e2e
+asserts the hover hint appears on a gap and leaves no window behind, the drop frame's four bars
+under xfwm4 (openbox coalesces a drag into one `ConfigureNotify`, so there is nothing to draw
+mid-drag), and the one-gesture re-dock. `HINT_COLOR`, `hint_line`, `frame_bars` and `pointer_edge`
+are unit-tested.
 
-## 2. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
+## 1. Event stream for status bars (from `docs/HISTORY-LESSONS.md`)
 
 **What:** `pergola subscribe` streams `layout`, `focus`, `dock`, `undock` and `window-closed`
 records as newline-delimited JSON over the control socket, so a panel can draw the tree without
@@ -141,7 +147,7 @@ Pergola's socket is request/response only today.
 **Done when:** a `pergola subscribe` client receives a record on dock, undock and window close,
 the stream survives a daemon restart, and an e2e assertion reads two records from one session.
 
-## 3. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+## 2. Honour `_NET_ACTIVE_WINDOW` requests from pagers
 
 **What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
 currently only *sets* that property when it focuses a window.
@@ -150,7 +156,7 @@ something it does not listen for. A taskbar's "click to focus" silently does not
 **Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
 reports the same seat as focused; a unit test covers the request path.
 
-## 4. Named workspaces (tags) on top of views
+## 3. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -160,7 +166,7 @@ is a deliberate `MINOR` bump with a loader that keeps reading older documents.
 **Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
 and a document written by the new version loads in the old one without losing its views.
 
-## 5. Release pipeline, so `pergola-bin` can exist
+## 4. Release pipeline, so `pergola-bin` can exist
 
 **What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
 a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays

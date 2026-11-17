@@ -10,3 +10,7 @@
 /packaging/aur/pergola/
 /packaging/aur/*.pkg.tar.zst
 /packaging/aur/*.pkg.tar.xz
+
+# Python bytecode from the e2e helper
+__pycache__/
+*.pyc

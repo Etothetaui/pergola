@@ -151,6 +151,24 @@ All notable changes to Pergola. Format follows the versioning rules in
   gap drag of the same delta; the unit test checks the clamp against
   `resizing_gap`, covers a three-child split and rejects NaN. The e2e asserts the
   reported ratio and the new geometry.
+* **Pointer affordances — the mouse paths say what they will do.** Hovering a gap
+  band draws a 3 px line down its long axis, so a 6 px strip is findable without
+  hunting with the cursor; the hint lives in its own override-redirect layer
+  (tagged `_PERGOLA_HINT`) with an empty SHAPE input region, so it never takes
+  the pointer away from the band and `overlay on/off` semantics are unchanged.
+  Dragging a window within 70 px of a work-area edge draws a 4-bar frame around
+  the rectangle the drop would produce; `preview_dock()` runs the same three
+  steps as `dock_window` (choose the target, take the seat out of the tree,
+  insert against the edge), so the frame cannot point where the window will not
+  land. A docked tile dragged out of its own rectangle and settled near a
+  different edge re-docks against that edge in one gesture, with no float step
+  in between. Hints are skipped when the SHAPE extension is missing. Two daemon
+  bugs surfaced while building it: the `same_rect` early-return in
+  `note_configure` swallowed a real drag that landed back on the applied
+  rectangle (a drag in progress now never skips), and `settle_moves()` cleared
+  the hover hint on every loop pass — it now clears only the drop hint. 100 unit
+  tests, 124 e2e assertions on xfwm4; the mid-drag drop frame is asserted on
+  xfwm4 only, because openbox coalesces a drag into a single `ConfigureNotify`.
 
 ### Changed
 

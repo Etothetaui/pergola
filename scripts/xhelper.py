@@ -5,6 +5,7 @@
   xhelper own-cm [seconds]    own _NET_WM_CM_S<screen> as a stand-in compositor
   xhelper children            count the root window's children
   xhelper dims                count root children carrying _NET_WM_WINDOW_OPACITY
+  xhelper hints               count root children carrying _PERGOLA_HINT
 
 Why this exists: the overlay's dim layer is only honest when a compositor owns
 the `_NET_WM_CM_S<screen>` selection — that is how xfwm4, picom, kwin and mutter
@@ -143,6 +144,12 @@ def main(argv):
     elif cmd == "dims":
         opacity = lib.XInternAtom(dpy, b"_NET_WM_WINDOW_OPACITY", 0)
         print(sum(1 for w in _children(lib, dpy, root) if _has_prop(lib, dpy, w, opacity)))
+    elif cmd == "hints":
+        # A pointer hint (the hovered-gap line, the drop frame) is an
+        # override-redirect window of ours, invisible to wmctrl. Counting them
+        # is how the e2e proves a hint appeared and left nothing behind.
+        atom = lib.XInternAtom(dpy, b"_PERGOLA_HINT", 0)
+        print(sum(1 for w in _children(lib, dpy, root) if _has_prop(lib, dpy, w, atom)))
     else:
         sys.exit("xhelper: unknown command %r\n%s" % (cmd, __doc__))
 

@@ -141,6 +141,11 @@ pub struct X11 {
     /// Invisible input-only windows that turn each split gap into a pointer
     /// drag target. Kept so a layout change can replace them as a set.
     bands: Vec<Window>,
+    /// Pointer affordances: a highlighted gap band on hover, the frame a
+    /// dragged window will land in. Separate from `overlay` so a hint never
+    /// changes what `overlay on`/`off` means and `overlay off` cannot leave one
+    /// behind.
+    hints: Vec<Window>,
     /// Resize cursors for horizontal and vertical boundaries, when the X
     /// server has the standard `cursor` font.
     cursors: (Cursor, Cursor),
@@ -186,6 +191,7 @@ impl X11 {
             overlay: Vec::new(),
             overlay_dim: None,
             bands: Vec::new(),
+            hints: Vec::new(),
             cursors,
         })
     }
@@ -599,32 +605,7 @@ impl X11 {
             if bar.w <= 0 || bar.h <= 0 {
                 continue;
             }
-            let wid = self.conn.generate_id()?;
-            self.conn.create_window(
-                depth,
-                wid,
-                self.root,
-                bar.x as i16,
-                bar.y as i16,
-                bar.w as u16,
-                bar.h as u16,
-                0,
-                WindowClass::INPUT_OUTPUT,
-                root_visual,
-                &CreateWindowAux::new()
-                    .background_pixel(*color)
-                    .override_redirect(1)
-                    .event_mask(EventMask::EXPOSURE),
-            )?;
-            self.conn.map_window(wid)?;
-            // Override-redirect windows are unmanaged, so the WM will not
-            // restack them; raise them explicitly to sit above the tiles.
-            self.conn.configure_window(
-                wid,
-                &ConfigureWindowAux::new()
-                    .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
-            )?;
-            ids.push(wid);
+            ids.push(self.create_bar(*bar, *color, false)?);
         }
         self.conn.flush()?;
         self.overlay = ids;
@@ -650,6 +631,104 @@ impl X11 {
     /// and a test can prove the layer was destroyed on `overlay off`.
     pub fn overlay_dim(&self) -> Option<Window> {
         self.overlay_dim
+    }
+
+    // MARK: pointer affordances
+
+    /// One mapped, override-redirect rectangle filled with `color`, raised
+    /// above the tiles. The overlay and the hint layer are both made of these,
+    /// so they look identical and neither can be mistaken for a client window.
+    fn create_bar(&self, rect: IRect, color: u32, pass_through: bool) -> Result<Window> {
+        let screen = &self.conn.setup().roots[self.screen];
+        let wid = self.conn.generate_id()?;
+        self.conn.create_window(
+            screen.root_depth,
+            wid,
+            self.root,
+            rect.x as i16,
+            rect.y as i16,
+            rect.w as u16,
+            rect.h as u16,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new()
+                .background_pixel(color)
+                .override_redirect(1)
+                .event_mask(EventMask::EXPOSURE),
+        )?;
+        if pass_through {
+            // A hint sits exactly where the pointer is (the hovered gap is
+            // under the pointer by definition). Without an empty input shape
+            // the hint would take the pointer away from the band window, whose
+            // LeaveNotify would then destroy the hint, which would hand the
+            // pointer back: an enter/leave storm at every hover.
+            let _ = x11rb::protocol::shape::rectangles(
+                &self.conn,
+                x11rb::protocol::shape::SO::SET,
+                x11rb::protocol::shape::SK::INPUT,
+                x11rb::protocol::xproto::ClipOrdering::UNSORTED,
+                wid,
+                0,
+                0,
+                &[],
+            );
+        }
+        self.conn.map_window(wid)?;
+        // Override-redirect windows are unmanaged, so the WM will not restack
+        // them; raise them explicitly to sit above the tiles.
+        self.conn.configure_window(
+            wid,
+            &ConfigureWindowAux::new()
+                .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+        )?;
+        Ok(wid)
+    }
+
+    /// Replace the pointer hints with these rectangles. The daemon calls this
+    /// when the pointer enters a draggable gap, and while a window is being
+    /// dragged, to show where it will land.
+    pub fn hint_show(&mut self, bars: &[(IRect, u32)]) -> Result<()> {
+        self.hint_hide()?;
+        // Tag the window so a test (and a debugging session) can tell a hint
+        // from any other override-redirect rectangle on the screen without
+        // guessing at geometry: scripts/xhelper.py counts these.
+        let atom = self.atom("_PERGOLA_HINT")?;
+        for (bar, color) in bars {
+            if bar.w <= 0 || bar.h <= 0 {
+                continue;
+            }
+            let wid = self.create_bar(*bar, *color, true)?;
+            // Record the window before the property write: if that write fails,
+            // the window is still in the list, so the next `hint_hide` destroys
+            // it instead of leaking it until the connection closes.
+            self.hints.push(wid);
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                wid,
+                atom,
+                AtomEnum::CARDINAL,
+                &[1],
+            )?;
+        }
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    pub fn hint_hide(&mut self) -> Result<()> {
+        for wid in self.hints.drain(..) {
+            let _ = self.conn.destroy_window(wid);
+        }
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    /// The pointer's root coordinates. During a WM-driven move the pointer is
+    /// what says which edge the user is aiming at, so the drop hint follows it
+    /// rather than the window's lagging ConfigureNotify stream.
+    pub fn pointer(&self) -> Result<(i32, i32)> {
+        let reply = self.conn.query_pointer(self.root)?.reply()?;
+        Ok((reply.root_x as i32, reply.root_y as i32))
     }
 
     // MARK: pointer grab areas in the gaps
@@ -1318,6 +1397,12 @@ pub fn doctor() -> Result<Vec<String>> {
         .and_then(|w| x.string_prop(w, x.atom("_NET_WM_NAME").ok()?))
         .unwrap_or_else(|| "unknown".to_string());
     notes.push(format!("running WM: {wm_name}"));
+    // The pointer hints need SHAPE for their click-through input region; say so
+    // here rather than letting a user wonder why hovering a gap draws nothing.
+    notes.push(format!(
+        "SHAPE extension: {}",
+        if x.shape_available() { "yes" } else { "no (pointer hints disabled)" }
+    ));
     if clients.is_empty() {
         return Err(anyhow!(
             "no EWMH client list — this desktop does not advertise _NET_CLIENT_LIST"
