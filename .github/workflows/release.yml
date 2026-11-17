@@ -1,0 +1,140 @@
+name: release
+
+# A release is cut from a *stable* tag (docs/VERSIONING.md: dev builds are
+# commits, not tags). The tag must equal the crate version, or the run fails
+# before anything is published.
+#
+#   git tag -s v1.0.0 && git push origin v1.0.0
+#
+# `workflow_dispatch` builds the same artifacts without publishing, so the
+# pipeline can be exercised (and the PKGBUILD inspected) before a tag exists.
+on:
+  push:
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (must match Cargo.toml); no release is created"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate="$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            want="${GITHUB_REF_NAME#v}"
+            case "$want" in *-*) echo "refusing to release a dev version ($want)"; exit 1 ;; esac
+          else
+            want="${{ inputs.version }}"
+          fi
+          if [ "$crate" != "$want" ]; then
+            echo "tag/input says $want but Cargo.toml says $crate"; exit 1
+          fi
+          echo "VERSION=$crate" >> "$GITHUB_ENV"
+
+      - name: Cross toolchain (aarch64)
+        if: matrix.arch == 'aarch64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+
+      - name: Package the artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/make-release-artifacts.sh "$VERSION" "${{ matrix.arch }}" \
+            "target/${{ matrix.target }}/release/pergola" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pergola-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate="$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)"
+          echo "VERSION=$crate" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums and the AUR package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c ./*.sha256
+          cd ..
+          scripts/gen-bin-pkgbuild.sh "$VERSION" \
+            "dist/pergola-$VERSION-x86_64-linux-gnu.tar.gz" \
+            "dist/pergola-$VERSION-aarch64-linux-gnu.tar.gz" dist/aur
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            echo "Prebuilt binaries for x86_64 and aarch64, with the generated"
+            echo "AUR \`pergola-bin\` package files (\`PKGBUILD\`, \`pergola.install\`)."
+            echo
+            echo "The source install (\`./install.sh\`) and the \`pergola-git\` AUR"
+            echo "package build the same code from this tag."
+          } > RELEASE_NOTES.md
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Pergola $VERSION" \
+            --notes-file RELEASE_NOTES.md \
+            dist/*.tar.gz dist/*.sha256 dist/aur/PKGBUILD dist/aur/pergola.install

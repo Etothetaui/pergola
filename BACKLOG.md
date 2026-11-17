@@ -198,16 +198,60 @@ desktop with no tag would blank the screen), and a desktop clamps a parked windo
 reachable at the bottom edge — xfwm4's title bar, openbox's first 66 px of an 862 px client
 (`docs/UX-NOTES.md`).
 
-## 1. Release pipeline, so `pergola-bin` can exist
+## 1. Settings help and a toast for a rejected value
 
-**What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
-a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays
-identical to `pergola-git`).
-**Why:** `pergola-git` compiles on the user's machine, which needs a Rust toolchain and ~40 s. A
-`-bin` package is the only AUR option for people who do not want that, and the name is only
-honest once an artifact exists.
-**Done when:** pushing a tag produces a release with both binaries, and a `pergola-bin` PKGBUILD
-with a real `sha256sums` installs the same file list as `pergola-git`.
+**What:** one help line per row in `pergola settings` (what the key means, its range, its default),
+and report a rejected value as a desktop notification when the menu was opened from a chord, not
+only on the process's stderr.
+**Why:** `pergola settings` reaches every key and chord, but a row shows `gap = 6` with no
+explanation, and a rejected value goes where the person never looks (`docs/UX-NOTES.md`, the
+Settings and Feedback rows). This finishes the last place a person must be a developer.
+**Done when:** `settings --list` prints a help column, an invalid value writes a `notify-send`
+toast (and still exits non-zero), and the e2e asserts both plus the unchanged "bad value is
+rejected before the file is touched" behaviour.
+
+## 2. Ratios and context-aware palette rows
+
+**What:** palette rows for half / third / two-thirds ratios, a nudge chord for the split around the
+focused panel, and palette rows built from the focused panel's state (no "Float this window" for a
+window that already floats; show the window title in the prompt).
+**Why:** `pergola ratio 0.3` works from the keyboard but is the only path (`gap: 0` leaves no drag
+strip), and the palette offers actions that are no-ops for the window in hand — UX-NOTES, the
+Ratios and Palette rows.
+**Done when:** the palette shows the state-correct rows (asserted in the e2e through
+`settings`-style `--list` output, not by opening a menu), and a ratio row changes the geometry to
+the reported weights.
+
+## 3. A cue that reads without a compositor
+
+**What:** a `dim` key in `config.json` for the overlay's dim strength, and a non-compositor cue for
+the split lines (e.g. a doubled line or a short tick at each boundary) so `overlay on` is legible
+on a bare X server.
+**Why:** the dim layer needs `_NET_WM_CM_S0` + SHAPE; without them the 2 px lines are easy to miss
+and the 40% strength is a constant (UX-NOTES, the Overlay row).
+**Done when:** `pergola config` shows `dim` with its source, an out-of-range value is rejected by
+`config --check`, and the e2e proves the fallback cue draws with no compositor (root-child count
+and pixel run length), while a stand-in compositor still gets the dim layer.
+
+## Blocked: Release pipeline, so `pergola-bin` can exist
+
+**Built and verified; blocked on the first stable tag.** `.github/workflows/release.yml` builds
+`x86_64` and `aarch64` on a `v<version>` tag (and on `workflow_dispatch` without publishing),
+packages each with `scripts/make-release-artifacts.sh`, verifies the `.sha256` files and generates
+the AUR files with `scripts/gen-bin-pkgbuild.sh`; the release carries the tarballs, checksums,
+`PKGBUILD` and `pergola.install`. A `-dev` version or a tag that disagrees with `Cargo.toml` fails
+the run before anything is published.
+
+Verified locally on 2026-11-17: a `0.5.0` artifact was built and its checksum checked; a generated
+`PKGBUILD` installed through `makepkg` with the real sums (only the URL was pointed at the local
+tarball) and its file list is byte-identical to `pergola-git`'s modulo the package name; the
+workflow YAML parses. The `aarch64` compile itself is CI-only — this host has no cross toolchain,
+so it has not been run here. The `pergola-git` `pkgver()` was hard-coded to `0.4.0` and lagged the
+MINOR bump; it now reads `Cargo.toml`.
+
+**Remaining:** a `v<version>` tag. `docs/VERSIONING.md` says dev builds are commits, not tags and
+tags only stable releases, so the first tag is the 1.0.0 gate — no earlier tag can honestly
+produce a release.
 
 ## Not planned
 

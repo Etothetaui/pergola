@@ -2,9 +2,10 @@
 #
 # pergola-git — build Pergola from the main branch.
 #
-# This is a VCS package: it compiles from source and follows `main`. A
-# `pergola-bin` package (prebuilt binary from a GitHub release) is not shipped
-# because no release artifacts exist yet; see packaging/aur/README.md.
+# This is a VCS package: it compiles from source and follows `main`. A prebuilt
+# `pergola-bin` package is generated from a stable release by
+# scripts/gen-bin-pkgbuild.sh (see packaging/aur/README.md); it cannot exist
+# before the first tag, and docs/VERSIONING.md tags only stable releases.
 #
 # The file list mirrors what install.sh writes, moved to system locations:
 #
@@ -24,7 +25,7 @@
 # unit inherits DISPLAY from the graphical session instead.
 
 pkgname=pergola-git
-pkgver=0.4.0.r31.g2250d07
+pkgver=0.5.0.r41.g96f7d06
 pkgrel=1
 pkgdesc='Fractal window manager layer for X11 desktops (EWMH, works alongside your WM)'
 arch=('x86_64' 'aarch64')
@@ -51,11 +52,14 @@ sha256sums=('SKIP')
 
 pkgver() {
   cd pergola
-  local count rev
+  local base count rev
+  # Follow the crate version instead of hard-coding it (it lagged a MINOR bump
+  # once). `-dev` cannot appear in pacman's pkgver, so it is dropped.
+  base=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+  base=${base%-dev}
   count=$(git rev-list --count HEAD)
   rev=$(git rev-parse --short HEAD)
-  # The crate version is `0.4.0-dev`; pacman's pkgver cannot contain a hyphen.
-  printf '0.4.0.r%s.g%s' "$count" "$rev"
+  printf '%s.r%s.g%s' "$base" "$count" "$rev"
 }
 
 build() {

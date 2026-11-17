@@ -14,3 +14,6 @@
 # Python bytecode from the e2e helper
 __pycache__/
 *.pyc
+
+# local release artifacts
+/dist/

@@ -3,14 +3,27 @@
 `PKGBUILD` builds Pergola from source and follows `main`. It is the same code
 `install.sh` installs, moved from your home directory to system paths.
 
-## Why `pergola-git` and not `pergola-bin`
+## `pergola-git` and `pergola-bin`
 
-AUR naming is a contract: `-bin` means *prebuilt binary, no compilation*. Pergola
-has no GitHub release with a binary artifact yet (there is no CI workflow, and no
-git tag), so a `pergola-bin` package would either compile from source — lying in
-its name — or ship nothing. `pergola-git` is the honest name for what this
-package does. A `pergola-bin` package becomes possible once a release pipeline
-publishes an artifact; see "Cutting a `pergola-bin` package" below.
+AUR naming is a contract: `-bin` means *prebuilt binary, no compilation*, and
+`-git` means *builds from the VCS branch*. `pergola-git` is the source package
+and follows `main`.
+
+`pergola-bin` is generated from a **stable release**. `docs/VERSIONING.md` says
+dev builds are commits, not tags, so no release tag exists while the project is
+`0.x.y-dev` — and therefore no `pergola-bin` package can honestly exist yet.
+The pipeline that will produce it is in place:
+
+* `.github/workflows/release.yml` — on a `v<version>` tag (matching `Cargo.toml`,
+  never a `-dev` version) it builds `x86_64` and `aarch64`, packages them with
+  `scripts/make-release-artifacts.sh`, verifies the checksums and attaches the
+  tarballs, their `.sha256` files and the generated AUR files to the release.
+  `workflow_dispatch` builds the same artifacts without publishing, so the
+  pipeline can be exercised before a tag exists.
+* `scripts/gen-bin-pkgbuild.sh <version> <x86-tarball> <aarch64-tarball> <dir>`
+  writes `PKGBUILD` and `pergola.install` with the real `sha256sums`. Its
+  `package()` is the `pergola-git` one minus the build, so the file list is
+  identical (verified by building both packages and diffing `bsdtar -tf`).
 
 ## Build and install
 
@@ -75,12 +88,41 @@ package.
 
 ## Cutting a `pergola-bin` package
 
-1. Tag a release and attach a binary (a CI workflow building on `x86_64` and
-   `aarch64` is the missing piece).
-2. Copy this `PKGBUILD`, rename `pkgname=pergola-bin`, drop `makedepends` and
-   `build()`, and point `source=` at the release tarball with a real
-   `sha256sums`.
-3. Keep `package()` identical: the file list is what the acceptance test checks.
+1. Tag a **stable** release whose version equals `Cargo.toml`
+   (`git tag -s v1.0.0 && git push origin v1.0.0`). The workflow refuses a
+   mismatch, and refuses any `-dev` version.
+2. The release carries `pergola-<version>-{x86_64,aarch64}-linux-gnu.tar.gz`,
+   their `.sha256` files, `PKGBUILD` and `pergola.install`.
+3. Copy those two files into the AUR `pergola-bin` repo (`pergola.install` is
+   `pergola-git`'s scriptlet with the package name substituted) and generate
+   `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO`.
+
+## Exercising the pipeline without a tag
+
+The same scripts run by hand, so every step short of the tag is testable:
+
+```sh
+# 1. build the binary, then the artifact (the binary's --version must match)
+cargo build --release
+scripts/make-release-artifacts.sh 1.0.0 x86_64 target/release/pergola /tmp/dist
+(cd /tmp/dist && sha256sum -c ./*.sha256)
+
+# 2. generate the AUR files (pass the aarch64 tarball too; CI has both)
+scripts/gen-bin-pkgbuild.sh 1.0.0 \
+  /tmp/dist/pergola-1.0.0-x86_64-linux-gnu.tar.gz \
+  /tmp/dist/pergola-1.0.0-aarch64-linux-gnu.tar.gz /tmp/aur
+
+# 3. build the package. Point the arch's source at the local tarball: every
+#    checksum is real, only the download is skipped.
+cd /tmp/aur
+sed -i 's|^source_x86_64=.*|source_x86_64=("file:///tmp/dist/pergola-1.0.0-x86_64-linux-gnu.tar.gz")|' PKGBUILD
+makepkg -f
+bsdtar -tf pergola-bin-*.pkg.tar.zst | sort
+```
+
+Step 3 is how the `package()` function and the file list were verified; the
+sums in the generated `PKGBUILD` are the ones `sha256sum` computes over the
+artifacts, not placeholders.
 
 ## Verifying the package without installing it
 

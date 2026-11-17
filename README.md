@@ -52,6 +52,11 @@ system paths — `makepkg -si` from that directory. It is not published to the A
 yet. Do not use both: the source install's unit and autostart entry shadow the
 packaged ones.
 
+Prebuilt tarballs and a generated `pergola-bin` AUR package are attached to
+**stable** releases by `.github/workflows/release.yml`. There is no release yet:
+per the versioning rules, dev builds are commits and only stable versions are
+tagged, so the first release comes with 1.0.0.
+
 ```bash
 pergola doctor          # display, EWMH client list, running WM
 pergola status          # the daemon's view: screen, panels, depth, gap, overlay

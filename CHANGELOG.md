@@ -29,9 +29,23 @@ that tag instead of appearing on the wrong workspace.
   (disjoint sets, a one-child split collapsing, an empty tag showing only the
   desktop, a tag surviving its last window, and a tagged document parsed by a
   reader that only knows `root`); the e2e asserts two tags hold disjoint view
-  sets, only the active tag is mapped, a parked window's client area is off the
-  work area, the escape hatch, a daemon restart and a `tag` event. The harvest's
-  **workspace / tag** class was 236 issues.
+  sets, only the active tag is mapped, a parked window is mostly off the work
+  area (0% of its client visible under xfwm4, 7% under openbox — both clamp a
+  window they must not lose), the escape hatch, a daemon restart and a `tag`
+  event. The harvest's **workspace / tag** class was 236 issues.
+
+* **A release pipeline for prebuilt binaries.** `.github/workflows/release.yml`
+  builds `x86_64` and `aarch64` on a `v<version>` tag and attaches
+  `pergola-<version>-<arch>-linux-gnu.tar.gz`, its `.sha256`, and a generated
+  AUR `PKGBUILD` + `pergola.install` to the GitHub release; `workflow_dispatch`
+  builds the same artifacts without publishing. `scripts/make-release-artifacts.sh`
+  packages the binary, `pergola-health`, the unit, the autostart entry, the
+  example config and the docs into a deterministic tarball;
+  `scripts/gen-bin-pkgbuild.sh` writes the `pergola-bin` files with the real
+  checksums. The run fails on a `-dev` version or a tag that disagrees with
+  `Cargo.toml`, so a mislabelled artifact cannot be published. No release exists
+  yet: `docs/VERSIONING.md` tags only stable releases, so the pipeline waits for
+  the 1.0.0 gate (BACKLOG, *Blocked*).
 
 ### Changed
 
@@ -41,6 +55,13 @@ that tag instead of appearing on the wrong workspace.
   ignoring the keys — every view is still in `root`, so nothing is lost. This is
   a document-format change and therefore a deliberate `MINOR` bump
   ([docs/VERSIONING.md](docs/VERSIONING.md)).
+
+### Fixed
+
+* **`pergola-git`'s `pkgver()` was hard-coded to `0.4.0`** and did not follow
+  the crate version, so the AUR package reported an older minor after a bump. It
+  now reads `Cargo.toml` and strips `-dev` (pacman's `pkgver` cannot contain a
+  hyphen); `makepkg --nobuild` reports `0.5.0.r41.g96f7d06`.
 
 ## [0.4.0-dev]
 
