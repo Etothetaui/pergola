@@ -582,7 +582,14 @@ impl Daemon {
             }
             if let Some(visible) = panel.visible() {
                 if let Some(seat) = self.seats.iter().find(|s| s.seat == visible) {
-                    let _ = self.x.raise(seat.window);
+                    // Raising a window on another host desktop is not a no-op:
+                    // xfwm4 answers the raise by mapping it on the *current*
+                    // desktop (measured 2026-11-17: `arrange` re-docked a
+                    // floating window parked on desktop 3 and it came back).
+                    // The WM there owns it, so leave it unraised too.
+                    if !self.foreign_desktop(seat.window) {
+                        let _ = self.x.raise(seat.window);
+                    }
                 }
             }
         }

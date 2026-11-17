@@ -410,7 +410,7 @@ before Pergola and maps every failure class to the fix that answers it.
 
 ```bash
 cargo test               # 131 unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
-scripts/e2e.sh           # 212 assertions against Xvfb + a real WM + real xterms
+scripts/e2e.sh           # 213 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

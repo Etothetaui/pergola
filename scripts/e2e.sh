@@ -1651,7 +1651,22 @@ else
     if [ "${DESK:-0}" = "1" ]; then
       P arrange >/dev/null 2>&1; sleep 0.6
       DESK2=$(xprop -id "$TAG_A" _NET_WM_DESKTOP 2>/dev/null | awk '{print $NF}')
-      check_eq "1" "${DESK2:-0}" "arrange leaves a window on another host desktop"
+      check_eq "1" "${DESK2:-0}" "arrange leaves a tiled window on another host desktop"
+      # The harder case is a *floating* window: `arrange` re-docks it, and the
+      # raise that follows used to make xfwm4 map it on this desktop again
+      # (measured 2026-11-17, the `pi-tile --park` repro). Float it first, then
+      # park it, then arrange: it must stay where the WM put it.
+      wmctrl -i -r "$TAG_A" -t 0 >/dev/null 2>&1; sleep 0.5
+      P float --window "$TAG_A" >/dev/null 2>&1; sleep 0.4
+      wmctrl -i -r "$TAG_A" -t 1 >/dev/null 2>&1; sleep 0.6
+      DESK3=$(xprop -id "$TAG_A" _NET_WM_DESKTOP 2>/dev/null | awk '{print $NF}')
+      if [ "${DESK3:-0}" = "1" ]; then
+        P arrange >/dev/null 2>&1; sleep 0.6
+        DESK4=$(xprop -id "$TAG_A" _NET_WM_DESKTOP 2>/dev/null | awk '{print $NF}')
+        check_eq "1" "${DESK4:-0}" "arrange leaves a floating window on another host desktop"
+      else
+        say "  (the WM did not move the floating window to desktop 1; skipping)"
+      fi
       # Bring it back: the tile is waiting, and the next arrange lands it there.
       wmctrl -i -r "$TAG_A" -t 0 >/dev/null 2>&1; sleep 0.5
       P arrange >/dev/null 2>&1; sleep 0.6

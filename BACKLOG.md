@@ -22,6 +22,13 @@ unit-tested (current, foreign, sticky, missing properties) and the e2e moves a
 window to a second host desktop, runs `arrange`, asserts it stays, then returns
 it to its tile.
 
+A second hole the same measurement found: `arrange` **docks** a floating window
+back into the tree, and the raise that follows a fresh dock is what xfwm4 uses
+to remap a window onto the current desktop. The geometry move is skipped for a
+foreign window, but the raise was not, so a parked window came back the moment
+`arrange` gave it a panel. The raise now sits behind the same guard, and the
+e2e covers the floating case as well as the docked one.
+
 ### Tab groups — `views > 1` is real (0.4.0-dev)
 
 A panel with several views keeps every view mapped at the panel rectangle and raises the

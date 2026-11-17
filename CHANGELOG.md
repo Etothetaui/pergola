@@ -44,10 +44,13 @@ All notable changes to Pergola. Format follows the versioning rules in
   `pi-tile --park` failure. A seat whose `_NET_WM_DESKTOP` is neither the
   current desktop nor the sticky `0xFFFFFFFF` value is now skipped by `apply`,
   `park_inactive` and the floating pass; a newly opened window on another
-  desktop is not adopted until the user brings it here. The predicate is
-  unit-tested (current, foreign, sticky, and missing properties) and the e2e
-  moves a window to a second host desktop, runs `arrange`, and asserts the
-  window stays there before returning it to its tile.
+  desktop is not adopted until the user brings it here. Raising is skipped too:
+  its geometry may be untouched, but xfwm4 answers a raise request by mapping
+  the window on the *current* desktop, which is how a floated, parked window
+  still came back. The predicate is unit-tested (current, foreign, sticky, and
+  missing properties) and the e2e moves both a tiled and a floating window to a
+  second host desktop, runs `arrange`, and asserts each stays there before
+  returning it to its tile.
 
 * **Named workspaces (tags).** A tag is a named set of views; the active tag
 decides which views are laid out. `pergola window-tag <name>` moves the focused
