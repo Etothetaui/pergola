@@ -9,6 +9,17 @@ and the soak/e2e checks; closing an item here means committing code, tests and a
 
 ## Done
 
+### The queue can say it is empty, so a pass is not spent on nothing (0.5.0-dev)
+
+`pergola-dev` opened a session every 2 days whether or not this file had an item in it; the
+2026-11-17 pass closed all 19 and then re-verified a clean tree 20 times in 70 s (bug #198).
+`scripts/backlog-open.sh` answers the question for a scheduler: exit 0 + `N open` when an item
+sits outside `## Done` / `## Blocked` / `## Not planned`, exit 1 with the reason when none does
+(`--list` prints them, `PERGOLA_BACKLOG` points it at a fixture). The agenda row now registers
+that command as its queue check, so a due pass with an empty queue records `due-empty`, rolls the
+row forward and opens no session. Measured: the script returns 1 on this file today and 0 with
+`2 open` on a fixture; `pi-text dispatch --due --dry-run` prints `idle pergola-dev`.
+
 ### A drag reported inside the own-apply guard still docks (0.5.0-dev)
 
 Openbox reports a whole drag as one ICCCM-synthetic `ConfigureNotify`, and the

@@ -37,6 +37,13 @@ All notable changes to Pergola. Format follows the versioning rules in
   no longer silent. The e2e binds a chord to a command that fails at run time
   (`dock sideways`) and asserts the toast arrives.
 
+* **`scripts/backlog-open.sh` — is there work left?** Exits 0 with `N open` when
+  BACKLOG.md holds an item outside `## Done` / `## Blocked` / `## Not planned`,
+  and 1 with the reason when it does not (`--list` names them). The agenda's
+  `pergola-dev` row checks it before opening a session, so a development pass is
+  no longer scheduled against an empty queue — the 2026-11-17 pass ran 49 hours,
+  closed every item and then re-verified a clean tree 20 times (bug #198).
+
 ### Fixed
 
 * **A window dragged under openbox still docks.** Openbox reports a whole drag
