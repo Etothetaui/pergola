@@ -2239,6 +2239,12 @@ impl Daemon {
                             command.split_whitespace().map(str::to_string).collect();
                         if let Err(e) = self.handle(&argv) {
                             eprintln!("pergola: {command}: {e:#}");
+                            // A chord has no terminal, so without this the
+                            // failure is invisible. The toast is best effort:
+                            // `notify::send` never fails the command.
+                            if self.config.notify {
+                                crate::notify::send(&format!("{command}: {e:#}"));
+                            }
                         }
                     }
                 }

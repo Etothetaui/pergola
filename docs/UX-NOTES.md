@@ -57,6 +57,13 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   `PERGOLA_NOTIFY` for another program) because the menu runs detached.
   Verified on xfwm4 in `scripts/e2e.sh` with a stand-in notifier — the value is
   still refused and the file is not touched.
+* Hear about a failed hotkey or palette action: a chord runs inside the daemon
+  and a palette action runs detached, so their stderr goes to the journal — the
+  one place a person does not look. The `notify` key (default `true`) sends the
+  failure as a desktop notification (`notify-send`, or `PERGOLA_NOTIFY`), best
+  effort: without a notifier it still reaches the journal. Verified on xfwm4 and
+  openbox in `scripts/e2e.sh` by binding a chord to a command that fails at run
+  time (`dock sideways`).
 * Resize a split without a pointer or a target: `Ctrl+Alt+,` / `Ctrl+Alt+.`
   nudge the focused window's share by 5% (the bound chord is read from the
   daemon, so a desktop that owns Ctrl+Alt gets the Super fallback), and the
@@ -79,7 +86,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Chords | The bound chords differ per desktop (xfwm4 owns `Ctrl+Alt+arrows`, so camera keys are `Super+…`). A `bindings` map in `config.json` remaps them, `pergola bind`/`unbind` change one chord without editing JSON, and `pergola settings` (0.4.0-dev) lists every command with the chords actually bound and rebinds the one you pick. A chord the desktop already owns is still only reported in the reload output, not as a notification, and the menu does not say a chord is owned *before* you pick it | Anyone whose desktop claims chords | 1 | Notification for a conflict, and an owned-chord mark in the settings rows |
 | Palette | Needs an external menu program; without one the hotkey fails into the daemon log, where the user never looks | Minimal installs (no rofi) | 3 | `notify-send` fallback naming the fix; `install.sh` warns; palette row "Install rofi" |
 | New windows | `auto_dock` is now a tri-state (`off`/`new`/`all`), but there is no palette toggle: changing it means editing `config.json` and reloading | Everyone who tiles | 2 | A palette toggle for `auto_dock` |
-| Feedback | Success and failure of a hotkey action are printed to a terminal the user does not have. A *rejected setting* is now also a desktop notification (0.5.0-dev), but a failed dock/float/ratio still only reaches the journal | Everyone without a terminal | 2 | Optional `notify-send` toast for dock/float/errors, behind the same `PERGOLA_NOTIFY` override |
+| Feedback | Success and failure of a hotkey action are printed to a terminal the user does not have. A *rejected setting* and a *failed hotkey/palette action* are now also desktop notifications (0.5.0-dev, `notify` key), but the toast is one line naming the command and its error — it does not say which window or offer a retry | Everyone without a terminal | 2 | A richer toast naming the window and a one-click retry; the plain message is in place |
 | Zoom + drag | A drag-out while zoomed converts screen coordinates as if they were world coordinates, so the floating window can land outside the desktop leaf | Untiling while zoomed | 2 | Inverse camera transform for the drop rectangle |
 | Terminal split | `split-terminal` assumes `xfce4-terminal` when `$TERMINAL` is unset, which is wrong on most desktops | Non-XFCE users | 2 | Fall back to the desktop's terminal from `XDG_CURRENT_DESKTOP`, and say which config key to set |
 | Accessibility | No keyboard way to select a tile other than activating its window; the overlay draws no text and exposes no AT-SPI | Keyboard-only / low-vision | 3 | Focus-by-chord across tiles; overlay labels with the tile's size |
@@ -89,10 +96,10 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 
 ## Next three
 
-1. **The same `PERGOLA_NOTIFY` toast for a failed dock/float** (the Feedback
-   row) — the last place where the desktop does not tell you what happened. The
-   overlay cue and the `dim` key are done; what remains is the look-at-it check
-   on a real bare-X server.
+1. **A richer toast for a failed dock/float** (the Feedback row) — the plain
+   `PERGOLA_NOTIFY` message is in place (0.5.0-dev); what remains is naming the
+   window and offering a retry. The overlay cue and the `dim` key are done; what
+   remains there is the look-at-it check on a real bare-X server.
 2. **A workspace indicator that is not a notification** (the Workspaces row):
    the chords and palette rows are done; the remaining gap is persistent
    on-screen state, which needs text drawing in the x11 crate rather than a

@@ -99,6 +99,11 @@ pub struct Config {
     /// workspaces must not lose its own `Super+1` shortcuts or blank its screen
     /// when a chord is pressed with no tag defined.
     pub tags: bool,
+    /// Show a desktop notification when a hotkey action fails. A chord runs
+    /// inside the daemon, where stderr goes to the journal — the one place a
+    /// person does not look. On by default; the toast is best effort and the
+    /// failure still reaches the journal either way.
+    pub notify: bool,
     /// Per-command chord overrides: command → candidate chords, tried in order.
     /// A command named here replaces its default candidates entirely (an empty
     /// list unbinds it); commands not mentioned keep the defaults. Any command
@@ -125,6 +130,7 @@ impl Default for Config {
             hotkeys: true,
             edge_dock: true,
             tags: false,
+            notify: true,
             bindings: HashMap::new(),
         }
     }
@@ -142,6 +148,7 @@ pub const KNOWN_KEYS: &[&str] = &[
     "hotkeys",
     "edge_dock",
     "tags",
+    "notify",
     "bindings",
 ];
 
@@ -330,7 +337,7 @@ fn parse_value(key: &str, text: &str) -> Result<serde_json::Value> {
                 .map_err(|_| anyhow!("{key} must be a number, got {text:?}"))?;
             serde_json::json!(number)
         }
-        "overlay" | "hotkeys" | "edge_dock" | "tags" => {
+        "overlay" | "hotkeys" | "edge_dock" | "tags" | "notify" => {
             serde_json::json!(match text.to_ascii_lowercase().as_str() {
                 "on" | "true" | "yes" | "1" => true,
                 "off" | "false" | "no" | "0" => false,
@@ -378,6 +385,7 @@ pub fn help_text(key: &str) -> &'static str {
         "hotkeys" => "grab the default chords at startup; on | off (default on)",
         "edge_dock" => "tile a window dropped on a screen edge; on | off (default on)",
         "tags" => "bind Super+1…9 to named workspaces; on | off (default off)",
+        "notify" => "show a desktop notification when a hotkey action fails; on | off (default on)",
         "bindings" => "per-command chord overrides; change them through the chord rows",
         _ => "a value this build does not explain",
     }
@@ -430,6 +438,7 @@ pub fn value_text(config: &Config, key: &str) -> String {
         "hotkeys" => config.hotkeys.to_string(),
         "edge_dock" => config.edge_dock.to_string(),
         "tags" => config.tags.to_string(),
+        "notify" => config.notify.to_string(),
         "bindings" => {
             if config.bindings.is_empty() {
                 "{}".to_string()

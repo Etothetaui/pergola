@@ -129,6 +129,7 @@ the defaults):
   "terminal": "xfce4-terminal",
   "hotkeys": true,
   "edge_dock": true,
+  "notify": true,
   "bindings": {
     "zoom-out": ["Super+Page_Up"],
     "back": ["Super+b", "Alt+b"],
@@ -150,6 +151,7 @@ the defaults):
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
 | `edge_dock` | `true` | dock a floating window dropped on a screen edge (mouse tiling) |
+| `notify` | `true` | show a desktop notification when a hotkey or palette action fails. A chord runs inside the daemon, where stderr goes to the journal — the one place a person does not look. Best effort: without a notifier the failure still reaches the journal |
 | `bindings` | `{}` | per-command chord overrides: command → candidate chords, tried in order |
 
 ### Remapping keys

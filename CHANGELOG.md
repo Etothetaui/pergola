@@ -27,6 +27,16 @@ All notable changes to Pergola. Format follows the versioning rules in
   of the plan survives. The notification is asserted through the `PERGOLA_NOTIFY`
   stub the suite already uses for a rejected setting.
 
+* **A failed hotkey or palette action reaches a desktop notification.** A chord
+  runs inside the daemon and a palette action runs as a detached child, so their
+  stderr goes to the journal — the one place a person does not look. The new
+  `notify` config key (default `true`) sends the failure as a desktop
+  notification through `notify-send` (or `PERGOLA_NOTIFY`), best effort: without
+  a notifier the failure still reaches the journal. The palette now captures the
+  action's reply instead of letting it hit `/dev/null`, so a rejected action is
+  no longer silent. The e2e binds a chord to a command that fails at run time
+  (`dock sideways`) and asserts the toast arrives.
+
 ### Fixed
 
 * **A window docked beside the desktop leaf is visible, and the desktop keeps its

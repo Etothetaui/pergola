@@ -267,9 +267,9 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
   activation requests and named workspaces (disjoint tag sets, only the active
   tag laid out, a parked window mostly off the work area, the escape
   hatch, a restart and a `tag` record), settings help and a rejected value's
-  notification, a ratio nudge chord, the workspace chords, and a window on
-  another host desktop left where the WM put it — 213 assertions on xfwm4, 211
-  on openbox. Openbox runs
+  notification, a ratio nudge chord, the workspace chords, a window on another
+  host desktop left where the WM put it, and a failed hotkey's notification —
+  212 assertions on xfwm4 and 212 on openbox. Openbox runs
   the same suite and is also green; it skips the drop-frame assertions because
   it coalesces a drag into one `ConfigureNotify` (a WM capability, not a
   tolerance), and its tree can hold one more tile, so the geometry count is not

@@ -1680,7 +1680,29 @@ else
 fi
 
 say
-say "16. screenshot"
+say "16. a failed hotkey action reaches a desktop notification"
+# A chord runs inside the daemon, where stderr goes to the journal — the one
+# place a person does not look. A command that fails (here: a dock edge the
+# daemon does not know) must still reach the person, so the daemon also sends
+# it as a desktop notification. The sandbox-wide stub notifier records the call.
+: > "$PERGOLA_NOTIFY_LOG"
+"$BIN" --socket "$SOCK" bind "dock sideways" Super+Escape >/dev/null 2>&1 || fail "cannot bind the failing command"
+sleep 0.4
+FAIL_CHORD=$(command_chord 'dock sideways') || fail "the failing command has no chord"
+xdotool key "$FAIL_CHORD"; sleep 0.7
+for _ in $(seq 1 20); do [ -s "$PERGOLA_NOTIFY_LOG" ] && break; sleep 0.1; done
+if grep -c 'dock sideways' "$PERGOLA_NOTIFY_LOG" >/dev/null; then
+  ok "a failed hotkey action also reaches a desktop notification"
+else
+  bad "no notification for the failed hotkey: $(cat "$PERGOLA_NOTIFY_LOG" 2>/dev/null)"
+fi
+# Leave the plan as it was: the screenshot and anyone reading the config must
+# not find a chord that only this test wanted.
+"$BIN" --socket "$SOCK" unbind "dock sideways" >/dev/null 2>&1 || fail "cannot unbind the failing command"
+sleep 0.3
+
+say
+say "17. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

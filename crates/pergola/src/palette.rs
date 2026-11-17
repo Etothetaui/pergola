@@ -532,15 +532,31 @@ fn chosen(output: &Output, kind: Kind) -> String {
 
 fn spawn_action(argv: &[String]) -> Result<()> {
     let exe = env::current_exe().context("cannot locate the pergola executable")?;
-    let status = Command::new(exe)
+    let output = Command::new(exe)
         .args(argv)
-        .status()
+        .output()
         .with_context(|| format!("cannot run `pergola {}`", argv.join(" ")))?;
-    if !status.success() {
+    // The action's own reply still belongs to whoever ran the palette.
+    let _ = std::io::stdout().write_all(&output.stdout);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
         eprintln!(
-            "pergola: palette: `pergola {}` exited with {status}",
-            argv.join(" ")
+            "pergola: palette: `pergola {}` exited with {}: {detail}",
+            argv.join(" "),
+            output.status
         );
+        // The palette's stderr is /dev/null when the daemon launched it, so a
+        // failed action would be invisible without a toast. Best effort: a
+        // missing notifier never turns a rejected action into a crash.
+        if crate::config::Config::load().notify {
+            let message = if detail.is_empty() {
+                format!("pergola {} failed", argv.join(" "))
+            } else {
+                detail.to_string()
+            };
+            crate::notify::send(&message);
+        }
     }
     Ok(())
 }
