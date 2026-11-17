@@ -38,7 +38,6 @@ if [ ! -f "$CONFIG_DIR/config.json" ]; then
   "auto_dock": false,
   "overlay": false,
   "desktop_share": 0.0,
-  "terminal": "xfce4-terminal",
   "hotkeys": true,
   "edge_dock": true
 }
@@ -79,8 +78,21 @@ fi
 
 echo
 echo "installed. try:"
-echo "  pergola status"
-echo "  pergola keys --check"
-echo "  pergola-health        # soak check: daemon, cpu, layout, drift, orphans"
-echo "  pergola dock left     # dock the focused window"
-echo "  pergola arrange       # tile every window into a fractal tree"
+NEXT_BIN="$BINDIR/pergola"
+NEXT_HEALTH="$BINDIR/pergola-health"
+if [ "$(command -v pergola || true)" != "$BINDIR/pergola" ]; then
+  echo "  note: your shell does not resolve 'pergola' to this install; the full commands below use the new binary"
+fi
+echo "  $NEXT_BIN status"
+echo "  $NEXT_BIN keys --check"
+echo "  $NEXT_HEALTH        # soak check: daemon, cpu, layout, drift, orphans"
+echo "  $NEXT_BIN dock left  # dock the focused window"
+echo "  $NEXT_BIN arrange    # tile every window into a fractal tree"
+if [ -n "${PERGOLA_MENU:-}" ]; then
+  if ! command -v "$PERGOLA_MENU" >/dev/null && [ ! -x "$PERGOLA_MENU" ]; then
+    echo "  note: PERGOLA_MENU does not name an executable menu; fix or unset it"
+  fi
+elif ! command -v rofi >/dev/null && ! command -v zenity >/dev/null &&
+     ! command -v yad >/dev/null && ! command -v dmenu >/dev/null; then
+  echo "  note: the action menu needs rofi, zenity, yad or dmenu; install one or set PERGOLA_MENU"
+fi

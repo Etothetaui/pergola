@@ -1435,6 +1435,29 @@ else
   bad "the second window is not on tag play: $(P list | grep "$TAG_B")"
 fi
 
+# Moving a live window between tile and floating layers must keep its
+# workspace; only closing the window removes that membership.
+if P float --window "$TAG_A" >/dev/null 2>&1; then
+  sleep 0.4
+  if P list | grep -q "^floating.*$TAG_A.*\[tag work\]"; then
+    ok "floating preserves the window's workspace"
+  else
+    bad "floating erased the window's workspace: $(P list | grep "$TAG_A")"
+  fi
+else
+  bad "floating the tagged window failed"
+fi
+if P dock left --window "$TAG_A" >/dev/null 2>&1; then
+  sleep 0.4
+else
+  bad "re-docking the tagged window failed"
+fi
+if P list | grep -q "^docked.*$TAG_A.*\[tag work\]"; then
+  ok "re-docking preserves the window's workspace"
+else
+  bad "moving a window erased its workspace: $(P list | grep "$TAG_A")"
+fi
+
 # Switching to a tag maps only its views; the others leave the screen.
 P tag-view work >/dev/null 2>&1; sleep 0.6
 check_eq "1" "$(P rects | grep -c .)" "tag work lays out one panel"
@@ -1704,6 +1727,35 @@ sleep 0.3
 say
 say "17. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
+
+# Undo can restore a snapshot made before a window existed. The new window
+# must remain managed and retain its workspace even if a prior snapshot is
+# restored. Run this after the other workspace checks so undo's history does
+# not alter their starting layout.
+P tag-view work >/dev/null 2>&1; sleep 0.4
+P tag-view play >/dev/null 2>&1; sleep 0.4
+xterm -T pergola-e2e-undo-tag -e sh -c 'exec sleep 3600' >/dev/null 2>&1 & NEW_TAG_PID=$!
+XPIDS+=("$NEW_TAG_PID")
+sleep 1
+NEW_TAG_WINDOW=$(xdotool search --name '^pergola-e2e-undo-tag$' 2>/dev/null | head -1)
+[ -n "$NEW_TAG_WINDOW" ] || fail "the post-snapshot workspace window did not appear"
+NEW_TAG_WINDOW=$(printf '0x%08x' "$NEW_TAG_WINDOW")
+for _ in $(seq 1 50); do
+  P list | grep -q "^floating.*$NEW_TAG_WINDOW.*\[tag play\]" && break
+  sleep 0.1
+done
+for _ in $(seq 1 8); do
+  P undo >/dev/null 2>&1; sleep 0.3
+  P status | grep -q 'tag work' && break
+done
+if P status | grep -q 'tag work' &&
+   P list | grep -q "^parked.*$NEW_TAG_WINDOW.*\[tag play\]"; then
+  ok "undo keeps a newer live window on its original workspace"
+else
+  bad "undo moved or lost the newer workspace window: $(P status); $(P list | grep "$NEW_TAG_WINDOW")"
+fi
+kill "$NEW_TAG_PID" 2>/dev/null || true
+sleep 0.4
 
 say
 printf 'e2e: %d passed, %d failed (wm=%s)\n' "$PASS" "$FAIL" "$WM"

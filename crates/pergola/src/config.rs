@@ -1,6 +1,7 @@
 //! Configuration and paths.
 
 use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -126,7 +127,7 @@ impl Default for Config {
             // different strength.
             dim: 0.4,
             desktop_share: 0.0,
-            terminal: std::env::var("TERMINAL").unwrap_or_else(|_| "xfce4-terminal".to_string()),
+            terminal: default_terminal(),
             hotkeys: true,
             edge_dock: true,
             tags: false,
@@ -381,7 +382,7 @@ pub fn help_text(key: &str) -> &'static str {
         "overlay" => "draw split lines in the gaps; on | off (default off)",
         "dim" => "overlay dim strength under a compositor; 0 (off) to 0.9 (default 0.4)",
         "desktop_share" => "screen share the desktop leaf keeps; 0 to <1 (default 0)",
-        "terminal" => "program `split-terminal` runs (default $TERMINAL, else xfce4-terminal)",
+        "terminal" => "program `split-terminal` runs (default $TERMINAL, else an installed terminal)",
         "hotkeys" => "grab the default chords at startup; on | off (default on)",
         "edge_dock" => "tile a window dropped on a screen edge; on | off (default on)",
         "tags" => "bind Super+1…9 to named workspaces; on | off (default off)",
@@ -588,11 +589,39 @@ fn terminal_exists(term: &str) -> bool {
     }
     let path = Path::new(term);
     if path.is_absolute() || term.contains('/') {
-        return path.is_file();
+        return is_executable(path);
     }
     std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(term).is_file()))
+        .map(|paths| std::env::split_paths(&paths).any(|dir| is_executable(&dir.join(term))))
         .unwrap_or(false)
+}
+
+fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+fn default_terminal() -> String {
+    if let Ok(explicit) = std::env::var("TERMINAL") {
+        return explicit;
+    }
+    [
+        "xfce4-terminal",
+        "x-terminal-emulator",
+        "gnome-terminal",
+        "konsole",
+        "mate-terminal",
+        "lxterminal",
+        "alacritty",
+        "kitty",
+        "urxvt",
+        "xterm",
+    ]
+    .into_iter()
+    .find(|term| terminal_exists(term))
+    .unwrap_or("xfce4-terminal")
+    .to_string()
 }
 
 /// The 1-based line each *top-level* key of the object starts on, whether the

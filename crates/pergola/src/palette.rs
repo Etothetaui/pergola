@@ -62,12 +62,11 @@ const CAMERA: &[(&str, &[&str])] = &[
     ("Show the whole tree", &["everything"]),
     ("Split with a new terminal", &["split-terminal"]),
     ("Toggle the split overlay", &["overlay", "toggle"]),
-    ("Undo the last layout change", &["undo"]),
 ];
 
 /// The rows for one state. Order is deliberate: the four dock edges, then the
-/// one action that changes where the window lives, then the ratios, then the
-/// whole-layout and camera commands.
+/// one action that changes where the window lives, then Undo where it remains
+/// visible in a short menu, then the ratios and whole-layout commands.
 pub fn items_for(state: &State) -> Vec<Item> {
     let mut rows: Vec<Item> = TILE
         .iter()
@@ -78,6 +77,7 @@ pub fn items_for(state: &State) -> Vec<Item> {
     } else {
         rows.push(row("Float this window", &["float"]));
     }
+    rows.push(row("Undo the last layout change", &["undo"]));
     rows.extend(RATIOS.iter().map(|&(label, argv)| row(label, argv)));
     rows.extend(CAMERA.iter().map(|&(label, argv)| row(label, argv)));
     rows.extend(workspace_rows(state));
@@ -246,12 +246,14 @@ fn prompt(state: &State) -> String {
 /// The caller returns immediately: a hotkey is handled inside the daemon's
 /// event loop, and the CLI exits as soon as it has printed. The menu itself
 /// therefore must live in a process of its own, not a thread of either.
-pub fn open() -> Result<()> {
+pub fn open(socket: &Path) -> Result<()> {
     if find_menu().is_none() {
         return Err(missing_menu());
     }
     let exe = env::current_exe().context("cannot locate the pergola executable")?;
     let mut child = Command::new(exe)
+        .arg("--socket")
+        .arg(socket)
         .arg("palette-run")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -268,18 +270,24 @@ pub fn open() -> Result<()> {
 /// Run the menu and hand the chosen action to `pergola <action>`. Blocking:
 /// this is what `pergola palette-run` does in its own process.
 pub fn run(socket: &Path) -> Result<()> {
-    let menu = find_menu().ok_or_else(missing_menu)?;
+    let menu = find_menu().ok_or_else(|| {
+        let error = missing_menu();
+        notify_failure(&format!("{error:#}"));
+        error
+    })?;
     run_menu(&menu, socket)
 }
 
 /// Show the settings palette in a detached `pergola settings-run` process, so a
 /// hotkey does not block the daemon's event loop while a menu is open.
-pub fn open_settings() -> Result<()> {
+pub fn open_settings(socket: &Path) -> Result<()> {
     if find_menu().is_none() {
         return Err(missing_menu());
     }
     let exe = env::current_exe().context("cannot locate the pergola executable")?;
     let mut child = Command::new(exe)
+        .arg("--socket")
+        .arg(socket)
         .arg("settings-run")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -294,19 +302,23 @@ pub fn open_settings() -> Result<()> {
 
 /// One pass of the settings menu: pick a row, type a value, apply it. Blocking,
 /// so it runs in its own process (`pergola settings-run`).
-pub fn run_settings() -> Result<()> {
-    let menu = find_menu().ok_or_else(missing_menu)?;
+pub fn run_settings(socket: &Path) -> Result<()> {
+    let menu = find_menu().ok_or_else(|| {
+        let error = missing_menu();
+        notify_failure(&format!("{error:#}"));
+        error
+    })?;
     let report = crate::config::Config::inspect();
     let rows = crate::config::settings_rows(&report.config);
     let labels: Vec<&str> = rows.iter().map(|(label, _)| label.as_str()).collect();
-    let output = show_list(&menu, "pergola settings", &labels)?;
-    let label = chosen(&output, menu.kind);
-    if label.is_empty() {
+    let output = visible_menu_error(show_list(&menu, "pergola settings", &labels))?;
+    let Some(label) = checked_choice(&output, menu.kind, "settings menu")? else {
         return Ok(()); // cancelled
-    }
+    };
     let Some((_, setting)) = rows.iter().find(|(row, _)| row == &label) else {
-        eprintln!("pergola: settings: no row named {label:?}");
-        return Ok(());
+        let message = format!("settings menu returned an unknown choice: {label:?}");
+        notify_failure(&message);
+        anyhow::bail!(message);
     };
     let (key, current) = match setting {
         crate::config::Setting::Key(key) => (key.to_string(), crate::config::value_text(&report.config, key)),
@@ -319,11 +331,10 @@ pub fn run_settings() -> Result<()> {
             (command.clone(), current)
         }
     };
-    let typed = entry(&menu, &key, &current)?;
-    let value = chosen(&typed, menu.kind);
-    if value.is_empty() {
+    let typed = visible_menu_error(entry(&menu, &key, &current))?;
+    let Some(value) = checked_choice(&typed, menu.kind, "settings entry")? else {
         return Ok(()); // cancelled
-    }
+    };
     let argv: Vec<String> = match setting {
         crate::config::Setting::Key(key) => vec!["settings".into(), key.to_string(), value],
         // A chord row is a `bind`: it already validates, writes and reloads.
@@ -342,7 +353,7 @@ pub fn run_settings() -> Result<()> {
             argv
         }
     };
-    spawn_argv(&argv)
+    spawn_argv(socket, &argv)
 }
 
 /// Ask for one line of text, prefilled with the value in force where the menu
@@ -378,17 +389,22 @@ fn show_list(menu: &Menu, prompt: &str, labels: &[&str]) -> Result<Output> {
     }
 }
 
-fn spawn_argv(argv: &[String]) -> Result<()> {
+fn spawn_argv(socket: &Path, argv: &[String]) -> Result<()> {
     let exe = env::current_exe().context("cannot locate the pergola executable")?;
     let status = Command::new(exe)
+        .arg("--socket")
+        .arg(socket)
         .args(argv)
         .status()
         .with_context(|| format!("cannot run `pergola {}`", argv.join(" ")))?;
     if !status.success() {
-        eprintln!(
-            "pergola: settings: `pergola {}` exited with {status}",
-            argv.join(" ")
-        );
+        let message = format!("settings: `pergola {}` failed ({status})", argv.join(" "));
+        // Scalar settings validation already notifies in the child. A failed
+        // chord bind has no other desktop feedback.
+        if argv.first().map(String::as_str) != Some("settings") {
+            notify_failure(&message);
+        }
+        anyhow::bail!(message);
     }
     Ok(())
 }
@@ -479,17 +495,37 @@ fn run_menu(menu: &Menu, socket: &Path) -> Result<()> {
     let state = state(socket);
     let items = items_for(&state);
     let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
-    let output = show_list(menu, &prompt(&state), &labels)?;
-
-    let label = chosen(&output, menu.kind);
-    if label.is_empty() {
+    let output = visible_menu_error(show_list(menu, &prompt(&state), &labels))?;
+    let Some(label) = checked_choice(&output, menu.kind, "action menu")? else {
         return Ok(()); // cancelled
-    }
-    let Some(item) = items.into_iter().find(|item| item.label == label.trim()) else {
-        eprintln!("pergola: palette: no action for {label:?}");
-        return Ok(());
     };
-    spawn_action(&item.argv)
+    let Some(item) = items.into_iter().find(|item| item.label == label.trim()) else {
+        let message = format!("action menu returned an unknown choice: {label:?}");
+        notify_failure(&message);
+        anyhow::bail!(message);
+    };
+    spawn_action(socket, &item.argv)
+}
+
+fn visible_menu_error<T>(result: Result<T>) -> Result<T> {
+    result.map_err(|error| {
+        notify_failure(&format!("menu could not open: {error:#}"));
+        error
+    })
+}
+
+fn checked_choice(output: &Output, kind: Kind, context: &str) -> Result<Option<String>> {
+    if !output.status.success() {
+        // Rofi, dmenu and the dialog tools use exit 1 for Escape/cancel.
+        if output.status.code() == Some(1) && output.stdout.is_empty() {
+            return Ok(None);
+        }
+        let message = format!("{context} failed ({})", output.status);
+        notify_failure(&message);
+        anyhow::bail!(message);
+    }
+    let choice = chosen(output, kind);
+    Ok((!choice.is_empty()).then_some(choice))
 }
 
 /// rofi and dmenu read the list from stdin and print the chosen line.
@@ -530,9 +566,11 @@ fn chosen(output: &Output, kind: Kind) -> String {
     .to_string()
 }
 
-fn spawn_action(argv: &[String]) -> Result<()> {
+fn spawn_action(socket: &Path, argv: &[String]) -> Result<()> {
     let exe = env::current_exe().context("cannot locate the pergola executable")?;
     let output = Command::new(exe)
+        .arg("--socket")
+        .arg(socket)
         .args(argv)
         .output()
         .with_context(|| format!("cannot run `pergola {}`", argv.join(" ")))?;
@@ -549,16 +587,21 @@ fn spawn_action(argv: &[String]) -> Result<()> {
         // The palette's stderr is /dev/null when the daemon launched it, so a
         // failed action would be invisible without a toast. Best effort: a
         // missing notifier never turns a rejected action into a crash.
-        if crate::config::Config::load().notify {
-            let message = if detail.is_empty() {
-                format!("pergola {} failed", argv.join(" "))
-            } else {
-                detail.to_string()
-            };
-            crate::notify::send(&message);
-        }
+        let message = if detail.is_empty() {
+            format!("pergola {} failed", argv.join(" "))
+        } else {
+            detail.to_string()
+        };
+        notify_failure(&message);
+        anyhow::bail!("`pergola {}` failed ({})", argv.join(" "), output.status);
     }
     Ok(())
+}
+
+fn notify_failure(message: &str) {
+    if crate::config::Config::load().notify {
+        crate::notify::send(message);
+    }
 }
 
 #[cfg(test)]

@@ -65,7 +65,7 @@ pergola-health          # soak check; exits non-zero on any failure
 ```
 
 New here? **[docs/FIRST-RUN.md](docs/FIRST-RUN.md)** is the five-minute
-walkthrough — two terminals, two docks, and a glossary for every term the
+walkthrough — three terminals, three docks, and a glossary for every term the
 `status` line prints. Full install, upgrade, uninstall and troubleshooting
 reference: **[docs/SETUP.md](docs/SETUP.md)**.
 
@@ -255,7 +255,7 @@ the edge behaviour off if a drag should never tile.
 | `dim` | `0.4` | strength of the overlay's dim layer, `0` (off) to `0.9`; only used with a compositor. At `0` the split lines are drawn 4 px wide instead of 2, so the boundary still reads without a dim layer |
 | `tags` | `false` | bind `Super+1`…`9` (and `Ctrl+Alt+1`…`9`) to the nine named workspaces, plus `Super+Shift+n` to move the focused window onto one. `on`/`off` |
 | `desktop_share` | `0.0` | desktop strip `arrange` keeps; `0` gives it none |
-| `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
+| `terminal` | `$TERMINAL`, else an installed terminal (`xfce4-terminal` first, `xterm` last) | program used by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
 | `edge_dock` | `true` | dock a window dropped on a screen edge (mouse tiling) |
 | `bindings` | `{}` | per-command chord overrides, `command → [chord, …]` |
@@ -366,9 +366,9 @@ before Pergola and maps every failure class to the fix that answers it.
   and the hidden ones are only reachable by command.
 * A split's ratio can be changed from the keyboard with `pergola ratio 0.3`,
   or by dragging its gap. With `gap: 0` there is no strip to grab, so the
-  command is the only way there. Palette rows for half/third are not built yet.
-* The palette is a fixed list of actions, not a context-aware one (it offers
-  "Float this window" even for a window that is already floating).
+  command is the only way there. The palette also has half/third ratio rows.
+* The palette offers actions for the focused window, followed by layout actions.
+  It hides "Float this window" when the focused window is already floating.
 * Edge docking targets the last focused space; in a deep tree the landing spot may
   be nested rather than at the root, which reads as "it went where I was working".
   The drop frame shows that rectangle while you drag, so aim at the edge you want
@@ -409,8 +409,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 131 unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
-scripts/e2e.sh           # 212 assertions against Xvfb + a real WM + real xterms
+cargo test               # unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
+scripts/e2e.sh           # assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)
