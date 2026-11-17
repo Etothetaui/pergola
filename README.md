@@ -9,6 +9,11 @@ Pergola is a Rust reimplementation of the model popularised by
 inside xfwm4, mutter (X11), kwin_x11, i3, openbox, awesome, or any other
 EWMH-compliant window manager.
 
+**The name:** the model came from TrellisWM — a trellis is the lattice, and a
+pergola is what you build out of one: an open structure overhead that splits the
+sky into nested frames you walk under. That is what a nested desktop looks like
+from inside — a lattice you see through, not a grid you sit in.
+
 ![Pergola: one tile on the left, a nested column of three on the right, and the desktop space](docs/screenshot.png)
 
 ```text
