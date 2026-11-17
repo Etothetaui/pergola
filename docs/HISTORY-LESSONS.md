@@ -224,12 +224,12 @@ current code. They are listed so the gap is visible rather than assumed away.
 
 | Class | Issues | Why it is out of scope today |
 |---|---|---|
-| workspace / tag | 236 | Pergola has views over a single work area, not named tags with their own clients. A "move this window to view 3" chord does not exist. **Filed as `BACKLOG.md` item 1** (a document-format change, so a deliberate `MINOR` bump). |
+| workspace / tag | 236 | Named tags own sets of views; `window-tag` moves a window onto one, `tag-view` switches, and the active tag decides what is laid out. A view on another tag is parked, not unmapped, and keeps its tile so switching back is exact. **Closed in 0.5.0-dev** (document-format `MINOR`: `doc.tags`/`doc.active_tag` behind `serde(default)`). Known gaps: `arrange`/`float-all` act on every tag, the camera and gap are global, and there are no default chords (see `docs/UX-NOTES.md`). |
 | ipc / scripting | 227 | The control socket was request/response only, so every bar re-implemented state from `pergola tree`. **Closed in 0.4.0-dev:** `pergola subscribe` pushes committed transitions as JSON lines, with a bounded per-client queue so a stalled bar cannot stall the WM. |
 | tray / panel | 132 | Pergola does not own the tray or the panel; it reads the work area the desktop's panel leaves. **Deliberately not planned** — a tiler that owns the bar is a desktop environment. |
 | ewmh / icccm | 168 | `_NET_CLIENT_LIST`, `_NET_WM_STATE_*`, `_NET_FRAME_EXTENTS` and `_NET_WORKAREA` are read, `_NET_ACTIVE_WINDOW` is *set* when the daemon focuses a window, and a pager's `_NET_ACTIVE_WINDOW` *request* is read from the root's shared `SubstructureNotify` selection — a taskbar's click-to-focus works, and a request for a hidden tab view switches the tab first. **Closed in 0.4.0-dev.** |
 | compositing | 57 | No compositor interaction; the daemon runs with whatever the desktop provides. **Deliberately not planned** beyond the overlay dim in item 4. |
-| build / packaging | 172 | The repo-root `./install.sh` targets a local build into `~/.local/bin`; **`pergola-git` is packaged for the AUR** and installs to system paths. A prebuilt `pergola-bin` needs a release pipeline, **filed as `BACKLOG.md` item 2**. |
+| build / packaging | 172 | The repo-root `./install.sh` targets a local build into `~/.local/bin`; **`pergola-git` is packaged for the AUR** and installs to system paths. A prebuilt `pergola-bin` needs a release pipeline, **filed as `BACKLOG.md` item 1**. |
 | lock / screensaver | 62 | Screen locking is the desktop's job; Pergola only avoids grabbing keys the locker needs. |
 | performance | 26 | The tree is recomputed per event pass; there is no incremental update for very large trees. |
 

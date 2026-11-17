@@ -254,6 +254,9 @@ const DAEMON_COMMANDS: &[&str] = &[
     "tab-select",
     "tab-next",
     "tab-prev",
+    "tag-view",
+    "window-tag",
+    "tag-remove",
 ];
 
 /// Would the daemon understand this as a command? Lenient on purpose: a false
@@ -530,6 +533,12 @@ TABS
   tab [--window <id>] [--target <panel>]  fold a window into a panel as a tab
   tab-select <seat|window>       show one view of a tab group
   tab-next | tab-prev            cycle the shown view of the focused group
+
+WORKSPACES
+  tag-view [name|all]            switch to a named workspace, `all` to show
+                                 everything (no name: list them)
+  window-tag <name> [--window <id>]  move a window there without switching
+  tag-remove <name>              delete a workspace (its windows stay open)
 
 CONFIG
   config                         the resolved config, each key with its source

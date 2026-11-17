@@ -3,6 +3,45 @@
 All notable changes to Pergola. Format follows the versioning rules in
 [docs/VERSIONING.md](docs/VERSIONING.md).
 
+## [0.5.0-dev]
+
+### Added
+
+* **Named workspaces (tags).** A tag is a named set of views; the active tag
+decides which views are laid out. `pergola window-tag <name>` moves the focused
+window onto a workspace (creating it), `tag-view <name>` switches to it,
+`tag-view all` shows every view again, `tag-view` with no argument lists the
+workspaces (a `*` marks the active one) and `tag-remove <name>` deletes the name
+without closing its windows. A view belongs to at most one tag, so the sets stay
+disjoint; a tag remembers the window that had the keyboard, so returning to it
+lands where you left off; and a window that opens while a tag is shown joins
+that tag instead of appearing on the wrong workspace.
+
+  A view on a tag that is not shown is *parked* below the work area, not
+  unmapped and not dropped: it keeps its seat, its panel, its place in the tree
+  and its rectangle, so switching back is exact and needs no saved layout. The
+  active tag is part of the layout document and survives a restart. `status`
+  names the workspace, `list` marks a parked window and its tag, `rects` reports
+  only the active tag's panels, and the event stream publishes a
+  `{"type":"tag","name":…}` record plus `tag`/`tags` in the state snapshot.
+
+  The pruning rule lives in `pergola-core` as a pure function and is unit-tested
+  (disjoint sets, a one-child split collapsing, an empty tag showing only the
+  desktop, a tag surviving its last window, and a tagged document parsed by a
+  reader that only knows `root`); the e2e asserts two tags hold disjoint view
+  sets, only the active tag is mapped, a parked window's client area is off the
+  work area, the escape hatch, a daemon restart and a `tag` event. The harvest's
+  **workspace / tag** class was 236 issues.
+
+### Changed
+
+* **The layout document gains `doc.tags` and `doc.active_tag`.** Both are
+  `#[serde(default)]`, so a document written before tags loads unchanged (no
+  tag = every view shown) and an older binary reads a tagged document by
+  ignoring the keys — every view is still in `root`, so nothing is lost. This is
+  a document-format change and therefore a deliberate `MINOR` bump
+  ([docs/VERSIONING.md](docs/VERSIONING.md)).
+
 ## [0.4.0-dev]
 
 ### Changed

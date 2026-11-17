@@ -6,7 +6,7 @@ the code or on a real X session during this work, not from a hypothetical user.
 Severity is "how much does this cost the person who meets it": 1 cosmetic,
 3 "they will give up on the feature", 5 "they cannot do the task at all".
 
-## What works today (0.4.0-dev)
+## What works today (0.5.0-dev)
 
 * Tile the focused window from the keyboard: `Ctrl+Alt+Shift+arrows` dock,
   `Ctrl+Alt+Shift+W` floats. Verified on xfwm4 in `scripts/e2e.sh`.
@@ -31,6 +31,13 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   request to the root window; the daemon reads it and focuses the window, and if
   the window is a hidden tab view it shows that view first. Verified on xfwm4 and
   openbox in `scripts/e2e.sh`.
+* Name a workspace and switch to it: `pergola window-tag work` moves the focused
+  window onto a named tag, `pergola tag-view work` lays out only that tag's
+  views and parks the rest below the work area, `tag-view all` brings everything
+  back, and `tag-remove` deletes the name without closing a window. Each tag
+  remembers the window that had the keyboard. Verified on xfwm4 and openbox in
+  `scripts/e2e.sh` (disjoint tag sets, only the active tag's panels mapped, the
+  parked client area off the work area, a restart, and a `tag` event).
 * `pergola-health` proves the daemon, layout invariants and work-area fit.
 
 ## Pain points
@@ -50,6 +57,8 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Terminal split | `split-terminal` assumes `xfce4-terminal` when `$TERMINAL` is unset, which is wrong on most desktops | Non-XFCE users | 2 | Fall back to the desktop's terminal from `XDG_CURRENT_DESKTOP`, and say which config key to set |
 | Accessibility | No keyboard way to select a tile other than activating its window; the overlay draws no text and exposes no AT-SPI | Keyboard-only / low-vision | 3 | Focus-by-chord across tiles; overlay labels with the tile's size |
 | Tabs | Tab groups work from the command line, from default chords (`tab`, `tab-select`, `tab-next`, `tab-prev`) but there is no palette row for a tab action, no drag-a-window-onto-a-tab gesture and no tab bar | People expecting TrellisWM tabs; the mouse path is missing | 2 | Not scheduled (drag-to-tab is not in BACKLOG.md) |
+| Workspaces | `tag-view` / `window-tag` are only commands: tags have no default chords (pressing `Super+1` on a desktop that has no tag would blank the screen), no palette row and no on-screen indicator beyond `pergola status`. An empty tag shows only the desktop, which is correct but needs the command's reply to explain it | Anyone who expects workspaces to be one key away | 2 | Default chords behind an `opt-in` config key, palette rows for the two verbs, and a small tag indicator in the overlay |
+| Workspaces | A parked window is moved below the work area, not unmapped, and the desktop clamps it so it cannot be lost: xfwm4 keeps the 29 px title bar at the bottom edge, openbox keeps 66 px of an 862 px client (measured on a 900 px screen; a larger park offset does not help — `xdotool windowmove` to y=900, 1200 or 3000 all land the client at the same clamped y). So the window is off the workspace but a sliver of it is on screen | Anyone with more than one workspace | 2 | An ICCCM iconify (`WM_CHANGE_STATE`) on park and a pager-style activation on return, tracking only the windows we hid so the user's own minimise is never undone; or unmapping, which needs the host WM's client list to stay honest |
 
 ## Next three
 

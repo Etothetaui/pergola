@@ -259,6 +259,42 @@ There is no tab bar and no drag-a-window-onto-a-tab gesture yet: the hidden
 views are reachable by command or chord, not by clicking. See
 [BACKLOG.md](../BACKLOG.md) for the planned UI.
 
+### Named workspaces (tags)
+
+Without tags every view is on one screen. A tag names a set of views; switching
+to it lays out only those windows, and the rest are moved off the work area
+while staying in the document, so switching back restores the layout exactly.
+
+```sh
+pergola window-tag work              # put the focused window on "work" (and on that tag only)
+pergola window-tag work --window 0x40000c
+pergola window-tag play --window 0x60000c
+pergola tag-view work                # show "work" — "play"'s windows are parked
+pergola tag-view                     # list the workspaces (* marks the active one)
+pergola tag-view all                 # back to every view
+pergola tag-remove play              # delete a workspace; its windows stay open
+```
+
+A view belongs to at most one tag, so `window-tag` takes it off the tag it was
+on. A window that opens while a tag is shown joins that tag — it never appears
+on the wrong workspace. Each tag remembers the window that had the keyboard, so
+returning to it lands where you left off. An empty tag shows only the desktop
+layer; the command says so and names the way back.
+
+The active tag is part of the layout document, so a daemon restart keeps you on
+the workspace you were on. Tags have no default chords — pick the ones you use:
+
+```sh
+pergola bind "tag-view 1" Super+1
+pergola bind "tag-view 2" Super+2
+pergola bind "window-tag 1" Super+Shift+1
+pergola keys --check                # confirm what really got bound
+```
+
+Two consequences worth knowing: `arrange` and `float-all` rebuild the shared
+tree, so they act on every tag; and a parked window's client area is off-screen
+but the desktop may keep its title bar reachable (xfwm4 does).
+
 ## Keyboard and mouse
 
 Everything that tiles a window is reachable without a shell:
@@ -277,6 +313,7 @@ Everything that tiles a window is reachable without a shell:
 | switch tabs in a group | `Ctrl+Alt+Page_Down` / `Page_Up` |
 | undo the last layout change | `Ctrl+Alt+Z`, or `pergola undo` |
 | focus a window from a taskbar | click its entry — the click is an `_NET_ACTIVE_WINDOW` request, and a hidden tab view is shown first |
+| switch workspace | `pergola tag-view <name>` (bind it: `pergola bind "tag-view 1" Super+1`) |
 
 The chords fall back to `Super+…` per command when the desktop owns the
 `Ctrl+Alt` chord — `pergola keys --check` prints what was really bound. The full

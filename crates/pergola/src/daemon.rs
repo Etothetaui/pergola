@@ -84,6 +84,9 @@ struct EventSig {
     /// Window -> (placement, title). A window that leaves this map closed.
     placements: std::collections::BTreeMap<u32, (Placement, String)>,
     active: u32,
+    /// The active tag, so a bar can label the workspace without parsing the
+    /// tree. `None` is "no tag": every view is shown.
+    tag: Option<String>,
 }
 
 /// One undoable layout state: the document (tree, floating rects, tabs), the
@@ -294,20 +297,27 @@ impl Daemon {
                 title: w.title.clone(),
             });
             changed = true;
+            // A new window joins the tag the user is looking at. Without this
+            // it would belong to no tag and the active view would prune it
+            // away, so the window would open invisible.
+            if let Some(tag) = self.file.doc.active_tag.clone() {
+                self.file.doc.assign_view(&seat, &tag);
+            }
             if self.config.auto_dock.docks(self.started) {
                 // The WM may have already focused the new window, so
-                // `focused_panel` can name a panel that is not in the tree yet
+                // `focused_panel` can name a panel that is not on screen yet
                 // (its own). Dock beside a panel that is actually there, or the
-                // whole tree when nothing docked has focus.
+                // whole shown tree when nothing docked has focus.
+                let shown = self.file.doc.active_tree();
                 let target = self
                     .focused_panel()
-                    .filter(|p| self.file.doc.root.node(p).is_some())
+                    .filter(|p| shown.node(p).is_some())
                     .or_else(|| {
                         self.last_focus
                             .clone()
-                            .filter(|p| self.file.doc.root.node(p).is_some())
+                            .filter(|p| shown.node(p).is_some())
                     })
-                    .unwrap_or_else(|| self.file.doc.root.id().to_string());
+                    .unwrap_or_else(|| shown.id().to_string());
                 let node = LayoutNode::panel(panel.clone(), vec![seat.clone()]);
                 match self
                     .engine
@@ -341,10 +351,12 @@ impl Daemon {
     /// Keep the camera pointing at a node that exists. An empty or stale
     /// `framed` means "the whole tree".
     fn normalize_camera(&mut self) {
-        if self.camera.framed.is_empty()
-            || self.file.doc.root.node(&self.camera.framed).is_none()
-        {
-            self.camera.framed = self.file.doc.root.id().to_string();
+        // The screen shows the active tag's view of the tree, so a camera
+        // pointing at a node on another tag would frame nothing. Reset it to
+        // the shown tree's own id, which means "everything".
+        let shown = self.file.doc.active_tree();
+        if self.camera.framed.is_empty() || shown.node(&self.camera.framed).is_none() {
+            self.camera.framed = shown.id().to_string();
         }
     }
 
@@ -381,6 +393,9 @@ impl Daemon {
         if let Ok(tree) = self.engine.removing_view(&seat.seat, &self.file.doc.root) {
             self.replace_root(tree);
         }
+        // A closed window leaves every tag, so a tag cannot keep claiming a
+        // view that no longer exists.
+        self.file.doc.forget_view(&seat.seat);
         Ok(())
     }
 
@@ -473,8 +488,11 @@ impl Daemon {
             return Ok(());
         }
         let world = screen.to_rect();
-        let rects = self.engine.rects(&self.file.doc.root, world);
-        let framed = if self.camera.framed != self.file.doc.root.id() {
+        // Only the active tag's views are on screen. With no tag active this is
+        // the whole tree, so a user who never names a workspace sees no change.
+        let shown = self.file.doc.active_tree();
+        let rects = self.engine.rects(&shown, world);
+        let framed = if self.camera.framed != shown.id() {
             rects
                 .iter()
                 .find(|(id, _)| id == &self.camera.framed)
@@ -485,7 +503,7 @@ impl Daemon {
         let tf = |r: Rect| transform(r, framed, world);
 
         for (id, rect) in &rects {
-            let Some(LayoutNode::Panel(panel)) = self.file.doc.root.node(id) else {
+            let Some(LayoutNode::Panel(panel)) = shown.node(id) else {
                 continue;
             };
             let target = park_if_outside(tf(*rect).to_irect(), screen, framed.is_some());
@@ -524,6 +542,11 @@ impl Daemon {
             }
         }
 
+        // Windows on a tag that is not shown leave the screen: park them below
+        // the work area. They keep their seat and their place in the full tree,
+        // so switching back restores the layout exactly.
+        self.park_inactive(&shown, screen)?;
+
         // The desktop leaf is a space, not the whole screen: floating windows
         // are mapped into whatever rectangle it currently occupies. Their stored
         // rects stay in full-screen ("world") coordinates, so a drag is undone
@@ -545,6 +568,28 @@ impl Daemon {
                 .and_then(|view| self.seats.iter().find(|s| &s.seat == view))
                 .map(|s| s.window);
             let Some(window) = window else { continue };
+            // A floating window belongs to a tag through its view. On another
+            // tag it leaves the screen, but its stored rectangle stays as the
+            // user left it — parking must not overwrite it.
+            if !f
+                .panel
+                .views
+                .first()
+                .map(|v| self.file.doc.view_visible(v))
+                .unwrap_or(true)
+            {
+                let target = IRect::new(
+                    screen.x,
+                    screen.y + screen.h,
+                    f.rect.w as i32,
+                    f.rect.h as i32,
+                );
+                if self.applied.get(&window) != Some(&target) {
+                    let _ = self.x.move_resize(window, target);
+                    self.applied.insert(window, target);
+                }
+                continue;
+            }
             if self.camera.desktop_hidden {
                 let target = IRect::new(
                     screen.x,
@@ -575,13 +620,13 @@ impl Daemon {
 
         let dim = self.dim_layer(screen);
         if self.overlay_on {
-            let framed_id = if self.camera.framed == self.file.doc.root.id() {
+            let framed_id = if self.camera.framed == shown.id() {
                 None
             } else {
                 Some(self.camera.framed.as_str())
             };
             let bars: Vec<(IRect, u32)> = overlay_bars(
-                &self.file.doc.root,
+                &shown,
                 &rects,
                 framed_id,
                 self.engine.gap,
@@ -622,8 +667,9 @@ impl Daemon {
     fn refresh_gap_bands(&mut self) -> Result<()> {
         let screen = self.x.workarea_rect()?;
         let world = screen.to_rect();
-        let rects = self.engine.rects(&self.file.doc.root, world);
-        let framed = if self.camera.framed != self.file.doc.root.id() {
+        let shown = self.file.doc.active_tree();
+        let rects = self.engine.rects(&shown, world);
+        let framed = if self.camera.framed != shown.id() {
             rects
                 .iter()
                 .find(|(id, _)| id == &self.camera.framed)
@@ -632,7 +678,7 @@ impl Daemon {
             None
         };
         let tf = |r: Rect| transform(r, framed, world);
-        let mut handles = self.engine.gap_handles(&self.file.doc.root, world);
+        let mut handles = self.engine.gap_handles(&shown, world);
         let mut bands = Vec::new();
         for h in &mut handles {
             let shown = tf(h.band);
@@ -653,6 +699,52 @@ impl Daemon {
         }
         let ids = self.x.grab_bands_show(&bands)?;
         self.gap_bands = ids.into_iter().zip(handles).collect();
+        Ok(())
+    }
+
+    /// Move every window whose view is not on the active tag below the work
+    /// area, so switching tags really clears the screen. The seat, its panel and
+    /// its place in the full tree stay put, so switching back restores the
+    /// layout exactly. A window the WM already reports as hidden (minimised),
+    /// fullscreen or transient is left alone: its geometry is not ours.
+    fn park_inactive(&mut self, shown: &LayoutNode, screen: IRect) -> Result<()> {
+        let mut views = std::collections::HashSet::new();
+        for node in shown.flatten() {
+            if let LayoutNode::Panel(p) = node {
+                views.extend(p.views.iter().cloned());
+            }
+        }
+        for seat in &self.seats {
+            if views.contains(&seat.seat) {
+                continue;
+            }
+            // A floating window is parked by the floating loop, which knows to
+            // keep its stored rectangle.
+            if self
+                .file
+                .doc
+                .floating
+                .iter()
+                .any(|f| f.panel.views.iter().any(|v| v == &seat.seat))
+            {
+                continue;
+            }
+            let Ok(Some(info)) = self.x.info(seat.window) else {
+                continue;
+            };
+            if info.hidden || info.fullscreen || info.transient {
+                continue;
+            }
+            let frame = info.frame_rect();
+            let target = IRect::new(screen.x, screen.y + screen.h, frame.w, frame.h);
+            // Re-parking an already parked window is a wasted move and a
+            // configure event the drag watcher would have to ignore.
+            if self.applied.get(&seat.window) == Some(&target) {
+                continue;
+            }
+            let _ = self.x.move_resize(seat.window, target);
+            self.applied.insert(seat.window, target);
+        }
         Ok(())
     }
 
@@ -732,6 +824,9 @@ impl Daemon {
             "tab-select" => self.tab_select(rest),
             "tab-next" => self.tab_cycle(true),
             "tab-prev" => self.tab_cycle(false),
+            "tag-view" => self.tag_view(rest),
+            "window-tag" => self.window_tag(rest),
+            "tag-remove" => self.tag_remove(rest),
             "keys" => self.keys(),
             "reload" => self.reload(),
             "save" => {
@@ -785,20 +880,16 @@ impl Daemon {
 
     fn status(&self) -> Result<String> {
         let screen = self.x.workarea_rect()?;
-        let panels = self
-            .file
-            .doc
-            .root
+        // Count what is on screen: the active tag's view, not the whole tree.
+        let shown = self.file.doc.active_tree();
+        let panels = shown
             .flatten()
             .iter()
             .filter(|n| matches!(n, LayoutNode::Panel(_)))
             .count();
         // Views beyond the first of each panel are tabs: mapped at the same
         // rectangle, only one of them raised.
-        let tabs: usize = self
-            .file
-            .doc
-            .root
+        let tabs: usize = shown
             .flatten()
             .iter()
             .filter_map(|n| match n {
@@ -818,14 +909,20 @@ impl Daemon {
             Hint::Hover(_) => " · hint hover",
             Hint::Drop => " · hint drop",
         };
+        // A named workspace is state worth reporting: it says why the screen
+        // shows fewer windows than the document holds.
+        let tag = match self.file.doc.active_tag.as_deref() {
+            Some(name) => format!(" · tag {name}"),
+            None => String::new(),
+        };
         Ok(format!(
-            "pergola {} · {}x{} · {} panels, {} floating{tab_note} · depth {} · framed {} · gap {} · overlay {}{hint}",
+            "pergola {} · {}x{} · {} panels, {} floating{tab_note} · depth {} · framed {} · gap {} · overlay {}{tag}{hint}",
             pergola_core::VERSION,
             screen.w,
             screen.h,
             panels,
             self.file.doc.floating.len(),
-            self.file.doc.root.nesting_depth(),
+            shown.nesting_depth(),
             self.camera.framed,
             self.engine.gap,
             if self.overlay_on { "on" } else { "off" }
@@ -842,8 +939,9 @@ impl Daemon {
     /// transform. Handy for scripts and for checking the daemon against itself.
     fn rects(&self, args: &[String]) -> Result<String> {
         let screen = self.x.workarea_rect()?.to_rect();
-        let rects = self.engine.rects(&self.file.doc.root, screen);
-        let framed = if self.camera.framed != self.file.doc.root.id() {
+        let shown = self.file.doc.active_tree();
+        let rects = self.engine.rects(&shown, screen);
+        let framed = if self.camera.framed != shown.id() {
             rects
                 .iter()
                 .find(|(id, _)| id == &self.camera.framed)
@@ -854,9 +952,7 @@ impl Daemon {
         let rows: Vec<serde_json::Value> = rects
             .iter()
             .filter(|(id, _)| {
-                self.file
-                    .doc
-                    .root
+                shown
                     .node(id)
                     .map(|n| matches!(n, LayoutNode::Panel(_)))
                     .unwrap_or(false)
@@ -889,6 +985,10 @@ impl Daemon {
         for w in &windows {
             let seat = self.seat_for_window(w.id);
             let where_ = match seat {
+                // A view of a tag that is not active is in the tree but off
+                // the screen: say "parked" rather than "docked", which would
+                // claim a tile the user cannot see.
+                Some(s) if !self.file.doc.view_visible(&s.seat) => "parked",
                 Some(s) if self.file.doc.root.node(&s.panel).is_some() => {
                     // A view of a tab group that is not the selected one is
                     // mapped at the tile but covered: report it as a tab, not
@@ -902,7 +1002,11 @@ impl Daemon {
                 Some(_) => "floating",
                 None => "unmanaged",
             };
-            out.push_str(&format!("{:<9} {}\n", where_, describe(w)));
+            let tag_note = seat
+                .and_then(|s| self.file.doc.tag_of(&s.seat))
+                .map(|name| format!("  [tag {name}]"))
+                .unwrap_or_default();
+            out.push_str(&format!("{:<9} {}{tag_note}\n", where_, describe(w)));
         }
         // Minimised windows are unmapped, so `windows()` does not list them,
         // but their seats are still in the tree. Say so instead of letting the
@@ -1118,6 +1222,13 @@ impl Daemon {
         }
         target_panel.select(&seat.seat);
         target_panel.tabbed = Some(true);
+        // The workspace the target panel lives on, read before the panel is
+        // moved into the tree: the folded window joins it so the two views in
+        // one tile never end up on different tags.
+        let target_tag = target_panel
+            .views
+            .iter()
+            .find_map(|v| self.file.doc.tag_of(v).map(str::to_string));
         let views = target_panel.views.len();
         let tree = replace_node(&self.file.doc.root, &target_id, &LayoutNode::Panel(target_panel));
         self.replace_root(tree);
@@ -1125,6 +1236,12 @@ impl Daemon {
         // and `list` keep pointing at the panel it just left.
         if let Some(record) = self.seats.iter_mut().find(|s| s.seat == seat.seat) {
             record.panel = target_id.clone();
+        }
+        // The window now lives inside the target panel, so it belongs to that
+        // panel's workspace. A view on tag A inside a tile on tag B would be
+        // pruned out of the very panel it was folded into.
+        if let Some(tag) = target_tag {
+            self.file.doc.assign_view(&seat.seat, &tag);
         }
         self.normalize_camera();
         self.apply()?;
@@ -1428,6 +1545,172 @@ impl Daemon {
         ))
     }
 
+    // MARK: named workspaces
+
+    /// Switch to a tag, or list the tags when no name is given.
+    ///
+    /// `all` (or `off`) clears the active tag so every view is shown again: the
+    /// escape hatch from a workspace that seems to have swallowed the window
+    /// the user wanted. A tag that does not exist yet is created empty, so
+    /// `tag-view work` is how a workspace is started.
+    fn tag_view(&mut self, args: &[String]) -> Result<String> {
+        let Some(name) = args.first().map(|s| s.as_str()) else {
+            return Ok(self.tag_report());
+        };
+        // Remember the keyboard position on the tag being left, so the return
+        // trip lands on the window the user was working in, not on whichever
+        // window the desktop happens to focus last.
+        let focused = self
+            .x
+            .active_window()
+            .and_then(|w| self.seat_for_window(w).map(|s| s.seat.clone()));
+        if let Some(current) = self.file.doc.active_tag.clone() {
+            if let Some(tag) = self.file.doc.tag_mut(&current) {
+                tag.focus = focused;
+            }
+        }
+        let clearing = name == "all" || name == "off" || name == "*";
+        if clearing {
+            self.file.doc.active_tag = None;
+        } else {
+            self.file.doc.ensure_tag(name);
+            self.file.doc.active_tag = Some(name.to_string());
+        }
+        self.normalize_camera();
+        // Entering a tag must put its floating windows back where the user left
+        // them; they were parked below the screen while the tag was away.
+        self.place_floating = true;
+        self.apply()?;
+        // Restore the keyboard on the tag just entered, before saving, so the
+        // next `tag-view` remembers the right place.
+        let restore = if clearing {
+            None
+        } else {
+            self.file
+                .doc
+                .tag(name)
+                .and_then(|t| t.focus.clone())
+                .filter(|seat| self.file.doc.view_visible(seat))
+        };
+        if let Some(seat) = restore {
+            if self.seats.iter().any(|s| s.seat == seat) {
+                self.focus_seat(&seat);
+            }
+        }
+        self.save()?;
+        Ok(match self.file.doc.active_tag.clone() {
+            Some(name) => {
+                let views = self
+                    .file
+                    .doc
+                    .tag(&name)
+                    .map(|t| t.views.len())
+                    .unwrap_or(0);
+                if views == 0 {
+                    // A new tag is empty on purpose, but an empty screen with no
+                    // explanation reads as a crash. Name the way back.
+                    format!("tag {name} is empty — `pergola window-tag {name}` adds a window, `tag-view all` shows everything")
+                } else {
+                    format!(
+                        "tag {name} ({} view{})",
+                        views,
+                        if views == 1 { "" } else { "s" }
+                    )
+                }
+            }
+            None => "tag off — every view is shown".to_string(),
+        })
+    }
+
+    /// Move a window into a tag without switching to it. The tag is created
+    /// when it does not exist yet, so this is also how a workspace is started:
+    /// `pergola window-tag work` on each window you want there.
+    fn window_tag(&mut self, args: &[String]) -> Result<String> {
+        let Some(name) = args.first() else {
+            return Err(anyhow!(
+                "usage: pergola window-tag <name> [--window ID]"
+            ));
+        };
+        if name == "all" || name == "off" || name == "*" {
+            return Err(anyhow!("'{name}' is not a tag name"));
+        }
+        let win = flag(args, "--window")
+            .and_then(|v| parse_window(&v))
+            .or_else(|| self.x.active_window())
+            .ok_or_else(|| anyhow!("no active window to tag"))?;
+        let seat = self
+            .seat_for_window(win)
+            .ok_or_else(|| anyhow!("window 0x{win:x} is not managed by pergola"))?
+            .clone();
+        self.file.doc.assign_view(&seat.seat, name);
+        // The window may be leaving the screen (it went to another tag) or
+        // coming back to it: let `apply` park or place it either way.
+        self.place_floating = true;
+        self.apply()?;
+        self.save()?;
+        Ok(format!(
+            "moved {} to tag {name}{}",
+            seat.panel,
+            if self.file.doc.view_visible(&seat.seat) {
+                ""
+            } else {
+                " (off screen until you switch to it)"
+            }
+        ))
+    }
+
+    /// Delete a workspace. Its views become untagged, so they show again under
+    /// `tag-view all` — the workspace name goes, the windows do not. This is the
+    /// way out of a tag that a closed window left behind.
+    fn tag_remove(&mut self, args: &[String]) -> Result<String> {
+        let Some(name) = args.first() else {
+            return Err(anyhow!("usage: pergola tag-remove <name>"));
+        };
+        let Some(index) = self.file.doc.tags.iter().position(|t| &t.name == name) else {
+            return Err(anyhow!("no tag '{name}'"));
+        };
+        let tag = self.file.doc.tags.remove(index);
+        let was_active = self.file.doc.active_tag.as_deref() == Some(tag.name.as_str());
+        if was_active {
+            // Showing a tag that no longer exists would hide every view.
+            self.file.doc.active_tag = None;
+            self.normalize_camera();
+            self.place_floating = true;
+            self.apply()?;
+        }
+        self.save()?;
+        Ok(format!(
+            "removed tag {name}{} ({} view{} now untagged)",
+            if was_active { " — every view is shown" } else { "" },
+            tag.views.len(),
+            if tag.views.len() == 1 { "" } else { "s" }
+        ))
+    }
+
+    /// One line per tag: a `*` marks the one on screen, and the view count says
+    /// how many windows it owns.
+    fn tag_report(&self) -> String {
+        if self.file.doc.tags.is_empty() {
+            return "no tags — every view is shown\n  start one with: pergola window-tag work"
+                .to_string();
+        }
+        let mut out = String::new();
+        for tag in &self.file.doc.tags {
+            let marker = if self.file.doc.active_tag.as_deref() == Some(tag.name.as_str()) {
+                "*"
+            } else {
+                " "
+            };
+            out.push_str(&format!(
+                "{marker} {:<12} {} view{}\n",
+                tag.name,
+                tag.views.len(),
+                if tag.views.len() == 1 { "" } else { "s" }
+            ));
+        }
+        out.trim_end().to_string()
+    }
+
     fn overlay(&mut self, args: &[String]) -> Result<String> {
         match args.first().map(String::as_str) {
             Some("on") => self.overlay_on = true,
@@ -1555,6 +1838,10 @@ impl Daemon {
             "gap": self.engine.gap,
             "overlay": self.overlay_on,
             "active": self.x.active_window().unwrap_or(0),
+            "tag": self.file.doc.active_tag,
+            // The full tag list, so a bar can draw every workspace tab from the
+            // one snapshot it already reads.
+            "tags": self.file.doc.tags,
         })
     }
 
@@ -1647,6 +1934,7 @@ impl Daemon {
             root: serde_json::to_string(&self.file.doc.root).ok()?,
             placements,
             active: self.x.active_window().unwrap_or(0),
+            tag: self.file.doc.active_tag.clone(),
         })
     }
 
@@ -2507,6 +2795,9 @@ fn diff_events(before: &EventSig, after: &EventSig) -> Vec<serde_json::Value> {
             .unwrap_or_default();
         out.push(json!({"type": "focus", "window": after.active, "title": title}));
     }
+    if before.tag != after.tag {
+        out.push(json!({"type": "tag", "name": after.tag}));
+    }
     out
 }
 
@@ -2960,6 +3251,7 @@ mod tests {
                 .map(|(window, placement, title)| (*window, (placement.clone(), title.to_string())))
                 .collect(),
             active,
+            tag: None,
         }
     }
 
@@ -3027,6 +3319,22 @@ mod tests {
         assert_eq!(records[0]["tree"]["id"], "b");
         assert_eq!(records[1]["window"], 2);
         assert_eq!(records[1]["title"], "");
+    }
+
+    #[test]
+    fn a_tag_switch_is_one_tag_record() {
+        let before = sig("tree", &[], 1);
+        let mut after = sig("tree", &[], 1);
+        after.tag = Some("work".into());
+        let records = diff_events(&before, &after);
+        assert_eq!(kinds(&records), vec!["tag"]);
+        assert_eq!(records[0]["name"], "work");
+        // Back to "no tag": a bar needs that transition as much as the others.
+        let back = diff_events(&after, &before);
+        assert_eq!(kinds(&back), vec!["tag"]);
+        assert!(back[0]["name"].is_null());
+        // Same tag, no record.
+        assert!(diff_events(&after, &after).is_empty());
     }
 
     #[test]

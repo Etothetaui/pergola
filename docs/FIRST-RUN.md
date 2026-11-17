@@ -18,7 +18,7 @@ pergola status    # what the daemon thinks: screen size, panels, depth, gap
 ```
 
 `doctor` should name your display and your window manager. `status` should
-print one line starting with `pergola 0.4.0-dev`. If either says "daemon not
+print one line starting with `pergola 0.5.0-dev`. If either says "daemon not
 running", start it with `pergola daemon` in a terminal (or
 `systemctl --user restart pergola`), then try again.
 
@@ -57,6 +57,10 @@ The terminal is only one way in. With a window focused:
 * Drag a tile away from its edge — it floats where you dropped it.
 * `Ctrl+Alt+Page_Down` / `Page_Up` — switch between windows stacked in one tile
   (a tab group); `pergola tab` folds the focused window into its tile as a tab.
+* `pergola window-tag work` — put the focused window on a named workspace;
+  `pergola tag-view work` switches to it and `pergola tag-view all` shows every
+  window again. Tags have no default chords: pick one with
+  `pergola bind "tag-view work" Super+w`.
 
 If the desktop already owns a chord (`xfwm4` owns `Ctrl+Alt+arrows`), Pergola
 falls back to `Super` for that command and says so at startup. `pergola keys
@@ -73,7 +77,7 @@ The first line `pergola status` prints is dense. Here is what each field means:
 
 | Field | Meaning |
 |---|---|
-| `pergola 0.4.0-dev` | the version of the running daemon |
+| `pergola 0.5.0-dev` | the version of the running daemon |
 | `1600x874` | the work area the daemon is tiling into (the screen minus panels/docks) |
 | `N panels` | how many windows are currently tiled in the tree |
 | `N floating` | how many windows are on the desktop layer (not tiled) |
@@ -101,6 +105,7 @@ The first line `pergola status` prints is dense. Here is what each field means:
 | **float** | Return a window to the desktop layer (untile it). |
 | **view** | A saved camera position (`save-view 1`, `view 1`). Confusingly, a panel's *views* are also its tabs; the command name `tab-select` is used when the tab meaning is meant. |
 | **tab** | A second window stacked in the same tile as the first. Only the selected tab is visible; the others stay mapped behind it. `pergola tab`, `tab-select`, `tab-next`, `tab-prev`. |
+| **tag** | A named workspace: a set of views shown together. `pergola window-tag work` moves a window onto one, `tag-view work` shows only that tag's windows (the rest are moved off the work area and keep their tiles), `tag-view all` shows everything again. Not the same as a *view*: a tag is a workspace, a view is a saved camera position. |
 | **layout document** | The JSON tree + camera + window fingerprints persisted to `~/.local/state/pergola/layout.json`. |
 | **work area** | The screen minus panels and docks, from `_NET_WORKAREA`. Pergola tiles inside it. |
 | **EWMH** | The X11 standard for window-manager hints and client lists. Pergola uses `_NET_MOVERESIZE_WINDOW` to move windows. |

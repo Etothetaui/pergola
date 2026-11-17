@@ -169,17 +169,36 @@ request itself (an assertion on `status active` alone would pass with the handle
 the desktop sets the property either way), and that a request for a hidden tab view shows it.
 The harvest's **ewmh / icccm** class was 168 issues.
 
-## 1. Named workspaces (tags) on top of views
+### Named workspaces (tags) on top of views (0.5.0-dev)
 
-**What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
-per-tag focus memory; the document format gains a `tags` list beside `views`.
-**Why:** the largest class in the harvest is **workspace / tag** (236 issues), and Pergola's views
-are anonymous: there is no way to say "move this window to view 3". This is a format change, so it
-is a deliberate `MINOR` bump with a loader that keeps reading older documents.
-**Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
-and a document written by the new version loads in the old one without losing its views.
+A tag is a named set of views over the one tree: `active_tree()` prunes the panels that hold none
+of its views and collapses a one-child split, keeping every surviving node id. `pergola window-tag
+<name>` moves the focused window onto a workspace (creating it), `tag-view <name>` switches to it,
+`tag-view all` shows every view, `tag-view` lists the workspaces, and `tag-remove` deletes a name
+without closing its windows. A view belongs to at most one tag (the sets stay disjoint), a tag
+remembers the window that had the keyboard, and a window that opens on a shown tag joins it.
 
-## 2. Release pipeline, so `pergola-bin` can exist
+A view on a tag that is not shown is *parked* below the work area, keeping its seat, panel, place
+in the tree and rectangle, so switching back is exact; the active tag lives in the document and
+survives a restart. `status`/`list`/`rects` report the active tag, and the event stream publishes a
+`tag` record (with `tag`/`tags` in the state snapshot).
+
+The pruning rule is pure and unit-tested (disjoint sets, collapse of a one-child split, an empty
+tag, a tag surviving its last window, a tagged document read by a tags-unaware reader); the e2e
+asserts disjoint sets, only the active tag mapped, a parked window mostly off the work area (0%
+visible under xfwm4, 7% under openbox — both clamp a window they must not lose),
+the escape hatch, a restart and a `tag` record. The document gained `doc.tags`/`doc.active_tag`
+behind `serde(default)`, so old documents load unchanged and an older binary reads a tagged
+document without losing a view — the `MINOR` bump the item called for. The harvest's
+**workspace / tag** class was 236 issues.
+
+Known gaps, recorded rather than hidden: `arrange`/`float-all` rebuild the shared tree and so act
+on every tag, the camera and gap are global, tags have no default chords (pressing one on a
+desktop with no tag would blank the screen), and a desktop clamps a parked window so a strip stays
+reachable at the bottom edge — xfwm4's title bar, openbox's first 66 px of an 862 px client
+(`docs/UX-NOTES.md`).
+
+## 1. Release pipeline, so `pergola-bin` can exist
 
 **What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
 a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays

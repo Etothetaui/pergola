@@ -100,6 +100,7 @@ pergola rects            # every panel's current frame rectangle
 | `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
 | `tab` / `tab-select` / `tab-next` / `tab-prev` | fold a window into a panel as a tab, switch tabs |
 | `undo` | put the layout back before the last dock, float, arrange, gap change or ratio |
+| `tag-view <name>` / `window-tag <name>` / `tag-remove <name>` | switch a named workspace, move a window to one, delete one |
 | `config [--check]` | the resolved config with each key's source, or what is wrong with the file |
 | `settings` / `settings --list` / `settings <key> <value>` | change a setting from a menu, list the rows, or set one key |
 | `subscribe` | stream layout, focus, dock, undock and window-closed records as JSON lines (for a status bar) |
@@ -108,6 +109,29 @@ pergola rects            # every panel's current frame rectangle
 
 Every command also has a URL form: `pergola://zoom-in`,
 `pergola://neighbour?dir=left`, `pergola://view?n=3`.
+
+### Named workspaces (tags)
+
+Views are anonymous by default: everything is on one screen. A *tag* names a
+set of views, and switching to it lays out only those windows — the others keep
+their place in the tree and their rectangles, so switching back is exact.
+
+```sh
+pergola window-tag work     # move the focused window to a workspace (creates it)
+pergola window-tag work --window 0x40000c
+pergola tag-view work       # show it; tag-view all shows every view again
+pergola tag-view            # list the workspaces, * on the active one
+pergola tag-remove work     # delete a workspace; its windows stay open
+```
+
+A view belongs to at most one tag. A window that opens while a tag is shown
+joins that tag; a window whose tag is not shown is moved below the work area
+(parked), never closed. Each tag remembers the window that had the keyboard, so
+returning to it puts you back where you were. The active tag is stored in the
+layout document and survives a restart. Tags have no default chords — bind the
+ones you use: `pergola bind "tag-view 1" Super+1`. The event stream carries a
+`{"type":"tag","name":…}` record and the state snapshot has `tag` + `tags`, so
+a status bar can draw a workspace switcher.
 
 ### Status bars: `pergola subscribe`
 
@@ -353,12 +377,23 @@ before Pergola and maps every failure class to the fix that answers it.
   one, and it does not act on the source indication (pager vs application):
   both are treated as "focus this".
 * Only one instance per display (one Unix socket).
+* A window on a workspace that is not shown is *parked* below the work area, not
+  unmapped. The desktop clamps a window it must not lose, so a sliver stays at
+  the bottom edge — measured on a 900 px-tall screen: xfwm4 leaves the 29 px
+  title bar, openbox leaves 66 px of an 862 px client. Unmapping (or an ICCCM
+  iconify) would be the fully clean answer, but the daemon must not fight the
+  desktop's own client list to get it.
+* Tags are sets of views over one tree, not one tree each. `arrange` and
+  `float-all` act on the whole document (every tag), because they rebuild the
+  shared tree; `dock`, `float`, `tab` and the commands that name one window act
+  on that window's tag. The camera and the gap are global, so switching tags
+  keeps the zoom instead of remembering one per workspace.
 
 ## Development
 
 ```bash
-cargo test               # 107 unit tests: geometry, tree, camera, commands, document, event diff
-scripts/e2e.sh           # 146 assertions against Xvfb + a real WM + real xterms
+cargo test               # 115 unit tests: geometry, tree, camera, commands, document, tags, event diff
+scripts/e2e.sh           # 174 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)
@@ -376,7 +411,7 @@ does not touch your session. It asserts geometry as the X server reports it, not
 just the daemon's own bookkeeping.
 
 Versioning: [docs/VERSIONING.md](docs/VERSIONING.md). Current version is
-`0.4.0-dev` — pre-stable, no compatibility promises.
+`0.5.0-dev` — pre-stable, no compatibility promises.
 
 ## License
 

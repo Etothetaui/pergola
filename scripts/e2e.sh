@@ -141,7 +141,32 @@ frame_geom() {
   read -r left right top bottom <<<"${e:-0 0 0 0}"
   read -r px py <<<"$pos"
   read -r sw sh <<<"$size"
+  # The window may be gone (a panel id inherited from a closed window). Say
+  # nothing rather than feeding an empty operand to arithmetic.
+  [ -n "${px:-}" ] && [ -n "${sw:-}" ] || return 0
   echo "$((px-left)) $((py-top)) $((sw+left+right)) $((sh+top+bottom))"
+}
+
+# The window a panel id actually maps to. A panel id is not always a window id:
+# a tab group keeps the id of the panel it grew from and a docked window can
+# take an id a closed one left free, so `p-40000c` may hold `s-80000c`. The
+# panel's shown view is the window at its rectangle.
+panel_window() { # panel-id -> 0x… window id (empty when unknown)
+  P tree | python3 -c '
+import json, sys
+want = sys.argv[1]
+def walk(n):
+    if n.get("kind") == "panel" and n.get("id") == want:
+        views = n.get("views") or []
+        seat = n.get("selected") or (views[0] if views else "")
+        print("0x" + seat[2:] if seat else "")
+        return True
+    for c in n.get("children", []):
+        if walk(c):
+            return True
+    return False
+walk(json.load(sys.stdin)["doc"]["root"])
+' "$1"
 }
 
 # Compare every docked panel against `pergola rects`, which is the same engine
@@ -155,8 +180,14 @@ check_geometry() {
     if [ "$x" -lt 0 ] || [ "$y" -lt 0 ] || [ $((x+w)) -gt "$W" ] || [ $((y+h)) -gt "$H" ]; then
       skipped=$((skipped+1)); continue
     fi
-    local win="0x${id#p-}" fg
+    local win fg
+    win=$(panel_window "$id")
+    [ -n "$win" ] || win="0x${id#p-}"
     fg=$(frame_geom "$win")
+    if [ -z "$fg" ]; then
+      bad "$label $id maps to window $win, which the X server does not have"
+      checked=$((checked+1)); continue
+    fi
     local ax ay aw ah; read -r ax ay aw ah <<<"$fg"
     # A client with a character grid (every terminal) snaps its size to
     # WM_NORMAL_HINTS resize increments, so the honest tolerance for a tile's
@@ -188,6 +219,23 @@ check_geometry() {
 }
 
 json_field() { P tree | python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+
+# How much of a window's client area is on the test screen, in percent. A parked
+# window is moved below the work area, but the desktop clamps it so it cannot be
+# lost: xfwm4 keeps the title bar, openbox keeps a strip of the client. "Mostly
+# off-screen" is the honest assertion that is true on both, and a window left in
+# place (100%) still fails it.
+onscreen_pct() {
+  local X= Y= WIDTH= HEIGHT= WINDOW= SCREEN= top bottom vis
+  eval "$(xdotool getwindowgeometry --shell "$1")"
+  [ -n "${Y:-}" ] && [ -n "${HEIGHT:-}" ] || { echo 100; return; }
+  top=$(( Y < 0 ? 0 : Y ))
+  bottom=$(( Y + HEIGHT > H ? H : Y + HEIGHT ))
+  vis=$(( bottom - top ))
+  [ "$vis" -lt 0 ] && vis=0
+  [ "$HEIGHT" -gt 0 ] || HEIGHT=1
+  echo $(( vis * 100 / HEIGHT ))
+}
 
 # Park the pointer inside the first tile. A gap band under the pointer shows a
 # hover hint, and a hint is a window of its own, so any check that counts root
@@ -1148,7 +1196,155 @@ else
 fi
 
 say
-say "13. screenshot"
+say "13. named workspaces (tags)"
+# A named workspace owns a set of views; the active tag decides which views are
+# laid out, and a view on another tag stays in the document and keeps its tile,
+# so switching back is exact. This answers the survey's "there is no way to
+# say: move this window to view 3". The assertions are geometry, not only the
+# daemon's own bookkeeping: a parked window has to be off the work area.
+xterm -T pergola-e2e-tag-a -geometry 60x18+380+320 -e sh -c 'exec sleep 3600' >/dev/null 2>&1 & XPIDS+=($!)
+xterm -T pergola-e2e-tag-b -geometry 60x18+440+320 -e sh -c 'exec sleep 3600' >/dev/null 2>&1 & XPIDS+=($!)
+sleep 1.5
+TAG_A=$(xdotool search --name '^pergola-e2e-tag-a$' 2>/dev/null | head -1)
+TAG_B=$(xdotool search --name '^pergola-e2e-tag-b$' 2>/dev/null | head -1)
+[ -n "$TAG_A" ] && [ -n "$TAG_B" ] || fail "the tag test windows did not appear"
+TAG_A=$(printf '0x%08x' "$TAG_A")
+TAG_B=$(printf '0x%08x' "$TAG_B")
+# auto_dock is off in this sandbox, so dock them by hand — and wait for each to
+# have a seat first: `list` names an unadopted window too, and a dock for one
+# fails with "not managed".
+for _ in $(seq 1 50); do
+  [ "$(P list | grep -cE "^(docked|floating) +$TAG_A")" -ge 1 ] \
+    && [ "$(P list | grep -cE "^(docked|floating) +$TAG_B")" -ge 1 ] && break
+  sleep 0.1
+done
+P dock left --window "$TAG_A" >/dev/null 2>&1; sleep 0.5
+P dock right --window "$TAG_B" >/dev/null 2>&1; sleep 0.5
+if [ "$(P list | grep -c '^docked')" -ge 2 ]; then
+  ok "the two tag test windows are docked tiles"
+else
+  bad "the tag test windows did not dock: $(P list | head -4 | tr '\n' ' ')"
+fi
+
+# Before any tag exists, the command explains itself instead of failing.
+if P tag-view | grep -c 'no tags' >/dev/null; then
+  ok "tag-view explains the empty workspace set"
+else
+  bad "tag-view did not explain itself: $(P tag-view)"
+fi
+P window-tag work --window "$TAG_A" >/dev/null 2>&1; sleep 0.4
+P window-tag play --window "$TAG_B" >/dev/null 2>&1; sleep 0.4
+if P list | grep -c "^docked.*$TAG_A.*\[tag work\]" >/dev/null; then
+  ok "the first window belongs to tag work"
+else
+  bad "the first window is not on tag work: $(P list | grep "$TAG_A")"
+fi
+if P list | grep -c "^docked.*$TAG_B.*\[tag play\]" >/dev/null; then
+  ok "the second window belongs to tag play"
+else
+  bad "the second window is not on tag play: $(P list | grep "$TAG_B")"
+fi
+
+# Switching to a tag maps only its views; the others leave the screen.
+P tag-view work >/dev/null 2>&1; sleep 0.6
+check_eq "1" "$(P rects | grep -c .)" "tag work lays out one panel"
+if P list | grep -c "^docked.*$TAG_A" >/dev/null; then
+  ok "tag work's window is docked"
+else
+  bad "tag work's window is not docked: $(P list | grep "$TAG_A")"
+fi
+if P list | grep -c "^parked.*$TAG_B" >/dev/null; then
+  ok "tag play's window is parked off screen"
+else
+  bad "tag play's window is not parked: $(P list | grep "$TAG_B")"
+fi
+if P status | grep -c 'tag work' >/dev/null; then
+  ok "status names the active workspace"
+else
+  bad "status does not name the workspace: $(P status)"
+fi
+PARK_PCT=$(onscreen_pct "$TAG_B")
+if [ "$PARK_PCT" -le 25 ]; then
+  ok "the parked window is off the workspace (${PARK_PCT}% of its client on screen)"
+else
+  bad "the parked window is still on screen (${PARK_PCT}% visible)"
+fi
+check_geometry "on tag work"
+
+P tag-view play >/dev/null 2>&1; sleep 0.6
+check_eq "1" "$(P rects | grep -c .)" "tag play lays out one panel"
+if P list | grep -c "^parked.*$TAG_A" >/dev/null; then
+  ok "switching tags parks the window that left"
+else
+  bad "switching tags left the old window on screen: $(P list | grep "$TAG_A")"
+fi
+if P list | grep -c "^docked.*$TAG_B" >/dev/null; then
+  ok "tag play's window is docked"
+else
+  bad "tag play's window is not docked: $(P list | grep "$TAG_B")"
+fi
+PARK_PCT=$(onscreen_pct "$TAG_A")
+if [ "$PARK_PCT" -le 25 ]; then
+  ok "the previous tag's window is off the workspace (${PARK_PCT}% visible)"
+else
+  bad "the previous tag's window stayed on screen (${PARK_PCT}% visible)"
+fi
+check_geometry "on tag play"
+
+# The escape hatch: every view again, with nothing hidden.
+P tag-view all >/dev/null 2>&1; sleep 0.6
+check_eq "0" "$(P list | grep -c '^parked')" "tag-view all shows every window"
+if P status | grep -c '· tag ' >/dev/null; then
+  bad "status still names a workspace after tag-view all"
+else
+  ok "status reports no active workspace after tag-view all"
+fi
+check_geometry "after tag-view all"
+
+# The document round-trips: a restart keeps both tags and the active one.
+P tag-view work >/dev/null 2>&1; sleep 0.5
+P stop >/dev/null 2>&1
+for _ in $(seq 1 40); do P status >/dev/null 2>&1 || break; sleep 0.1; done
+"$BIN" --socket "$SOCK" daemon >>"$TMP/daemon.log" 2>&1 & PIDS+=($!)
+for _ in $(seq 1 50); do P status >/dev/null 2>&1 && break; sleep 0.1; done
+sleep 0.4
+if P tag-view | grep -c '^\* work' >/dev/null; then
+  ok "the active tag survives a daemon restart"
+else
+  bad "the active tag was lost: $(P tag-view)"
+fi
+if P list | grep -c "^parked.*$TAG_B" >/dev/null; then
+  ok "the other tag's window is still parked after a restart"
+else
+  bad "the tag sets did not survive a restart: $(P list | grep "$TAG_B")"
+fi
+
+# A status bar learns about a workspace switch from the event stream.
+"$BIN" --socket "$SOCK" subscribe >"$TMP/tag-sub.jsonl" 2>/dev/null & TAG_SUB=$!
+PIDS+=("$TAG_SUB")
+sleep 0.4
+P tag-view play >/dev/null 2>&1; sleep 0.5
+kill "$TAG_SUB" 2>/dev/null
+wait "$TAG_SUB" 2>/dev/null || true
+if grep -c '"type":"tag"' "$TMP/tag-sub.jsonl" >/dev/null; then
+  ok "a workspace switch is published to subscribers"
+else
+  bad "no tag record in the event stream: $(head -2 "$TMP/tag-sub.jsonl" 2>/dev/null | tr '\n' ' ')"
+fi
+check_eq "1" "$(P rects | grep -c .)" "the subscriber switch landed on tag play"
+
+# Removing a workspace frees its windows without closing them.
+P tag-view all >/dev/null 2>&1; sleep 0.4
+P tag-remove play >/dev/null 2>&1; sleep 0.4
+if P list | grep -c "^docked.*$TAG_B" >/dev/null; then
+  ok "a removed tag leaves its windows open and untagged"
+else
+  bad "removing the tag lost its window: $(P list | grep "$TAG_B")"
+fi
+check_geometry "after tag-remove"
+
+say
+say "14. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

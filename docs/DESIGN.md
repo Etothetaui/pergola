@@ -64,6 +64,32 @@ back into world coordinates, so the layout learns the new position instead of
 snapping the window back. When the desktop leaf moves (a dock, an arrange), the
 windows are remapped with it.
 
+### 4. A tag is a set of views, not a second tree
+
+A named workspace could own its own tree, which is what a full window manager
+does. Here one tree stays the document of record and a tag is a *set of view
+ids* over it: `active_tree()` prunes the panels that hold none of the active
+tag's views, collapses a split left with one child, and keeps every surviving
+node's id. That choice has consequences worth naming:
+
+* A window keeps its panel, its split, its weights and its rectangle when its
+tag is not shown, so switching back is exact and needs no saved layout — the
+tile was never destroyed, only moved off-screen.
+* Seats and the camera keep pointing at the same node ids, so `focus_seat`, a
+  tab selection and a framed node survive a switch with no translation table.
+* The pruning is pure and lives in `pergola-core`, so the rule is unit-tested
+  without X: disjoint view sets, collapse of a one-child split, an empty tag
+  showing only the desktop, and a document written with `tags` still parsing
+  into a reader that only knows `root`.
+* The cost is that `arrange` and `float-all` rebuild the shared tree and
+  therefore act on every tag; the camera and the gap are global too. A per-tag
+  tree would make those per-workspace at the price of a document model that can
+describe the same window twice. See the limitations in the README.
+
+A view on another tag is parked below the work area rather than unmapped: the
+client list stays the desktop's, and `apply()` already parks windows outside a
+zoomed view by the same rule.
+
 ## Data flow of one command
 
 ```
@@ -188,20 +214,24 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
 
 ## Testing
 
-* `cargo test` — 107 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 115 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
-  document round-trips, config parsing and repair of malformed weights,
-  pointer-edge picking, hint geometry, activation-request targeting (a shown
-  tab view, a hidden one, a floating window, an unmanaged id), and the event
-  stream's transition table (new window, dock, undock, close, layout, focus,
-  no-change).
+  document round-trips, named workspaces (disjoint view sets, pruning of the
+  active tag's tree, an empty tag, a tag surviving its last window, a tagged
+  document read by a tags-unaware reader), config parsing and repair of
+  malformed weights, pointer-edge picking, hint geometry, activation-request
+  targeting (a shown tab view, a hidden one, a floating window, an unmanaged
+  id), and the event stream's transition table (new window, dock, undock,
+  close, layout, focus, tag, no-change).
 * `scripts/e2e.sh` — starts Xvfb + a real WM (xfwm4 by default, openbox with
   `--wm openbox`) + three xterms, runs the real daemon, and asserts the geometry
   the X server reports against `pergola rects` after dock, zoom, arrange, gap
   changes, ratio, float, a daemon restart, keyboard docking, a gap drag, an edge
   drop, tab groups, config/binding errors, the overlay's dim layer, hover
-  hints, the drop frame, one-gesture re-dock, the event stream and pager
-  activation requests — 146 assertions, two fewer on openbox (the drop frame)
+  hints, the drop frame, one-gesture re-dock, the event stream, pager
+  activation requests and named workspaces (disjoint tag sets, only the active
+  tag laid out, a parked window's client area off the work area, the escape
+  hatch, a restart and a `tag` record) — 174 assertions, two fewer on openbox (the drop frame)
   and a check or two fewer when the WM parks a tile off-screen. Openbox coalesces a drag into one
   `ConfigureNotify`, so the mid-drag drop frame is asserted on xfwm4 only; the
   frame's existence is a WM capability, not a tolerance. The event-stream block
