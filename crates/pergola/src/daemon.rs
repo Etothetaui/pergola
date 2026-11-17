@@ -111,6 +111,52 @@ struct MoveWatch {
     start: Rect,
 }
 
+/// A configure event that arrived while our own apply was still settling.
+/// The newest rect per window is kept and re-tested once the guard expires:
+/// openbox reports a whole drag as one `ConfigureNotify` right after the daemon
+/// re-applies the layout, so discarding it loses the drop.
+struct DeferredConfigure {
+    rect: Rect,
+    /// When the live rect was first seen to match `rect` after the guard. A
+    /// stale echo of an intermediate apply step moves again, so it must not be
+    /// judged until it has stood still.
+    stable: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DeferredAction {
+    /// Our own apply landed (or the window is gone): the event was an echo.
+    Discard,
+    /// The window is still moving, or the event was stale: re-read it later.
+    Restart(Rect),
+    /// The live rect matches the event; the stability clock is running.
+    Wait,
+    /// The live rect has matched the event long enough to be a real drop.
+    Ready(Rect),
+}
+
+/// Decide what a deferred configure means now that the apply guard has expired.
+fn deferred_action(
+    applied: Option<Rect>,
+    remembered: Rect,
+    live: Rect,
+    stable: Option<Instant>,
+    now: Instant,
+) -> DeferredAction {
+    if applied.is_some_and(|a| same_rect(a, live)) {
+        return DeferredAction::Discard;
+    }
+    if !same_rect(live, remembered) {
+        return DeferredAction::Restart(live);
+    }
+    match stable {
+        Some(since) if now.duration_since(since) >= DEFERRED_STABLE => {
+            DeferredAction::Ready(live)
+        }
+        _ => DeferredAction::Wait,
+    }
+}
+
 pub struct Daemon {
     x: X11,
     engine: LayoutEngine,
@@ -144,6 +190,8 @@ pub struct Daemon {
     applied: HashMap<u32, IRect>,
     /// Windows whose configure stream is being watched for a drop on an edge.
     moves: HashMap<u32, MoveWatch>,
+    /// Configures seen inside the own-apply guard, re-tested once it expires.
+    deferred: HashMap<u32, DeferredConfigure>,
     /// When our own apply last ran; edge detection ignores its event wake.
     last_apply: Instant,
     /// The last `KeyRelease` seen: keycode and server timestamp. The server
@@ -218,6 +266,7 @@ impl Daemon {
             drag: None,
             applied: HashMap::new(),
             moves: HashMap::new(),
+            deferred: HashMap::new(),
             last_apply: Instant::now(),
             last_release: None,
             started: false,
@@ -257,6 +306,7 @@ impl Daemon {
         for seat in gone {
             self.applied.remove(&seat.window);
             self.moves.remove(&seat.window);
+            self.deferred.remove(&seat.window);
             self.seats.retain(|s| s.seat != seat.seat);
             // A tab group loses one view, not the whole panel: closing a tab
             // must leave its siblings where they are. A panel whose last view
@@ -2657,9 +2707,12 @@ impl Daemon {
         // pre-move echo the WM had already queued). 100 ms still catches that
         // burst while shrinking the window in which a real drag can be
         // swallowed 2.5x; both WMs passed 43/43 three runs each at 100 ms.
-        if self.last_apply.elapsed() < Duration::from_millis(100) {
-            return Ok(());
-        }
+        //
+        // An event inside the guard is not discarded: the newest rect is kept
+        // and re-tested after the guard, by the window's *live* geometry (see
+        // `settle_deferred`). Removing the guard outright was measured
+        // 2026-11-15: intermediate echoes of a two-step apply read as drags and
+        // every window docked itself (openbox e2e 1 -> 7 failures).
         if self.seat_for_window(event.window).is_none() {
             return Ok(());
         }
@@ -2690,7 +2743,24 @@ impl Daemon {
                 self.seat_for_window(event.window).is_some(),
             );
         }
-        if let Some(applied) = self.applied.get(&event.window) {
+        if self.last_apply.elapsed() < APPLY_GUARD {
+            self.deferred.insert(
+                event.window,
+                DeferredConfigure {
+                    rect,
+                    stable: None,
+                },
+            );
+            return Ok(());
+        }
+        self.track_configure(event.window, rect)
+    }
+
+    /// Record a configure rect for a seat after the apply guard has passed.
+    /// The rect is what the window reported (or, for a deferred event, what the
+    /// server says it is now), so an echo of our own apply is still skipped.
+    fn track_configure(&mut self, window: u32, rect: Rect) -> Result<()> {
+        if let Some(applied) = self.applied.get(&window) {
             // An echo of our own apply reports the rect we asked for. A drag
             // already in progress is different: the WM is reporting real
             // motion, and a drop that lands exactly on the rect we last placed
@@ -2701,7 +2771,7 @@ impl Daemon {
             // position never drew its hint (measured 2026-11-15, e2e
             // 'no drop target during a drag': the reported rect was 83 px from
             // the right edge because only the intermediate events counted).
-            let drag_in_progress = self.moves.get(&event.window).is_some_and(is_drag);
+            let drag_in_progress = self.moves.get(&window).is_some_and(is_drag);
             if same_rect(applied.to_rect(), rect) && !drag_in_progress {
                 return Ok(());
             }
@@ -2713,9 +2783,9 @@ impl Daemon {
         // clamped, or our own echo, does not move. Measured 2026-11-15: with a
         // strict "three configure events" rule, edge docking never fired under
         // openbox and the e2e suite's one failing assertion was this path.
-        let baseline = self.applied.get(&event.window).map(|r| r.to_rect());
+        let baseline = self.applied.get(&window).map(|r| r.to_rect());
         let moved_from_baseline = baseline.is_some_and(|b| !same_rect(b, rect));
-        let watch = self.moves.entry(event.window).or_insert(MoveWatch {
+        let watch = self.moves.entry(window).or_insert(MoveWatch {
             moves: u32::from(moved_from_baseline),
             at: Instant::now(),
             rect,
@@ -2726,7 +2796,60 @@ impl Daemon {
             watch.rect = rect;
             watch.at = Instant::now();
         }
-        self.update_drop_hint(event.window)?;
+        self.update_drop_hint(window)?;
+        Ok(())
+    }
+
+    /// Re-test configures that arrived inside the own-apply guard. Acting on
+    /// them then only sees our own echo (its rect is what we asked for); once
+    /// the guard and the window have settled, the live geometry says whether
+    /// anything really moved. Openbox's single drop event is the reason this
+    /// exists: it arrives right after a re-apply and was previously dropped.
+    fn settle_deferred(&mut self) -> Result<()> {
+        if self.deferred.is_empty() || self.last_apply.elapsed() < APPLY_GUARD {
+            return Ok(());
+        }
+        let now = Instant::now();
+        let windows: Vec<u32> = self.deferred.keys().copied().collect();
+        let mut ready = Vec::new();
+        for window in windows {
+            let Some(entry) = self.deferred.get(&window) else {
+                continue;
+            };
+            let remembered = entry.rect;
+            let stable = entry.stable;
+            let live = match self.x.info(window) {
+                Ok(Some(info)) if !info.fullscreen && !info.transient => frame_rect(&info),
+                _ => {
+                    self.deferred.remove(&window);
+                    continue;
+                }
+            };
+            let applied = self.applied.get(&window).map(|r| r.to_rect());
+            match deferred_action(applied, remembered, live, stable, now) {
+                DeferredAction::Discard => {
+                    self.deferred.remove(&window);
+                }
+                DeferredAction::Restart(rect) => {
+                    if let Some(entry) = self.deferred.get_mut(&window) {
+                        entry.rect = rect;
+                        entry.stable = None;
+                    }
+                }
+                DeferredAction::Wait => {
+                    if let Some(entry) = self.deferred.get_mut(&window) {
+                        entry.stable.get_or_insert(now);
+                    }
+                }
+                DeferredAction::Ready(rect) => {
+                    self.deferred.remove(&window);
+                    ready.push((window, rect));
+                }
+            }
+        }
+        for (window, rect) in ready {
+            self.track_configure(window, rect)?;
+        }
         Ok(())
     }
 
@@ -2736,12 +2859,14 @@ impl Daemon {
     fn settle_moves(&mut self) -> Result<()> {
         if !self.config.edge_dock {
             self.moves.clear();
+            self.deferred.clear();
             self.hide_drop_hint()?;
             return Ok(());
         }
         if self.drag.is_some() {
             return Ok(());
         }
+        self.settle_deferred()?;
         let now = Instant::now();
         let mut ready = Vec::new();
         for (window, watch) in &self.moves {
@@ -3022,6 +3147,23 @@ fn pointer_edge(x: f64, y: f64, screen: Rect, slack: f64) -> Option<Direction> {
         .filter(|(distance, _)| *distance <= slack)
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, direction)| direction)
+}
+
+/// How long after our own apply a ConfigureNotify is treated as its echo.
+const APPLY_GUARD: Duration = Duration::from_millis(100);
+
+/// How long a deferred event's live rect must stand still before it is judged.
+const DEFERRED_STABLE: Duration = Duration::from_millis(80);
+
+/// The frame rectangle of a live window: client origin minus the decorations.
+fn frame_rect(info: &WindowInfo) -> Rect {
+    let (l, r, t, b) = info.extents;
+    Rect::new(
+        (info.rect.x - l) as f64,
+        (info.rect.y - t) as f64,
+        (info.rect.w + l + r) as f64,
+        (info.rect.h + t + b) as f64,
+    )
 }
 
 /// A settled window counts as dragged when it produced a burst of configure
@@ -3698,6 +3840,64 @@ mod tests {
             start: placed,
         };
         assert!(is_drag(&burst));
+    }
+
+    #[test]
+    fn an_echo_of_our_own_apply_is_discarded_even_when_deferred() {
+        // The event said the window was still at the intermediate rect of a
+        // two-step apply, but the live window ended up where we asked: echo.
+        let applied = Rect::new(100.0, 100.0, 400.0, 300.0);
+        let remembered = Rect::new(0.0, 0.0, 400.0, 300.0);
+        let now = Instant::now();
+        assert_eq!(
+            deferred_action(Some(applied), remembered, applied, None, now),
+            DeferredAction::Discard
+        );
+    }
+
+    #[test]
+    fn a_deferred_drop_is_taken_once_the_window_has_settled() {
+        let applied = Rect::new(900.0, 300.0, 400.0, 300.0);
+        let dropped = Rect::new(0.0, 300.0, 400.0, 300.0);
+        let now = Instant::now();
+        // First sight after the guard: live matches the event, clock starts.
+        assert_eq!(
+            deferred_action(Some(applied), dropped, dropped, None, now),
+            DeferredAction::Wait
+        );
+        // Still inside the settle window: not judged yet.
+        assert_eq!(
+            deferred_action(
+                Some(applied),
+                dropped,
+                dropped,
+                Some(now),
+                now + Duration::from_millis(40)
+            ),
+            DeferredAction::Wait
+        );
+        // Settled: the openbox drop is ready to be judged as a drag.
+        assert_eq!(
+            deferred_action(
+                Some(applied),
+                dropped,
+                dropped,
+                Some(now),
+                now + DEFERRED_STABLE
+            ),
+            DeferredAction::Ready(dropped)
+        );
+    }
+
+    #[test]
+    fn a_window_still_moving_restarts_the_deferred_clock() {
+        let remembered = Rect::new(500.0, 300.0, 400.0, 300.0);
+        let live = Rect::new(300.0, 300.0, 400.0, 300.0);
+        let now = Instant::now();
+        assert_eq!(
+            deferred_action(None, remembered, live, Some(now), now),
+            DeferredAction::Restart(live)
+        );
     }
 
     #[test]

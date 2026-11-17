@@ -9,6 +9,22 @@ and the soak/e2e checks; closing an item here means committing code, tests and a
 
 ## Done
 
+### A drag reported inside the own-apply guard still docks (0.5.0-dev)
+
+Openbox reports a whole drag as one ICCCM-synthetic `ConfigureNotify`, and the
+daemon re-applies the layout just before the drop, so `note_configure`'s
+own-apply guard (100 ms) discarded the only event that carried the drop
+position: the e2e assertion "a window dragged to the left edge is docked" failed
+on openbox (42/43) while xfwm4 passed. Removing the guard was measured and
+rejected — intermediate echoes of a two-step apply read as drags and every
+window docked itself (openbox 1 -> 7 failures). An event inside the guard is now
+remembered (newest rect per window) and re-tested after it: the window's live
+rect is read back, an echo that settled on the rect we applied is discarded, and
+a rect that stands still away from it for 80 ms is judged as the drop. Unit
+tests pin the echo, the settled drop and the still-moving cases.
+`scripts/e2e.sh --wm openbox` 211-212/212 (2 runs, the left-edge assertion
+passing in both) and `--wm xfwm4` 214/214.
+
 ### A failed hotkey or palette action reaches a desktop notification (0.5.0-dev)
 
 A chord runs inside the daemon and a palette action runs as a detached child,

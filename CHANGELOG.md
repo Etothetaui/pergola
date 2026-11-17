@@ -39,6 +39,18 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Fixed
 
+* **A window dragged under openbox still docks.** Openbox reports a whole drag
+  as one `ConfigureNotify`, and the daemon re-applies the layout just before the
+  drop, so `note_configure`'s own-apply guard swallowed the only event carrying
+  the drop position (the e2e left-edge drag assertion failed on openbox while
+  xfwm4 passed). A configure inside the guard is now remembered and re-tested
+  once the guard expires, against the window's *live* geometry: an echo that
+  settled on the rect we applied is discarded, and a rect that stands still away
+  from it for 80 ms is judged as the drop. The guard keeps its job — removing it
+  was measured to dock every window — without losing the gesture. Unit tests pin
+  the echo, the settled drop and the still-moving cases. Measured: the openbox
+  edge-drag assertion passed in two full runs (211-212/212) and xfwm4 214/214.
+
 * **A window docked beside the desktop leaf is visible, and the desktop keeps its
   share.** The desktop leaf is a floating layer, not a tile, so `inserting()`
   now retargets a dock against it to the body beside it. Before this, docking
