@@ -37,6 +37,18 @@ All notable changes to Pergola. Format follows the versioning rules in
   the wrap path handed the desktop half the screen. Two engine tests assert the
   docked window has width and the desktop's configured share survives.
 
+* **A window on another host desktop is left alone.** The host WM's desktops
+  are not pergola's tags: a window the user sends to another desktop belongs to
+  the WM there. `apply` used to move every seat in the tree, so the next
+  `arrange` dragged such a window back to the current desktop — the measured
+  `pi-tile --park` failure. A seat whose `_NET_WM_DESKTOP` is neither the
+  current desktop nor the sticky `0xFFFFFFFF` value is now skipped by `apply`,
+  `park_inactive` and the floating pass; a newly opened window on another
+  desktop is not adopted until the user brings it here. The predicate is
+  unit-tested (current, foreign, sticky, and missing properties) and the e2e
+  moves a window to a second host desktop, runs `arrange`, and asserts the
+  window stays there before returning it to its tile.
+
 * **Named workspaces (tags).** A tag is a named set of views; the active tag
 decides which views are laid out. `pergola window-tag <name>` moves the focused
 window onto a workspace (creating it), `tag-view <name>` switches to it,

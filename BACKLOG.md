@@ -9,6 +9,19 @@ and the soak/e2e checks; closing an item here means committing code, tests and a
 
 ## Done
 
+### A window on another host desktop is left alone (0.5.0-dev)
+
+The host WM's desktops are not pergola's tags. A window the user sends to
+another desktop (`_NET_WM_DESKTOP` ≠ `_NET_CURRENT_DESKTOP`, and not the sticky
+`0xFFFFFFFF`) belongs to the WM there; `apply`, `park_inactive` and the floating
+pass now skip it, and a newly opened window on another desktop is not adopted
+until the user brings it here. This is the daemon side of the measured
+`pi-tile --park` failure (#114): a parked window came back on the next
+`arrange` because the daemon re-applied the whole tree. The predicate is
+unit-tested (current, foreign, sticky, missing properties) and the e2e moves a
+window to a second host desktop, runs `arrange`, asserts it stays, then returns
+it to its tile.
+
 ### Tab groups — `views > 1` is real (0.4.0-dev)
 
 A panel with several views keeps every view mapped at the panel rectangle and raises the

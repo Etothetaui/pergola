@@ -165,6 +165,10 @@ struct Atoms {
     net_frame_extents: u32,
     net_workarea: u32,
     net_current_desktop: u32,
+    /// `_NET_WM_DESKTOP`: which host desktop a window is on. The host WM's
+    /// workspaces are not pergola's tags — a window the user moved to another
+    /// desktop belongs to the WM there, and moving it from here drags it back.
+    net_wm_desktop: u32,
     net_moveresize_window: u32,
     /// `_NET_WM_CM_S<screen>` — the selection a compositor owns while it is
     /// running (xfwm4, picom, kwin all follow the freedesktop convention).
@@ -332,6 +336,23 @@ impl X11 {
             }
         }
         Ok(out)
+    }
+
+    /// The host desktop the WM is showing (`_NET_CURRENT_DESKTOP`), or `None`
+    /// when the desktop does not advertise one.
+    pub fn current_desktop(&self) -> Option<u32> {
+        self.cardinal_prop(self.root, self.atoms.net_current_desktop)?
+            .into_iter()
+            .next()
+    }
+
+    /// The host desktop a window is on (`_NET_WM_DESKTOP`). `Some(0xFFFFFFFF)`
+    /// is the EWMH "on every desktop" value; `None` means the property is
+    /// missing, so the caller cannot tell and should not assume.
+    pub fn desktop_of(&self, win: u32) -> Option<u32> {
+        self.cardinal_prop(win, self.atoms.net_wm_desktop)?
+            .into_iter()
+            .next()
     }
 
     /// Ask the running WM to place `win` so that its *frame* occupies `frame`.
@@ -1038,6 +1059,7 @@ impl Atoms {
             net_frame_extents: intern("_NET_FRAME_EXTENTS")?,
             net_workarea: intern("_NET_WORKAREA")?,
             net_current_desktop: intern("_NET_CURRENT_DESKTOP")?,
+            net_wm_desktop: intern("_NET_WM_DESKTOP")?,
             net_moveresize_window: intern("_NET_MOVERESIZE_WINDOW")?,
             net_wm_cm: intern(&format!("_NET_WM_CM_S{screen}"))?,
             net_wm_window_opacity: intern("_NET_WM_WINDOW_OPACITY")?,

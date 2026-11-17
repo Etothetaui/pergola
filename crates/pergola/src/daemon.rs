@@ -282,6 +282,14 @@ impl Daemon {
             if w.transient {
                 continue;
             }
+            // A window on another host desktop is not part of this desktop's
+            // layout; adopt it when the user brings it here. Adopting it now
+            // would put it in the tree and `apply` would move it back.
+            if self.seats.iter().all(|s| s.window != w.id)
+                && on_another_desktop(self.x.current_desktop(), self.x.desktop_of(w.id))
+            {
+                continue;
+            }
             if let Some(record) = self.seats.iter_mut().find(|s| s.window == w.id) {
                 record.title = w.title.clone();
                 record.class = w.class.clone();
@@ -384,6 +392,12 @@ impl Daemon {
             self.camera.framed = new_root.id().to_string();
         }
         self.file.doc.root = new_root;
+    }
+
+    /// Is this window on a host desktop the WM is not showing? See
+    /// [`on_another_desktop`] for why it is left alone there.
+    fn foreign_desktop(&self, window: u32) -> bool {
+        on_another_desktop(self.x.current_desktop(), self.x.desktop_of(window))
     }
 
     fn focused_panel(&self) -> Option<String> {
@@ -548,6 +562,11 @@ impl Daemon {
                 if info.fullscreen || info.transient {
                     continue;
                 }
+                // On another host desktop the window belongs to the WM there;
+                // moving it from here is what pulled a parked window back.
+                if self.foreign_desktop(seat.window) {
+                    continue;
+                }
                 // A maximized window ignores `_NET_MOVERESIZE_WINDOW`: the
                 // tile would keep the full-screen geometry and the tree would
                 // lie. Drop the state, then move.
@@ -594,6 +613,12 @@ impl Daemon {
                 .and_then(|view| self.seats.iter().find(|s| &s.seat == view))
                 .map(|s| s.window);
             let Some(window) = window else { continue };
+            // A floating window on another host desktop stays where the WM put
+            // it; its stored rectangle is unchanged, so returning to this
+            // desktop restores it exactly like a tag switch does.
+            if self.foreign_desktop(window) {
+                continue;
+            }
             // A floating window belongs to a tag through its view. On another
             // tag it leaves the screen, but its stored rectangle stays as the
             // user left it — parking must not overwrite it.
@@ -763,6 +788,9 @@ impl Daemon {
                 continue;
             };
             if info.hidden || info.fullscreen || info.transient {
+                continue;
+            }
+            if self.foreign_desktop(seat.window) {
                 continue;
             }
             let frame = info.frame_rect();
@@ -3234,6 +3262,21 @@ fn park_if_outside(target: IRect, viewport: IRect, zoomed: bool) -> IRect {
     }
 }
 
+/// Is `window` on a host desktop other than the one the WM is showing?
+///
+/// Pergola tiles *inside* one desktop. The host WM's workspaces are not
+/// pergola's tags: a window the user moved to another desktop belongs to the WM
+/// there, and moving it from here drags it back onto this one — the measured
+/// `pi-tile --park` failure. `Some(0xFFFFFFFF)` is the EWMH "on every desktop"
+/// value (a sticky window), and a missing property means "cannot tell", so
+/// neither is foreign.
+fn on_another_desktop(current: Option<u32>, window: Option<u32>) -> bool {
+    match (current, window) {
+        (Some(current), Some(window)) => window != current && window != u32::MAX,
+        _ => false,
+    }
+}
+
 fn same_rect(a: Rect, b: Rect) -> bool {
     (a.x - b.x).abs() < 0.5
         && (a.y - b.y).abs() < 0.5
@@ -3338,6 +3381,18 @@ mod tests {
             .iter()
             .map(|r| r["type"].as_str().unwrap_or("").to_string())
             .collect()
+    }
+
+    #[test]
+    fn a_window_on_another_host_desktop_is_left_alone() {
+        assert!(!on_another_desktop(Some(2), Some(2)));
+        assert!(on_another_desktop(Some(2), Some(3)));
+        // EWMH sticky windows are on every desktop, never foreign.
+        assert!(!on_another_desktop(Some(2), Some(u32::MAX)));
+        // The desktop does not advertise a number, or the window does not say:
+        // do not guess, and keep the pre-existing behaviour.
+        assert!(!on_another_desktop(None, Some(3)));
+        assert!(!on_another_desktop(Some(2), None));
     }
 
     #[test]

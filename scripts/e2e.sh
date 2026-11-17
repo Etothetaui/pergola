@@ -1635,7 +1635,37 @@ P tag-view all >/dev/null 2>&1; sleep 0.4
 check_geometry "after the workspace chords are released"
 
 say
-say "15. screenshot"
+say "15. a window on another host desktop is left alone"
+# The host WM's desktops are not pergola's tags: a window the user sends to
+# another desktop belongs to the WM there. `arrange` must not drag it back —
+# the measured `pi-tile --park` failure (#114) was exactly this. i3's workspaces
+# are its own model, so the check is skipped there.
+if [ "$WM" = "i3" ]; then
+  say "  (i3 workspaces are not host desktops; skipping)"
+else
+  DESKS=$(xprop -root _NET_NUMBER_OF_DESKTOPS 2>/dev/null | awk '{print $NF}')
+  if [ "${DESKS:-0}" -ge 2 ] 2>/dev/null; then
+    xdotool windowactivate "$TAG_A" >/dev/null 2>&1; sleep 0.3
+    wmctrl -i -r "$TAG_A" -t 1 >/dev/null 2>&1; sleep 0.6
+    DESK=$(xprop -id "$TAG_A" _NET_WM_DESKTOP 2>/dev/null | awk '{print $NF}')
+    if [ "${DESK:-0}" = "1" ]; then
+      P arrange >/dev/null 2>&1; sleep 0.6
+      DESK2=$(xprop -id "$TAG_A" _NET_WM_DESKTOP 2>/dev/null | awk '{print $NF}')
+      check_eq "1" "${DESK2:-0}" "arrange leaves a window on another host desktop"
+      # Bring it back: the tile is waiting, and the next arrange lands it there.
+      wmctrl -i -r "$TAG_A" -t 0 >/dev/null 2>&1; sleep 0.5
+      P arrange >/dev/null 2>&1; sleep 0.6
+      check_geometry "after the window returns to this desktop"
+    else
+      say "  (the WM did not move the window to desktop 1; skipping)"
+    fi
+  else
+    say "  (the WM has no second desktop; skipping)"
+  fi
+fi
+
+say
+say "16. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

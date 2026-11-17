@@ -247,7 +247,7 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
 
 ## Testing
 
-* `cargo test` — 130 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 131 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
   document round-trips, named workspaces (disjoint view sets, pruning of the
   active tag's tree, an empty tag, a tag surviving its last window, a tagged
@@ -267,7 +267,9 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
   activation requests and named workspaces (disjoint tag sets, only the active
   tag laid out, a parked window mostly off the work area, the escape
   hatch, a restart and a `tag` record), settings help and a rejected value's
-  notification, a ratio nudge chord and the workspace chords — 208 assertions on xfwm4. Openbox runs
+  notification, a ratio nudge chord, the workspace chords, and a window on
+  another host desktop left where the WM put it — 212 assertions on xfwm4, 210
+  on openbox. Openbox runs
   the same suite and is also green; it skips the drop-frame assertions because
   it coalesces a drag into one `ConfigureNotify` (a WM capability, not a
   tolerance), and its tree can hold one more tile, so the geometry count is not
