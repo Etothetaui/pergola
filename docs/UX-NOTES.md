@@ -27,6 +27,10 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   runs the same target selection as the real dock, so the frame is the answer.
 * Re-dock a tile in one gesture: drag it out of its own rectangle and settle it
   near another edge and it docks there, without the float-then-dock detour.
+* Click a taskbar entry to focus its window. The click is an `_NET_ACTIVE_WINDOW`
+  request to the root window; the daemon reads it and focuses the window, and if
+  the window is a hidden tab view it shows that view first. Verified on xfwm4 and
+  openbox in `scripts/e2e.sh`.
 * `pergola-health` proves the daemon, layout invariants and work-area fit.
 
 ## Pain points

@@ -276,6 +276,7 @@ Everything that tiles a window is reachable without a shell:
 | move a tile to another edge | drag the docked tile out and settle it near the edge you want — one gesture, no float step |
 | switch tabs in a group | `Ctrl+Alt+Page_Down` / `Page_Up` |
 | undo the last layout change | `Ctrl+Alt+Z`, or `pergola undo` |
+| focus a window from a taskbar | click its entry — the click is an `_NET_ACTIVE_WINDOW` request, and a hidden tab view is shown first |
 
 The chords fall back to `Super+…` per command when the desktop owns the
 `Ctrl+Alt` chord — `pergola keys --check` prints what was really bound. The full

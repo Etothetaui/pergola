@@ -19,7 +19,7 @@ use pergola_x11::{
     command_for_key, describe, event_mods, snap_to_hints, KeyBinding, WindowInfo, X11,
 };
 use x11rb::connection::Connection as _;
-use x11rb::protocol::xproto::ConfigureNotifyEvent;
+use x11rb::protocol::xproto::{ClientMessageEvent, ConfigureNotifyEvent};
 use x11rb::protocol::Event;
 
 use crate::config::{self, Config};
@@ -53,8 +53,9 @@ enum Hint {
 /// A status-bar client of `pergola subscribe`. The socket is non-blocking so a
 /// bar that stops reading can never stall the event loop (bspwm's synchronous
 /// `fflush` is the failure this avoids): events queue up to `SUB_QUEUE_MAX`
-/// lines, and a client that has not drained anything for `SUB_TIMEOUT` is
-/// dropped, so a dead bar cannot pin memory either.
+/// lines. An idle bar is kept — an empty queue means nothing is waiting for it
+/// — but a bar with undelivered records that has not drained for `SUB_TIMEOUT`
+/// is dropped, so a dead one cannot pin memory either.
 struct Subscriber {
     stream: UnixStream,
     queue: std::collections::VecDeque<String>,
@@ -160,6 +161,13 @@ pub struct Daemon {
     /// `pergola subscribe` clients: panel/status-bar processes that want the
     /// layout pushed instead of polling `pergola tree` (i3 IPC, bspwm report).
     subscribers: Vec<Subscriber>,
+    /// Windows we recently asked the desktop to focus. A `_NET_ACTIVE_WINDOW`
+    /// request is broadcast to every client selecting root's substructure
+    /// events — including us — so each of our own requests comes back as an
+    /// event. Handling it as somebody else's would send it again, forever.
+    /// A small list, not one slot: two focuses in a row must both be recognised
+    /// when their echoes arrive in order.
+    own_activations: Vec<(u32, Instant)>,
 }
 
 impl Daemon {
@@ -214,6 +222,7 @@ impl Daemon {
             hint: Hint::None,
             drop_edge: None,
             subscribers: Vec::new(),
+            own_activations: Vec::new(),
         };
         daemon.reconcile()?;
         daemon.started = true;
@@ -1224,12 +1233,91 @@ impl Daemon {
     /// Give the keyboard to a seat's window. Switching tabs without this leaves
     /// the user typing into the hidden view, which is the bug the whole feature
     /// exists to avoid.
-    fn focus_seat(&self, seat: &str) {
-        if let Some(record) = self.seats.iter().find(|s| s.seat == seat) {
-            if let Err(e) = self.x.activate(record.window) {
-                eprintln!("pergola: could not focus 0x{:x}: {e}", record.window);
+    fn focus_seat(&mut self, seat: &str) {
+        if let Some(window) = self
+            .seats
+            .iter()
+            .find(|s| s.seat == seat)
+            .map(|s| s.window)
+        {
+            self.activate_with_guard(window);
+        }
+    }
+
+    /// Ask the desktop to focus `window`, remembering that we did. The request
+    /// is broadcast to every client selecting root's substructure events —
+    /// including us — so `note_client_message` must be able to tell our own
+    /// echo from a pager's request.
+    fn activate_with_guard(&mut self, window: u32) {
+        let now = Instant::now();
+        self.own_activations
+            .retain(|(_, at)| now.duration_since(*at) < ACTIVATION_ECHO);
+        if let Err(e) = self.x.activate(window) {
+            // No request went out, so no echo is coming: an entry here would
+            // swallow a genuine pager request for this window for 2 s.
+            eprintln!("pergola: could not focus 0x{window:x}: {e}");
+            return;
+        }
+        self.own_activations.push((window, now));
+        // Bounded: an old request whose echo never arrived must not accumulate.
+        if self.own_activations.len() > ACTIVATION_ECHO_DEPTH {
+            self.own_activations.remove(0);
+        }
+    }
+
+    /// Handle an EWMH `_NET_ACTIVE_WINDOW` request. The window to activate is
+    /// the message's event window; `data[0]` is the source indication (2 =
+    /// pager, 1 = application) and `data[1]` the timestamp, which clients often
+    /// send as 0 — so it is never used to reject a request.
+    fn note_client_message(&mut self, message: &ClientMessageEvent) -> Result<()> {
+        if message.format != 32 || message.type_ != self.x.net_active_window_atom() {
+            return Ok(());
+        }
+        let source = message.data.as_data32().first().copied().unwrap_or(0);
+        // Our own activation echoing back: consume it so focus cannot loop.
+        if take_own_activation(&mut self.own_activations, message.window, Instant::now()) {
+            return Ok(());
+        }
+        let Some((seat, panel, hidden)) =
+            activation_target(&self.seats, &self.file.doc.root, message.window)
+        else {
+            // Unmanaged, override-redirect or parked: a pager's stale entry or
+            // a popup, neither of which belongs in the tree (xmonad's
+            // EwmhDesktops drops them for the same reason).
+            if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                eprintln!(
+                    "pergola: activation 0x{:x} source {source}: not managed, ignored",
+                    message.window
+                );
+            }
+            return Ok(());
+        };
+        if hidden {
+            // A tab view that is not shown has to be shown first, or the
+            // desktop focuses a window nobody can see.
+            if let Some(LayoutNode::Panel(mut node)) = self.file.doc.root.node(&panel).cloned() {
+                if node.select(&seat) {
+                    let tree =
+                        replace_node(&self.file.doc.root, &panel, &LayoutNode::Panel(node));
+                    self.replace_root(tree);
+                    self.normalize_camera();
+                    self.apply()?;
+                    self.save()?;
+                }
             }
         }
+        // A positive line, not just the failure one: the e2e needs to prove the
+        // daemon *handled* the request, and `status` cannot show it because the
+        // desktop sets `_NET_ACTIVE_WINDOW` whether or not a handler exists.
+        if std::env::var_os("PERGOLA_DEBUG").is_some() {
+            eprintln!(
+                "pergola: activation 0x{:x} source {source} -> seat {seat} (panel {panel}, hidden {hidden})",
+                message.window
+            );
+        }
+        self.last_focus = Some(panel);
+        self.activate_with_guard(message.window);
+        Ok(())
     }
 
     fn arrange(&mut self) -> Result<String> {
@@ -1482,6 +1570,12 @@ impl Daemon {
         // it once the timeout expires; dropping the record instead of growing
         // without bound keeps a stuck bar from taking the daemon down.
         if client.queue.len() < SUB_QUEUE_MAX {
+            // A record going into an empty queue restarts the clock: the
+            // timeout measures how long *undelivered* data has waited, and a
+            // stale `drained` would drop the client on the first WouldBlock.
+            if client.queue.is_empty() {
+                client.drained = Instant::now();
+            }
             client.queue.push_back(line);
         }
     }
@@ -1523,7 +1617,10 @@ impl Daemon {
                     Err(_) => return false,
                 }
             }
-            now.duration_since(client.drained) < SUB_TIMEOUT
+            // An empty queue means nothing is waiting for the client: it is
+            // idle, not stuck. Only a client with undelivered records that has
+            // not drained for the whole timeout is gone or wedged.
+            client.queue.is_empty() || now.duration_since(client.drained) < SUB_TIMEOUT
         });
     }
 
@@ -1599,6 +1696,12 @@ impl Daemon {
             }
         });
 
+        // A pager's `_NET_ACTIVE_WINDOW` request arrives only if we select
+        // root's substructure events; failure is not fatal, a taskbar click
+        // then simply does nothing.
+        if let Err(e) = self.x.watch_root() {
+            eprintln!("pergola: cannot watch activation requests: {e:#}");
+        }
         match self.reinstall_bindings() {
             Ok(notes) => {
                 for note in notes {
@@ -1787,6 +1890,11 @@ impl Daemon {
             Event::EnterNotify(enter) => self.on_band_enter(enter.event)?,
             Event::LeaveNotify(leave) => self.on_band_leave(leave.event)?,
             Event::ConfigureNotify(configure) => self.note_configure(&configure)?,
+            // A pager (taskbar) or an application asking the WM to focus a
+            // window: without this a taskbar's "click to focus" is a no-op,
+            // which is the largest single failure class in the harvest's
+            // ewmh/icccm bucket (168 issues).
+            Event::ClientMessage(message) => self.note_client_message(&message)?,
             // A keyboard-map change (layout switch, xmodmap, another client's
             // remap) invalidates both the keycode table and the grabs. Rebuild
             // and re-grab, or every binding silently points at the old layout.
@@ -2402,6 +2510,54 @@ fn diff_events(before: &EventSig, after: &EventSig) -> Vec<serde_json::Value> {
     out
 }
 
+/// Which seat an EWMH `_NET_ACTIVE_WINDOW` request should focus: the seat id,
+/// the panel to talk about, and whether that panel holds the seat as a hidden
+/// tab view that must be shown first. `None` means the request names a window
+/// we do not manage (a stale pager entry, an override-redirect popup), which
+/// must be ignored rather than focused off the tree — xmonad's `EwmhDesktops`
+/// drops unmanaged windows for the same reason.
+fn activation_target(
+    seats: &[SeatRecord],
+    root: &LayoutNode,
+    window: u32,
+) -> Option<(String, String, bool)> {
+    let seat = seats.iter().find(|s| s.window == window)?;
+    match root.panel_containing(&seat.seat) {
+        Some(panel) => {
+            let hidden =
+                panel.is_tab_group() && panel.selected.as_deref() != Some(seat.seat.as_str());
+            Some((seat.seat.clone(), panel.id.clone(), hidden))
+        }
+        // A floating window is not in the tree: there is no view to switch, it
+        // only has to be focused. Its seat record still names the panel it owns.
+        None => Some((seat.seat.clone(), seat.panel.clone(), false)),
+    }
+}
+
+/// Whether `window` is one of our own recent activation requests echoing back.
+/// A match is removed, so one request cannot be consumed twice; a request older
+/// than [`ACTIVATION_ECHO`] is somebody else's and must be handled.
+fn take_own_activation(tracked: &mut Vec<(u32, Instant)>, window: u32, now: Instant) -> bool {
+    let Some(idx) = tracked
+        .iter()
+        .position(|(w, at)| *w == window && now.duration_since(*at) < ACTIVATION_ECHO)
+    else {
+        return false;
+    };
+    tracked.remove(idx);
+    true
+}
+
+/// How long our own `_NET_ACTIVE_WINDOW` request can take to echo back through
+/// the root selection before a matching request is treated as somebody else's.
+/// Generous on purpose: a loaded daemon can take a second to drain its event
+/// queue, and a missed echo costs one redundant activation round. A false match
+/// costs only a swallowed request for a window we just focused ourselves.
+const ACTIVATION_ECHO: Duration = Duration::from_secs(2);
+
+/// How many of our own requests can be waiting for an echo at once.
+const ACTIVATION_ECHO_DEPTH: usize = 8;
+
 /// Colour of a pointer hint: the accent the overlay uses for the framed
 /// split, so a hint reads as "pergola" and not as a client window.
 const HINT_COLOR: u32 = 0x00e8b04b;
@@ -2877,6 +3033,61 @@ mod tests {
     fn an_unchanged_state_produces_no_records() {
         let state = sig("tree", &[(1, Placement::Docked("p-a".into()), "one")], 1);
         assert!(diff_events(&state, &state).is_empty());
+    }
+
+    fn record(seat: &str, panel: &str, window: u32) -> SeatRecord {
+        SeatRecord {
+            seat: seat.to_string(),
+            panel: panel.to_string(),
+            window,
+            class: "XTerm".to_string(),
+            title: "xterm".to_string(),
+        }
+    }
+
+    #[test]
+    fn an_activation_request_finds_the_seat_and_whether_its_view_is_hidden() {
+        // s-a owns a plain panel; s-b and s-c share a tab group whose shown
+        // view is s-b (`Panel::new` selects the first).
+        let seats = vec![
+            record("s-a", "p-a", 1),
+            record("s-b", "p-b", 2),
+            record("s-c", "p-b", 3),
+        ];
+        let tree = LayoutNode::split(
+            "root",
+            Axis::X,
+            vec![
+                LayoutNode::panel("p-a", vec!["s-a".into()]),
+                LayoutNode::panel("p-b", vec!["s-b".into(), "s-c".into()]),
+            ],
+        );
+        assert_eq!(
+            activation_target(&seats, &tree, 1),
+            Some(("s-a".to_string(), "p-a".to_string(), false))
+        );
+        // The shown view of the tab group needs no switch.
+        assert_eq!(
+            activation_target(&seats, &tree, 2),
+            Some(("s-b".to_string(), "p-b".to_string(), false))
+        );
+        // A hidden view must be shown first.
+        assert_eq!(
+            activation_target(&seats, &tree, 3),
+            Some(("s-c".to_string(), "p-b".to_string(), true))
+        );
+        // A window we do not manage is a stale pager entry or a popup.
+        assert_eq!(activation_target(&seats, &tree, 99), None);
+    }
+
+    #[test]
+    fn a_floating_window_activation_has_no_view_to_show() {
+        let seats = vec![record("s-f", "p-f", 7)];
+        let tree = LayoutNode::desktop();
+        assert_eq!(
+            activation_target(&seats, &tree, 7),
+            Some(("s-f".to_string(), "p-f".to_string(), false))
+        );
     }
 
     #[test]

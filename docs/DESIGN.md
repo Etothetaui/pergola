@@ -30,6 +30,17 @@ the same request `wmctrl` makes. Consequences:
   and client coordinates using `_NET_FRAME_EXTENTS` at every move;
 * a WM that ignores EWMH moves cannot be supported (`pergola doctor` says so).
 
+Because it holds no redirect, the layer also cannot *see* a client's request to
+activate a window by taking `SubstructureRedirect` — the desktop owns that. It
+takes the shared `SubstructureNotify` bit on the root instead, which is enough:
+EWMH clients send `_NET_ACTIVE_WINDOW` to the root with both masks, so a
+taskbar's "click to focus" reaches the layer as well as the desktop. A request
+for a hidden tab view switches the tab first; a request naming a window the
+layer does not manage is ignored. The layer's own activation requests echo back
+to it through the same selection, so they are tracked briefly and consumed
+rather than re-handled, which would loop focus between the layer and the
+desktop.
+
 ### 2. The camera is a transform, not a workspace switch
 
 `framed` is a node id. Rendering the tree means:
@@ -177,19 +188,21 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
 
 ## Testing
 
-* `cargo test` — 105 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 107 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
   document round-trips, config parsing and repair of malformed weights,
-  pointer-edge picking, hint geometry, and the event stream's transition table
-  (new window, dock, undock, close, layout, focus, no-change).
+  pointer-edge picking, hint geometry, activation-request targeting (a shown
+  tab view, a hidden one, a floating window, an unmanaged id), and the event
+  stream's transition table (new window, dock, undock, close, layout, focus,
+  no-change).
 * `scripts/e2e.sh` — starts Xvfb + a real WM (xfwm4 by default, openbox with
   `--wm openbox`) + three xterms, runs the real daemon, and asserts the geometry
   the X server reports against `pergola rects` after dock, zoom, arrange, gap
   changes, ratio, float, a daemon restart, keyboard docking, a gap drag, an edge
   drop, tab groups, config/binding errors, the overlay's dim layer, hover
-  hints, the drop frame, one-gesture re-dock and the event stream — 138
-  assertions, two fewer on openbox (the drop frame) and a check or two fewer
-  when the WM parks a tile off-screen. Openbox coalesces a drag into one
+  hints, the drop frame, one-gesture re-dock, the event stream and pager
+  activation requests — 146 assertions, two fewer on openbox (the drop frame)
+  and a check or two fewer when the WM parks a tile off-screen. Openbox coalesces a drag into one
   `ConfigureNotify`, so the mid-drag drop frame is asserted on xfwm4 only; the
   frame's existence is a WM capability, not a tolerance. The event-stream block
   proves the state-first record, dock/undock/close records naming the window,

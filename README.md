@@ -346,13 +346,19 @@ before Pergola and maps every failure class to the fix that answers it.
   stops reading is dropped after ten seconds; when the daemon exits the client
   exits 0 so a supervisor can restart it. There is no per-event subscription
   filter yet — a client that wants only `focus` reads and discards the rest.
+* A taskbar's click-to-focus works: the daemon reads `_NET_ACTIVE_WINDOW`
+  requests from the root's shared `SubstructureNotify` selection, focuses the
+  named window and shows a hidden tab view first. A request naming a window it
+  does not manage is ignored. It does not raise a floating window over a docked
+  one, and it does not act on the source indication (pager vs application):
+  both are treated as "focus this".
 * Only one instance per display (one Unix socket).
 
 ## Development
 
 ```bash
-cargo test               # 105 unit tests: geometry, tree, camera, commands, document, event diff
-scripts/e2e.sh           # 138 assertions against Xvfb + a real WM + real xterms
+cargo test               # 107 unit tests: geometry, tree, camera, commands, document, event diff
+scripts/e2e.sh           # 146 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

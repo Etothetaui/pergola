@@ -17,6 +17,26 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **Pager activation requests are honoured.** A taskbar's "click to focus" sends
+  `_NET_ACTIVE_WINDOW` to the root window; Pergola only ever *set* that property
+  when it focused a window, so the click was a silent no-op. The daemon now
+  selects the root's shared `SubstructureNotify` mask (it cannot take
+  `SubstructureRedirect`, which the desktop owns) and handles the request: a
+  window in the tree is focused and its seat recorded as last-focused; a window
+  in a tab group that is not the shown view switches the tab first, so the
+  desktop never focuses a window nobody can see; a window the daemon does not
+  manage — a stale pager entry, an override-redirect popup — is ignored rather
+  than focused off the tree. The daemon's own activation requests echo back
+  through the same selection, so they are tracked for two seconds and consumed
+  instead of re-handled, which would otherwise bounce focus between the layer
+  and the desktop forever. Timestamps clients send as `0` are accepted. Unit
+  tests cover the four targeting cases (shown view, hidden view, floating
+  window, unmanaged id); the e2e asserts an external `xdotool windowactivate`
+  changes the daemon's active window, that the daemon logged handling the
+  request itself (an assertion on `status active` alone would pass with the
+  handler deleted, because the desktop sets the property either way), and that
+  a request for a hidden tab view shows it.
+
 * **`pergola subscribe` — a push stream for status bars.** The control socket
   stops being request/response only: a client sends `subscribe` and the daemon
   pushes newline-delimited JSON — a state snapshot on connect (so a bar that

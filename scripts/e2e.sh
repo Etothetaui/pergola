@@ -379,7 +379,14 @@ wait "$COMPOSITOR" 2>/dev/null
 
 say
 say "8. keyboard and mouse tiling"
-P float-all >/dev/null; sleep 0.4
+P float-all >/dev/null
+# float-all is a transition, not a request the daemon can answer in one pass:
+# under load it can still be undocking when the next assertion counts panels.
+# Wait for the count to reach zero instead of guessing a sleep.
+for _ in $(seq 1 40); do
+  [ "$(P list | grep -c '^docked')" = "0" ] && break
+  sleep 0.1
+done
 # A maximised window ignores _NET_MOVERESIZE_WINDOW, so docking has to clear
 # that state first or the tile silently keeps the full-screen geometry.
 wmctrl -i -r "$W1" -b add,maximized_vert,maximized_horz >/dev/null 2>&1; sleep 0.6
@@ -390,6 +397,10 @@ if xprop -id "$W1" _NET_WM_STATE | grep -q MAXIMIZED; then
 else
   ok "docking a maximised window clears the state"
 fi
+for _ in $(seq 1 40); do
+  [ "$(P list | grep -c '^docked')" = "1" ] && break
+  sleep 0.1
+done
 check_eq "1" "$(P list | grep -c '^docked')" "the maximised window is docked"
 P float-all >/dev/null; sleep 0.4
 xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
@@ -971,9 +982,18 @@ else
   bad "the first record was not a state snapshot: $(head -1 "$SUBLOG" 2>/dev/null)"
 fi
 
-# The three transitions the backlog names, on a real window: dock, undock, close.
-P dock left --window "$W2" >/dev/null 2>&1; sleep 0.6
+# The three transitions the backlog names, on a real window: undock, dock,
+# close. W2 is a tab view from section 10, so it starts docked; make sure of it
+# rather than assuming the reconcile under load.
+for _ in $(seq 1 20); do
+  P list | grep -c "^docked.*$W2" >/dev/null && break
+  sleep 0.1
+done
+if ! P list | grep -c "^docked.*$W2" >/dev/null; then
+  P dock left --window "$W2" >/dev/null 2>&1; sleep 0.5
+fi
 P float --window "$W2" >/dev/null 2>&1; sleep 0.6
+P dock left --window "$W2" >/dev/null 2>&1; sleep 0.6
 xdotool windowkill "$W2" >/dev/null 2>&1; sleep 2.6
 kill "$SUB_PID" 2>/dev/null
 wait "$SUB_PID" 2>/dev/null || true
@@ -1057,7 +1077,78 @@ else
 fi
 
 say
-say "12. screenshot"
+say "12. activation requests (_NET_ACTIVE_WINDOW)"
+# A taskbar's "click to focus" is an EWMH `_NET_ACTIVE_WINDOW` client message to
+# the root window. The daemon only hears it because it selects the root's
+# substructure events; without a handler the click is a silent no-op, and a
+# request for a hidden tab view focuses a window nobody can see.
+# Section 11 stopped the daemon, so start it again. Debug on: the positive
+# "handled an activation" line is the only proof the daemon acted, because
+# `status active` reads the root property the *desktop* sets whether or not a
+# handler exists — an assertion on it alone would pass with the handler deleted.
+PERGOLA_DEBUG=1 "$BIN" --socket "$SOCK" daemon >>"$TMP/daemon.log" 2>&1 & PIDS+=($!)
+for _ in $(seq 1 50); do P status >/dev/null 2>&1 && break; sleep 0.1; done
+sleep 0.3
+xterm -T pergola-e2e-activate -geometry 60x18+300+260 -e sh -c 'exec sleep 3600' >/dev/null 2>&1 & ACT_PID=$!; XPIDS+=("$ACT_PID")
+W4=""
+for _ in $(seq 1 40); do
+  W4=$(xdotool search --name '^pergola-e2e-activate$' 2>/dev/null | head -1)
+  [ -n "$W4" ] && P list | grep -c "0x$(printf '%08x' "$W4")" >/dev/null && break
+  sleep 0.1
+done
+W4=$(printf '0x%08x' "${W4:-0}")
+P float-all >/dev/null 2>&1; sleep 0.4
+P arrange >/dev/null 2>&1; sleep 0.5
+
+# Focusing a window from outside the daemon must be visible in `status`.
+xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.4
+BEFORE=$(P status | sed -n 's/.*active \(0x[0-9a-f]*\).*/\1/p')
+xdotool windowactivate "$W4" >/dev/null 2>&1; sleep 0.5
+AFTER=$(P status | sed -n 's/.*active \(0x[0-9a-f]*\).*/\1/p')
+# `status` prints the window id unpadded (`0x60000c`); the e2e's W4 is padded
+# (`0x0060000c`). Compare in the daemon's own format.
+check_eq "$(printf '0x%x' "$((W4))")" "$AFTER" "a pager's activation request is the daemon's active window"
+if [ "$BEFORE" != "$AFTER" ]; then
+  ok "the activation request changed the active window ($BEFORE -> $AFTER)"
+else
+  bad "the activation request did not change the active window ($AFTER)"
+fi
+# The daemon's own line, not the desktop's property: this is what fails when
+# the ClientMessage arm is missing.
+if grep -c "activation 0x$(printf '%x' "$((W4))") source .* -> seat" "$TMP/daemon.log" >/dev/null; then
+  ok "the daemon handled the activation request itself"
+else
+  bad "the daemon never logged the activation request for $W4"
+fi
+
+# A request for a hidden tab view must show it first: the desktop can focus a
+# window that is mapped under its sibling, but the user would see nothing.
+xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.4
+P tab --window "$W4" >/dev/null 2>&1; sleep 0.5
+read -r _ TAB_COUNT TAB_SEL <<EOF
+$(tab_panel)
+EOF
+S_W3=$(printf 's-%x' "$((W3))")
+S_W4=$(printf 's-%x' "$((W4))")
+check_eq "2" "${TAB_COUNT:-0}" "the activation test has a two-view tab group"
+check_eq "$S_W4" "${TAB_SEL:-}" "the newly tabbed window is the shown view"
+xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.6
+read -r _ _ TAB_SEL <<EOF
+$(tab_panel)
+EOF
+check_eq "$S_W3" "${TAB_SEL:-}" "a request for a hidden tab view shows that view"
+ACTIVE=$(P status | sed -n 's/.*active \(0x[0-9a-f]*\).*/\1/p')
+check_eq "$(printf '0x%x' "$((W3))")" "$ACTIVE" "the hidden view is the daemon's active window"
+# And the daemon knew the view was hidden, i.e. it switched the tab rather than
+# letting the desktop focus a window nobody can see.
+if grep -c "activation 0x$(printf '%x' "$((W3))") source .* hidden true" "$TMP/daemon.log" >/dev/null; then
+  ok "the daemon saw the hidden view and showed it"
+else
+  bad "the daemon did not treat the tab view as hidden: $(grep 'activation' "$TMP/daemon.log" 2>/dev/null | tail -2 | tr '\n' ' ')"
+fi
+
+say
+say "13. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

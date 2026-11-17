@@ -805,6 +805,25 @@ impl X11 {
         Ok(self.conn.poll_for_event()?)
     }
 
+    /// Ask for the root window's substructure events. A window-manager *layer*
+    /// cannot take `SubstructureRedirect` (the desktop's WM owns it), but
+    /// `SubstructureNotify` is shared, and EWMH clients send
+    /// `_NET_ACTIVE_WINDOW` with both masks — so selecting the notify bit is
+    /// enough to receive a pager's or an application's activation request.
+    pub fn watch_root(&self) -> Result<()> {
+        self.conn.change_window_attributes(
+            self.root,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY),
+        )?;
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    /// The `_NET_ACTIVE_WINDOW` atom, for matching an incoming request.
+    pub fn net_active_window_atom(&self) -> u32 {
+        self.atoms.net_active_window
+    }
+
     /// Ask for a managed window's structure events. The WM's synthetic
     /// `ConfigureNotify` (root coordinates, ICCCM) is how the daemon notices
     /// that the user moved a window — including a drag it cannot see.

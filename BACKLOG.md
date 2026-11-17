@@ -54,7 +54,7 @@ copy, and the package was removed afterwards to leave the user install as the li
 The backlog asked for `pergola-bin`; that name is a contract in the AUR (`-bin` = prebuilt, no
 compilation) and there is no release artifact to download, so shipping it would have meant a
 package that lies about itself. The rename and the reason are in `packaging/aur/README.md`; a
-`pergola-bin` package is item 6, blocked on a release pipeline.
+`pergola-bin` package is item 2, blocked on a release pipeline.
 
 Two deliberate deviations from the source install: the packaged unit does not hard-code
 `DISPLAY=:0` (it inherits the graphical session's environment), and `install.sh` remains the path
@@ -151,16 +151,25 @@ cover the transition table (new window, dock, undock, close, layout, focus, no-c
 reads the whole stream from one session and asserts every required record names the window.
 The harvest's **ipc / scripting** class was 227 issues.
 
-## 1. Honour `_NET_ACTIVE_WINDOW` requests from pagers
+### Pager activation requests (0.4.0-dev)
 
-**What:** read `_NET_ACTIVE_WINDOW` client messages and focus/raise the named window; the daemon
-currently only *sets* that property when it focuses a window.
-**Why:** the **ewmh / icccm** class (168 issues) is mostly clients and panels asking the WM to do
-something it does not listen for. A taskbar's "click to focus" silently does nothing today.
-**Done when:** an external `xdotool windowactivate` on a docked window focuses it and the daemon
-reports the same seat as focused; a unit test covers the request path.
+A taskbar's "click to focus" sends `_NET_ACTIVE_WINDOW` to the root window; the daemon only ever
+*set* that property when it focused a window, so the click was a silent no-op. The daemon now
+selects the root's shared `SubstructureNotify` mask — it cannot take `SubstructureRedirect`, which
+the desktop owns — and handles the request: a window in the tree is focused and its seat recorded
+as last-focused; a window in a tab group that is not the shown view switches the tab first, so the
+desktop never focuses a window nobody can see; a window the daemon does not manage (a stale pager
+entry, an override-redirect popup) is ignored rather than focused off the tree. The daemon's own
+activation requests echo back through the same selection, so they are tracked for two seconds and
+consumed instead of re-handled, which would otherwise bounce focus between the layer and the
+desktop forever. Timestamps clients send as `0` are accepted. Unit tests cover the four targeting
+cases (shown view, hidden view, floating window, unmanaged id); the e2e asserts an external
+`xdotool windowactivate` changes the daemon's active window, that the daemon logged handling the
+request itself (an assertion on `status active` alone would pass with the handler deleted, because
+the desktop sets the property either way), and that a request for a hidden tab view shows it.
+The harvest's **ewmh / icccm** class was 168 issues.
 
-## 2. Named workspaces (tags) on top of views
+## 1. Named workspaces (tags) on top of views
 
 **What:** named tags that own a set of views, with `tag-view <name>`, `window-tag <name>` and
 per-tag focus memory; the document format gains a `tags` list beside `views`.
@@ -170,7 +179,7 @@ is a deliberate `MINOR` bump with a loader that keeps reading older documents.
 **Done when:** two tags hold disjoint view sets, switching tags maps only the active tag's views,
 and a document written by the new version loads in the old one without losing its views.
 
-## 3. Release pipeline, so `pergola-bin` can exist
+## 2. Release pipeline, so `pergola-bin` can exist
 
 **What:** a CI workflow that builds `x86_64` and `aarch64` binaries on a tag and attaches them to
 a GitHub release; then a `pergola-bin` PKGBUILD that downloads that artifact (the file list stays
@@ -192,4 +201,4 @@ with a real `sha256sums` installs the same file list as `pergola-git`.
   desktop's panel leaves; it does not draw a bar or own a tray. A tiler that owns the bar is a
   desktop environment, not a tiler.
 - **Compositing** (57 issues). Opacity and effects belong to the running compositor; the overlay
-  dim done in item 1 is the only compositor interaction worth having.
+  dim layer is the only compositor interaction worth having.

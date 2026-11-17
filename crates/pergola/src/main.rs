@@ -538,6 +538,11 @@ CONFIG
   settings --list                the same rows on stdout
   settings <key> <value>         set one key, validated, then reload
 
+EVENTS
+  subscribe                      stream layout, focus, dock, undock and
+                                 window-closed records as JSON lines, so a
+                                 panel never has to poll `pergola tree`
+
 INSPECTION
   status | tree | list | keys | doctor | sim [--json]
   palette                        human menu of tile actions (rofi/zenity/dmenu)
