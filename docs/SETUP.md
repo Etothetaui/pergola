@@ -126,7 +126,6 @@ the defaults):
   "auto_dock": "off",
   "overlay": false,
   "desktop_share": 0.0,
-  "terminal": "xfce4-terminal",
   "hotkeys": true,
   "edge_dock": true,
   "notify": true,
@@ -148,7 +147,7 @@ the defaults):
 | `dim` | `0.4` | strength of the overlay's dim layer, `0` (off) to `0.9`; only used with a compositor. At `0` the split lines are 4 px wide instead of 2, so the boundary still reads without a dim layer |
 | `tags` | `false` | bind `Super+1`…`9` (`Ctrl+Alt+1`…`9` first) to the nine named workspaces, and `Super+Shift+n` to move the focused window onto one. `on`/`off` |
 | `desktop_share` | `0.0` | share of the screen `arrange` gives the desktop leaf; `0` means the desktop gets no strip |
-| `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
+| `terminal` | `$TERMINAL`, else an installed terminal (`xfce4-terminal` first, `xterm` last) | program launched by `split-terminal`; set this key to choose a specific one |
 | `hotkeys` | `true` | grab the default chords on the root window |
 | `edge_dock` | `true` | dock a floating window dropped on a screen edge (mouse tiling) |
 | `notify` | `true` | show a desktop notification when a hotkey or palette action fails. A chord runs inside the daemon, where stderr goes to the journal — the one place a person does not look. Best effort: without a notifier the failure still reaches the journal |

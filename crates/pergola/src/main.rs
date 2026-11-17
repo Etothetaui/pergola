@@ -65,13 +65,13 @@ fn main() -> ExitCode {
                 }
                 Ok(())
             } else {
-                palette::open().map(|()| println!("palette opened — pick an action"))
+                palette::open(&socket).map(|()| println!("palette starting"))
             }
         }
         "palette-run" => palette::run(&socket),
         "subscribe" => subscribe(&socket),
         "settings" => settings(&socket, &rest[1..]),
-        "settings-run" => palette::run_settings(),
+        "settings-run" => palette::run_settings(&socket),
         "sim" => sim(&rest[1..]),
         "config" => config_report(&rest[1..]),
         "keys" => keys(&socket, &rest[1..]),
@@ -300,8 +300,7 @@ fn bind(socket: &PathBuf, args: &[String]) -> Result<()> {
     if args.iter().any(|a| a == "--default") {
         let path = config::write_bindings(command, None)?;
         println!("restored the default chords for '{command}' in {}", path.display());
-        reload_and_report(socket);
-        return Ok(());
+        return reload_and_report(socket);
     }
     let chords: Vec<String> = args[1..].to_vec();
     if chords.is_empty() {
@@ -318,8 +317,7 @@ fn bind(socket: &PathBuf, args: &[String]) -> Result<()> {
         chords.join(" / "),
         path.display()
     );
-    reload_and_report(socket);
-    Ok(())
+    reload_and_report(socket)
 }
 
 fn unbind(socket: &PathBuf, args: &[String]) -> Result<()> {
@@ -334,8 +332,7 @@ fn unbind(socket: &PathBuf, args: &[String]) -> Result<()> {
     }
     let path = config::write_bindings(command, Some(&[]))?;
     println!("unbound '{command}' in {}", path.display());
-    reload_and_report(socket);
-    Ok(())
+    reload_and_report(socket)
 }
 
 /// Print one command's effective candidates and where they come from.
@@ -364,15 +361,20 @@ fn show_binding(command: &str) -> Result<()> {
 /// back in the message, so the user sees them where the command ran instead of
 /// only in the journal. A daemon that is not running is not an error: the
 /// config is already saved and applies at the next start.
-fn reload_and_report(socket: &PathBuf) {
+fn reload_and_report(socket: &PathBuf) -> Result<()> {
     match ipc::call(socket, &["reload".to_string()]) {
         Ok(response) if response.ok => {
             if !response.message.is_empty() {
                 println!("{}", response.message);
             }
+            Ok(())
         }
-        Ok(response) => eprintln!("pergola: reload failed: {}", response.message),
-        Err(_) => println!("pergola: saved; no daemon is running, so the change applies at the next start"),
+        Ok(response) => anyhow::bail!("saved, but the running daemon rejected reload: {}", response.message),
+        Err(_) if !socket.exists() => {
+            println!("pergola: saved; no daemon is running, so the change applies at the next start");
+            Ok(())
+        }
+        Err(e) => Err(e.context("saved, but could not reload the running daemon")),
     }
 }
 
@@ -417,8 +419,8 @@ fn settings(socket: &PathBuf, args: &[String]) -> Result<()> {
     let report = config::Config::inspect();
     match args.first().map(String::as_str) {
         None => {
-            palette::open_settings()?;
-            println!("settings opened — pick a setting to change");
+            palette::open_settings(socket)?;
+            println!("settings menu starting");
             Ok(())
         }
         Some("--list") => {
@@ -447,8 +449,17 @@ fn settings(socket: &PathBuf, args: &[String]) -> Result<()> {
                 Ok(response) if response.ok => {
                     println!("{changed} · {}", response.message.trim());
                 }
-                Ok(response) => eprintln!("pergola: saved {changed}; reload said: {}", response.message),
-                Err(_) => println!("{changed} · saved (no daemon running, applies at next start)"),
+                Ok(response) => {
+                    let problem = format!("saved {changed}, but the running daemon rejected reload: {}", response.message);
+                    notify::send(&problem);
+                    anyhow::bail!(problem);
+                }
+                Err(_) if !socket.exists() => println!("{changed} · saved (no daemon running, applies at next start)"),
+                Err(e) => {
+                    let problem = format!("saved {changed}, but could not reload the running daemon: {e:#}");
+                    notify::send(&problem);
+                    anyhow::bail!(problem);
+                }
             }
             Ok(())
         }

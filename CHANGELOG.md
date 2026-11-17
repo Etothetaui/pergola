@@ -46,6 +46,22 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Fixed
 
+* **First-run docking and terminal splitting keep their target.** Focusing a new
+  floating window no longer replaces the last tiled target. `split-terminal`
+  remembers the source before the new terminal takes focus and works from a
+  floating or tiled window. When `$TERMINAL` is unset, Pergola selects an
+  installed terminal instead of assuming `xfce4-terminal`.
+* **Undo keeps live windows visible.** Returning to an older layout restores
+  windows opened after that snapshot as floating windows on their current
+  workspace. Layout saves stage
+  and rename the complete file so an interrupted write does not truncate the
+  previous layout. The X11 suite checks undo across a workspace switch after
+  a new window opens.
+* **Detached menus retain their selected daemon.** Palette and settings actions
+  carry `--socket` into their child commands. Menu and reload failures return
+  an error, while ordinary menu cancellation stays quiet. Undo is visible near
+  the top of the action palette, and first-run instructions show a nested split.
+
 * **A window dragged under openbox still docks.** Openbox reports a whole drag
   as one `ConfigureNotify`, and the daemon re-applies the layout just before the
   drop, so `note_configure`'s own-apply guard swallowed the only event carrying

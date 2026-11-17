@@ -3,8 +3,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,6 +26,56 @@ use x11rb::protocol::Event;
 
 use crate::config::{self, Config};
 use crate::ipc::{Request, Response};
+
+static NEXT_LAYOUT_WRITE: AtomicU64 = AtomicU64::new(0);
+
+/// Never truncate the only saved layout. An interrupted write leaves the old
+/// document intact; the replacement is renamed into place only after syncing.
+fn write_layout_atomically(path: &Path, json: &str) -> Result<()> {
+    let parent = path.parent().ok_or_else(|| anyhow!("layout path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    let name = path.file_name().ok_or_else(|| anyhow!("layout path has no filename"))?;
+    let prior_permissions = std::fs::metadata(path).ok().map(|m| m.permissions());
+    let mut staged = None;
+    for _ in 0..32 {
+        let serial = NEXT_LAYOUT_WRITE.fetch_add(1, Ordering::Relaxed);
+        let temp = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            name.to_string_lossy(),
+            std::process::id(),
+            serial
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)
+        {
+            Ok(file) => {
+                staged = Some((temp, file));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e).with_context(|| format!("creating {}", temp.display())),
+        }
+    }
+    let (temp, mut file) = staged.ok_or_else(|| anyhow!("could not reserve a layout staging file"))?;
+    let result = (|| -> Result<()> {
+        if let Some(permissions) = prior_permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&temp, path)
+            .with_context(|| format!("replacing {}", path.display()))?;
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
 
 /// A pointer drag in progress on a split boundary.
 struct GapDrag {
@@ -167,8 +219,8 @@ pub struct Daemon {
     bindings: Vec<(KeyBinding, String)>,
     keymap: Vec<(u8, u32)>,
     seats: Vec<SeatRecord>,
-    /// Panel that had focus before the current command, used as the default
-    /// docking target when the focused window is the one being docked.
+    /// Last focused tiled panel. A newly focused floating window must not
+    /// replace the docking target it will be placed beside.
     last_focus: Option<String>,
     /// Desktop-space rectangle from the previous apply, used to notice that the
     /// desktop leaf moved (and floating windows must be remapped).
@@ -180,6 +232,7 @@ pub struct Daemon {
     /// adopted back as the window's stored position.
     last_zoomed: bool,
     running: bool,
+    socket_path: PathBuf,
     layout_path: PathBuf,
     /// Split boundaries exposed to the pointer, as (grab window, handle).
     gap_bands: Vec<(u32, GapHandle)>,
@@ -261,6 +314,7 @@ impl Daemon {
             place_floating: true,
             last_zoomed: false,
             running: true,
+            socket_path: config::socket_path(),
             layout_path,
             gap_bands: Vec::new(),
             drag: None,
@@ -312,6 +366,9 @@ impl Daemon {
             // must leave its siblings where they are. A panel whose last view
             // goes collapses through the same path.
             self.detach_seat(&seat)?;
+            // Only a closed window leaves its workspace. Docking, floating,
+            // and tabbing also detach seats while moving them within a layout.
+            self.file.doc.forget_view(&seat.seat);
             self.file.doc.floating.retain(|f| f.panel.id != seat.panel);
         }
 
@@ -474,9 +531,6 @@ impl Daemon {
         if let Ok(tree) = self.engine.removing_view(&seat.seat, &self.file.doc.root) {
             self.replace_root(tree);
         }
-        // A closed window leaves every tag, so a tag cannot keep claiming a
-        // view that no longer exists.
-        self.file.doc.forget_view(&seat.seat);
         Ok(())
     }
 
@@ -547,10 +601,33 @@ impl Daemon {
         let Some(previous) = self.undo.pop() else {
             return Ok("nothing to undo".to_string());
         };
+        let prior_floating: HashMap<String, FloatingWindow> = self
+            .file
+            .doc
+            .floating
+            .iter()
+            .flat_map(|item| {
+                item.panel
+                    .views
+                    .iter()
+                    .map(move |seat| (seat.clone(), item.clone()))
+            })
+            .collect();
+        let prior_tags: HashMap<String, String> = self
+            .seats
+            .iter()
+            .filter_map(|seat| {
+                self.file
+                    .doc
+                    .tag_of(&seat.seat)
+                    .map(|tag| (seat.seat.clone(), tag.to_string()))
+            })
+            .collect();
         self.file.doc = previous.doc;
         self.engine = previous.engine;
         self.camera = previous.camera;
         self.reconcile()?;
+        self.restore_unplaced_seats(&prior_floating, &prior_tags)?;
         self.normalize_camera();
         self.place_floating = true;
         self.apply()?;
@@ -561,6 +638,51 @@ impl Daemon {
         } else {
             format!("undid the last layout change ({left} older to undo)")
         })
+    }
+
+    /// Undo restores an older document, but windows opened since that snapshot
+    /// are still live and already have seat records. Reconcile therefore does
+    /// not adopt them again; keep each one on the floating layer instead of
+    /// silently losing it from the layout and its status count.
+    fn restore_unplaced_seats(
+        &mut self,
+        prior_floating: &HashMap<String, FloatingWindow>,
+        prior_tags: &HashMap<String, String>,
+    ) -> Result<()> {
+        let mut placed = HashSet::new();
+        for node in self.file.doc.root.flatten() {
+            if let LayoutNode::Panel(panel) = node {
+                placed.extend(panel.views.iter().cloned());
+            }
+        }
+        for item in &self.file.doc.floating {
+            placed.extend(item.panel.views.iter().cloned());
+        }
+        let unplaced: Vec<SeatRecord> = self
+            .seats
+            .iter()
+            .filter(|seat| !placed.contains(&seat.seat))
+            .cloned()
+            .collect();
+        for seat in unplaced {
+            let Some(info) = self.x.info(seat.window)? else {
+                continue;
+            };
+            let panel = self.own_panel_id(&seat);
+            if let Some(mut saved) = prior_floating.get(&seat.seat).cloned() {
+                saved.panel = pergola_core::Panel::new(panel, vec![seat.seat.clone()]);
+                self.file.doc.floating.push(saved);
+            } else {
+                self.push_floating(&info, panel, seat.seat.clone());
+            }
+            // A window created after the snapshot can belong to another
+            // workspace. Preserve that assignment even if the older snapshot
+            // did not contain the workspace yet.
+            if let Some(tag) = prior_tags.get(&seat.seat) {
+                self.file.doc.assign_view(&seat.seat, tag);
+            }
+        }
+        Ok(())
     }
 
     fn apply(&mut self) -> Result<()> {
@@ -880,11 +1002,7 @@ impl Daemon {
     fn save(&mut self) -> Result<()> {
         self.file.set_camera(&self.camera);
         self.sync_meta();
-        if let Some(parent) = self.layout_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&self.layout_path, self.file.to_json())
-            .with_context(|| format!("writing {}", self.layout_path.display()))?;
+        write_layout_atomically(&self.layout_path, &self.file.to_json())?;
         Ok(())
     }
 
@@ -909,7 +1027,9 @@ impl Daemon {
             self.undo.push(before);
         }
         if let Some(panel) = self.focused_panel() {
-            self.last_focus = Some(panel);
+            if self.file.doc.root.node(&panel).is_some() {
+                self.last_focus = Some(panel);
+            }
         }
         result
     }
@@ -954,8 +1074,8 @@ impl Daemon {
             }
             "split-terminal" => self.split_terminal(),
             "palette" => {
-                crate::palette::open()?;
-                Ok("palette opened".to_string())
+                crate::palette::open(&self.socket_path)?;
+                Ok("palette starting".to_string())
             }
             "settings" => Ok("settings are in ~/.config/pergola/config.json".to_string()),
             "url" => {
@@ -1341,18 +1461,18 @@ impl Daemon {
         else {
             return Err(anyhow!("no panel '{target_id}' to tab into"));
         };
+        // The target's existing views define the workspace of the tab group.
+        // Reading this after appending the source could mistake the source's
+        // old tag for the target's when the target is untagged.
+        let target_tag = target_panel
+            .views
+            .iter()
+            .find_map(|v| self.file.doc.tag_of(v).map(str::to_string));
         if !target_panel.views.iter().any(|v| v == &seat.seat) {
             target_panel.views.push(seat.seat.clone());
         }
         target_panel.select(&seat.seat);
         target_panel.tabbed = Some(true);
-        // The workspace the target panel lives on, read before the panel is
-        // moved into the tree: the folded window joins it so the two views in
-        // one tile never end up on different tags.
-        let target_tag = target_panel
-            .views
-            .iter()
-            .find_map(|v| self.file.doc.tag_of(v).map(str::to_string));
         let views = target_panel.views.len();
         let tree = replace_node(&self.file.doc.root, &target_id, &LayoutNode::Panel(target_panel));
         self.replace_root(tree);
@@ -1366,6 +1486,8 @@ impl Daemon {
         // pruned out of the very panel it was folded into.
         if let Some(tag) = target_tag {
             self.file.doc.assign_view(&seat.seat, &tag);
+        } else {
+            self.file.doc.forget_view(&seat.seat);
         }
         self.normalize_camera();
         self.apply()?;
@@ -1556,7 +1678,9 @@ impl Daemon {
                 message.window
             );
         }
-        self.last_focus = Some(panel);
+        if self.file.doc.root.node(&panel).is_some() {
+            self.last_focus = Some(panel);
+        }
         self.activate_with_guard(message.window);
         Ok(())
     }
@@ -1917,6 +2041,17 @@ impl Daemon {
     }
 
     fn split_terminal(&mut self) -> Result<String> {
+        // Remember the source before the new terminal takes focus. Reading
+        // _NET_ACTIVE_WINDOW after spawning can name the new floating window,
+        // whose panel disappears when it is moved into the tree.
+        let source_window = self
+            .x
+            .active_window()
+            .ok_or_else(|| anyhow!("focus a window before splitting with a terminal"))?;
+        let source = self
+            .seat_for_window(source_window)
+            .ok_or_else(|| anyhow!("the focused window is not managed by pergola"))?
+            .clone();
         let before: HashSet<u32> = self.x.client_list()?.into_iter().collect();
         let mut command = std::process::Command::new(&self.config.terminal);
         if self.config.terminal.ends_with("xfce4-terminal") {
@@ -1924,7 +2059,12 @@ impl Daemon {
         }
         command
             .spawn()
-            .with_context(|| format!("cannot launch {}", self.config.terminal))?;
+            .with_context(|| {
+                format!(
+                    "cannot launch {}; set `terminal` in ~/.config/pergola/config.json to an installed terminal",
+                    self.config.terminal
+                )
+            })?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut new_window = None;
         while Instant::now() < deadline {
@@ -1943,17 +2083,46 @@ impl Daemon {
             .seat_for_window(win)
             .ok_or_else(|| anyhow!("new terminal window was not adopted"))?
             .clone();
-        let target = self
-            .focused_panel()
-            .unwrap_or_else(|| self.file.doc.root.id().to_string());
-        self.detach_seat(&seat)?;
-        let panel_id = self.own_panel_id(&seat);
-        let node = LayoutNode::panel(panel_id, vec![seat.seat.clone()]);
-        let tree = self
+        // Build and validate both tile changes before touching the saved
+        // document. This also handles an auto-docked new window: remove its
+        // provisional placement, then put it beside the original source.
+        let mut tree = self.file.doc.root.clone();
+        if tree.panel_containing(&seat.seat).is_some() {
+            tree = self
+                .engine
+                .removing_view(&seat.seat, &tree)
+                .map_err(|e| anyhow!("{e}"))?;
+        }
+        let source_was_floating = tree.panel_containing(&source.seat).is_none();
+        if source_was_floating {
+            let anchor = self
+                .last_focus
+                .as_ref()
+                .filter(|id| tree.node(id).is_some())
+                .cloned()
+                .unwrap_or_else(|| tree.id().to_string());
+            let node = LayoutNode::panel(source.panel.clone(), vec![source.seat.clone()]);
+            tree = self
+                .engine
+                .inserting(node, &anchor, Direction::Left, &tree)
+                .map_err(|e| anyhow!("{e}"))?;
+        }
+        let target = tree
+            .panel_containing(&source.seat)
+            .ok_or_else(|| anyhow!("the focused window has no tile to split"))?
+            .id
+            .clone();
+        let node = LayoutNode::panel(seat.panel.clone(), vec![seat.seat.clone()]);
+        tree = self
             .engine
-            .inserting(node, &target, Direction::Right, &self.file.doc.root)
+            .inserting(node, &target, Direction::Right, &tree)
             .map_err(|e| anyhow!("{e}"))?;
+        self.file.doc.floating.retain(|item| {
+            !item.panel.views.contains(&seat.seat)
+                && (!source_was_floating || !item.panel.views.contains(&source.seat))
+        });
         self.replace_root(tree);
+        self.normalize_camera();
         self.apply()?;
         self.save()?;
         Ok(format!("split with {} (0x{win:x})", self.config.terminal))
@@ -2106,6 +2275,7 @@ impl Daemon {
     // MARK: event loop
 
     pub fn run(&mut self, socket: &std::path::Path) -> Result<()> {
+        self.socket_path = socket.to_path_buf();
         let socket = socket.to_path_buf();
         if socket.exists() {
             // One daemon per display. A socket that still accepts a connection
@@ -3517,6 +3687,33 @@ fn build_keymap(x: &X11) -> Result<Vec<(u8, u32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn layout_write_replaces_complete_file_and_cleans_failed_temporary_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "pergola-layout-write-test-{}-{}",
+            std::process::id(),
+            NEXT_LAYOUT_WRITE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("layout.json");
+        std::fs::write(&path, "old layout").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        write_layout_atomically(&path, "new complete layout").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new complete layout");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+
+        // A replacement error leaves the target untouched and removes the
+        // staged file, instead of truncating the only copy.
+        let blocked = dir.join("directory-target");
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(write_layout_atomically(&blocked, "cannot replace a directory").is_err());
+        assert!(blocked.is_dir());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// Build a committed-state signature for the diff tests.
     fn sig(root: &str, placements: &[(u32, Placement, &str)], active: u32) -> EventSig {

@@ -76,6 +76,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   reachable again by asking. `palette --list` prints the same rows on stdout, so
   the state can be checked without a menu program. Verified on xfwm4.
 * `pergola-health` proves the daemon, layout invariants and work-area fit.
+* A fresh install leaves `terminal` unset; `split-terminal` uses `$TERMINAL` or an installed terminal. An xterm-only guest resolved xterm, and the Openbox and xfwm4 X11 suites passed without setting `$TERMINAL`.
 
 ## Pain points
 
@@ -88,7 +89,6 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | New windows | `auto_dock` is now a tri-state (`off`/`new`/`all`), but there is no palette toggle: changing it means editing `config.json` and reloading | Everyone who tiles | 2 | A palette toggle for `auto_dock` |
 | Feedback | Success and failure of a hotkey action are printed to a terminal the user does not have. A *rejected setting* and a *failed hotkey/palette action* are now also desktop notifications (0.5.0-dev, `notify` key), but the toast is one line naming the command and its error — it does not say which window or offer a retry | Everyone without a terminal | 2 | A richer toast naming the window and a one-click retry; the plain message is in place |
 | Zoom + drag | A drag-out while zoomed converts screen coordinates as if they were world coordinates, so the floating window can land outside the desktop leaf | Untiling while zoomed | 2 | Inverse camera transform for the drop rectangle |
-| Terminal split | `split-terminal` assumes `xfce4-terminal` when `$TERMINAL` is unset, which is wrong on most desktops | Non-XFCE users | 2 | Fall back to the desktop's terminal from `XDG_CURRENT_DESKTOP`, and say which config key to set |
 | Accessibility | No keyboard way to select a tile other than activating its window; the overlay draws no text and exposes no AT-SPI | Keyboard-only / low-vision | 3 | Focus-by-chord across tiles; overlay labels with the tile's size |
 | Tabs | Tab groups work from the command line, from default chords (`tab`, `tab-select`, `tab-next`, `tab-prev`) but there is no palette row for a tab action, no drag-a-window-onto-a-tab gesture and no tab bar | People expecting TrellisWM tabs; the mouse path is missing | 2 | Not scheduled (drag-to-tab is not in BACKLOG.md) |
 | Workspaces | Workspaces are one key away (`tags: true` binds `Super+1`…`9` and `Super+Shift+n`; a switch raises a notification naming the workspace), and the palette offers a row per workspace the document holds. What remains: a workspace has no persistent on-screen indicator — the overlay draws no text and a strip of unnamed rectangles would say less than the notification; a status bar can draw a real one from `pergola subscribe` | Anyone who expects a workspace bar | 1 | A text-drawing capability in the x11 crate, then a small tag strip in the overlay (deliberately not a stopgap of blind rectangles) |

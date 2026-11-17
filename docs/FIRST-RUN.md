@@ -24,15 +24,22 @@ running", start it with `pergola daemon` in a terminal (or
 
 ## The five-minute walkthrough
 
-Open two terminals. With each one focused, run:
+Open two terminals. In the first, run `pergola dock left`. It will take the
+whole work area at first. Switch to the second terminal with your desktop's
+taskbar or Alt+Tab, then run `pergola dock right` there. You should now see two
+tiles side by side.
 
 ```bash
-pergola dock left     # in the first terminal: dock this window to the left edge
-pergola dock right    # in the second: dock this window to the right edge
+pergola dock left     # first terminal
+pergola dock right    # second terminal, after switching to it
 ```
 
-You now have two tiles side by side. The next commands show the rest of the
-model:
+To see the nesting that makes Pergola different, keep the second tile focused
+while you open a third terminal. Run `pergola dock down` in the new terminal.
+The right tile becomes a top/bottom pair inside the left/right split. Pergola
+uses the last focused tile as the target, so the focus order matters here.
+
+The next commands show the camera and the saved layout:
 
 ```bash
 pergola frame-window  # frame the focused window (run it again to go back)
