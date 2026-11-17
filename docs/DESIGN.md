@@ -214,7 +214,7 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
 
 ## Testing
 
-* `cargo test` — 119 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 122 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
   document round-trips, named workspaces (disjoint view sets, pruning of the
   active tag's tree, an empty tag, a tag surviving its last window, a tagged
@@ -222,8 +222,9 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
   malformed weights, pointer-edge picking, hint geometry, activation-request
   targeting (a shown tab view, a hidden one, a floating window, an unmanaged
   id), the event stream's transition table (new window, dock, undock, close,
-  layout, focus, tag, no-change), and the notification invocation (default
-  notifier, override, empty override).
+  layout, focus, tag, no-change), the notification invocation (default
+  notifier, override, empty override), and the palette's state-aware rows and
+  status/tree parsers.
 * `scripts/e2e.sh` — starts Xvfb + a real WM (xfwm4 by default, openbox with
   `--wm openbox`) + three xterms, runs the real daemon, and asserts the geometry
   the X server reports against `pergola rects` after dock, zoom, arrange, gap
@@ -231,12 +232,13 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
   drop, tab groups, config/binding errors, the overlay's dim layer, hover
   hints, the drop frame, one-gesture re-dock, the event stream, pager
   activation requests and named workspaces (disjoint tag sets, only the active
-  tag laid out, a parked window's client area off the work area, the escape
+  tag laid out, a parked window mostly off the work area, the escape
   hatch, a restart and a `tag` record), settings help and a rejected value's
-  notification — 178 assertions on xfwm4. Openbox runs the same suite and is
-  also green; it skips the drop-frame assertions because it coalesces a drag
-  into one `ConfigureNotify` (a WM capability, not a tolerance), and its tree
-  can hold one more tile, so the geometry count is not identical. The event-stream block
+  notification, and a ratio nudge chord — 186 assertions on xfwm4. Openbox runs
+  the same suite and is also green; it skips the drop-frame assertions because
+  it coalesces a drag into one `ConfigureNotify` (a WM capability, not a
+  tolerance), and its tree can hold one more tile, so the geometry count is not
+  identical. The event-stream block
   proves the state-first record, dock/undock/close records naming the window,
   valid JSON on every line, that a subscriber whose output goes to an undrained
   fifo does not delay `pergola status` (measured 47 ms at load 5.6), and that a

@@ -45,6 +45,17 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   `PERGOLA_NOTIFY` for another program) because the menu runs detached.
   Verified on xfwm4 in `scripts/e2e.sh` with a stand-in notifier — the value is
   still refused and the file is not touched.
+* Resize a split without a pointer or a target: `Ctrl+Alt+,` / `Ctrl+Alt+.`
+  nudge the focused window's share by 5% (the bound chord is read from the
+  daemon, so a desktop that owns Ctrl+Alt gets the Super fallback), and the
+  palette carries half / one-third / two-thirds rows. Verified on xfwm4 in
+  `scripts/e2e.sh` by measuring the focused window's own width after a real key
+  press.
+* The action palette is built from the focused window, not a fixed list: a
+  floating window is offered "Fold this window into a tab" instead of the no-op
+  "Float this window", the prompt names the window, and the full-size list is
+  reachable again by asking. `palette --list` prints the same rows on stdout, so
+  the state can be checked without a menu program. Verified on xfwm4.
 * `pergola-health` proves the daemon, layout invariants and work-area fit.
 
 ## Pain points
@@ -54,9 +65,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Overlay | The dim layer needs a compositor that owns `_NET_WM_CM_S0` (measured: mean screen brightness 0.162 → 0.098 under xfwm4 with compositing on, back to 0.159 after `overlay off` — a 0.60x factor, as 40% black predicts). A bare X server, or a compositor without SHAPE, gets the 2 px lines alone, which are easy to miss; the 40% strength is a constant, not a config key | Everyone on a compositor-less session | 2 | A cue that reads without compositing, and `dim` in `config.json` |
 | Discoverability | Every action is a chord that has to be learned; the palette exists but is one more chord (`Ctrl+Alt+M`) | New user | 3 | Show the palette on first start, or add a panel/applet entry it can be launched from |
 | Chords | The bound chords differ per desktop (xfwm4 owns `Ctrl+Alt+arrows`, so camera keys are `Super+…`). A `bindings` map in `config.json` remaps them, `pergola bind`/`unbind` change one chord without editing JSON, and `pergola settings` (0.4.0-dev) lists every command with the chords actually bound and rebinds the one you pick. A chord the desktop already owns is still only reported in the reload output, not as a notification, and the menu does not say a chord is owned *before* you pick it | Anyone whose desktop claims chords | 1 | Notification for a conflict, and an owned-chord mark in the settings rows |
-| Palette | The list is fixed: "Float this window" is offered for an already-floating window, and no row shows what it will act on | Menu users | 2 | Build rows from the focused panel's state; show the window title in the menu prompt |
 | Palette | Needs an external menu program; without one the hotkey fails into the daemon log, where the user never looks | Minimal installs (no rofi) | 3 | `notify-send` fallback naming the fix; `install.sh` warns; palette row "Install rofi" |
-| Ratios | `pergola ratio 0.3` rebalances a split from the keyboard, but there are no palette rows for half/third and no nudge chord; `gap: 0` leaves no drag strip | Keyboard-only users | 2 | Palette rows (half/third/two-thirds) and a nudge chord |
 | New windows | `auto_dock` is now a tri-state (`off`/`new`/`all`), but there is no palette toggle: changing it means editing `config.json` and reloading | Everyone who tiles | 2 | A palette toggle for `auto_dock` |
 | Feedback | Success and failure of a hotkey action are printed to a terminal the user does not have. A *rejected setting* is now also a desktop notification (0.5.0-dev), but a failed dock/float/ratio still only reaches the journal | Everyone without a terminal | 2 | Optional `notify-send` toast for dock/float/errors, behind the same `PERGOLA_NOTIFY` override |
 | Zoom + drag | A drag-out while zoomed converts screen coordinates as if they were world coordinates, so the floating window can land outside the desktop leaf | Untiling while zoomed | 2 | Inverse camera transform for the drop rectangle |
@@ -68,15 +77,16 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 
 ## Next three
 
-1. **Ratios and context-aware palette rows** (the Ratios and Palette rows):
-   palette rows for half/third and rows that change with the focused panel make
-   the menu sufficient on its own.
-2. **Feedback and a cue without compositing** (the Feedback and Overlay rows):
-   the same `PERGOLA_NOTIFY` toast for a failed dock/float, and a `dim` key so
-   the overlay strength is a choice rather than a constant.
-3. **Workspaces one key away** (the Workspaces rows): opt-in default chords for
+1. **A cue that reads without a compositor** (the Overlay row) and a `dim` key,
+   plus the same `PERGOLA_NOTIFY` toast for a failed dock/float (the Feedback
+   row): the two remaining places where the desktop does not tell you what
+   happened.
+2. **Workspaces one key away** (the Workspaces rows): opt-in default chords for
    `tag-view 1-9`, palette rows for the two verbs, and a small tag indicator in
    the overlay, so a workspace does not need a terminal to exist.
+3. **A palette that can be launched without a chord** (the Discoverability and
+   Palette-needs-a-menu rows): a panel/applet entry and a `notify-send` naming
+   the missing menu program, so the menu is not itself a hidden feature.
 
 Measured on Xfwm4 and Openbox. Openbox coalesces a drag into a single
 `ConfigureNotify`, so the mid-drag drop frame is asserted on xfwm4 only; the

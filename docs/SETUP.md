@@ -316,7 +316,7 @@ Everything that tiles a window is reachable without a shell:
 | float it again | `Ctrl+Alt+Shift+W` |
 | choose from a menu | `Ctrl+Alt+M` (needs rofi/zenity/yad/dmenu) |
 | find a split to resize | hover near the gap: the band lights up as a thin line |
-| resize a split | drag the gap between the two tiles, or `pergola ratio 0.3` |
+| resize a split | drag the gap between the two tiles, `pergola ratio 0.3`, or nudge with `Ctrl+Alt+,` / `Ctrl+Alt+.` |
 | tile by mouse | drag a window to a screen edge and let go — a frame shows the target while you drag |
 | untile by mouse | drag the tile away from the edge |
 | move a tile to another edge | drag the docked tile out and settle it near the edge you want — one gesture, no float step |

@@ -55,8 +55,20 @@ fn main() -> ExitCode {
     let result: Result<()> = match command.as_str() {
         "daemon" => run_daemon(&socket),
         "doctor" => doctor(),
-        "palette" => palette::open().map(|()| println!("palette opened — pick an action")),
-        "palette-run" => palette::run(),
+        "palette" => {
+            if rest.iter().any(|a| a == "--list") {
+                // What the menu would offer for the focused window, on stdout:
+                // a script (and the e2e) can check the state-aware rows without
+                // a menu program, the same way `settings --list` works.
+                for (label, argv) in palette::list(&socket) {
+                    println!("{label}\t{argv}");
+                }
+                Ok(())
+            } else {
+                palette::open().map(|()| println!("palette opened — pick an action"))
+            }
+        }
+        "palette-run" => palette::run(&socket),
         "subscribe" => subscribe(&socket),
         "settings" => settings(&socket, &rest[1..]),
         "settings-run" => palette::run_settings(),
@@ -530,7 +542,7 @@ LAYOUT
   float-all                      return every window to the desktop layer
   split-terminal                 split the focused window with a new terminal
   gap <pixels>                   change the gap between tiles
-  ratio <0.0-1.0>                rebalance the split around the focused panel
+  ratio <0.0-1.0> | +d | -d      set the focused panel's share of its split, or nudge it
   undo                           restore the layout before the last change
 
 KEYS
@@ -564,7 +576,8 @@ EVENTS
 
 INSPECTION
   status | tree | list | keys | doctor | sim [--json]
-  palette                        human menu of tile actions (rofi/zenity/dmenu)
+  palette [--list]               menu of tile actions for the focused window (rofi/zenity/dmenu);
+                                 --list prints the state-aware rows on stdout
   overlay [on|off|toggle]
   reload | save | stop
 

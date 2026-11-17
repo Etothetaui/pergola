@@ -213,19 +213,25 @@ comma-separated chord row writing both chords, and a stand-in notifier recording
 the value is still refused and the file untouched. `docs/UX-NOTES.md`'s Settings row is closed; the
 Feedback row narrows to dock/float errors.
 
-## 1. Ratios and context-aware palette rows
+### Ratios from a chord, and a palette built from the focused window (0.5.0-dev)
 
-**What:** palette rows for half / third / two-thirds ratios, a nudge chord for the split around the
-focused panel, and palette rows built from the focused panel's state (no "Float this window" for a
-window that already floats; show the window title in the prompt).
-**Why:** `pergola ratio 0.3` works from the keyboard but is the only path (`gap: 0` leaves no drag
-strip), and the palette offers actions that are no-ops for the window in hand — UX-NOTES, the
-Ratios and Palette rows.
-**Done when:** the palette shows the state-correct rows (asserted in the e2e through
-`settings`-style `--list` output, not by opening a menu), and a ratio row changes the geometry to
-the reported weights.
+`ratio` now takes a delta as well as an absolute share: `+0.05` / `-0.05` read the focused
+panel's current weight in its split and move it, so one chord works whatever the split's size is.
+The default plan binds `ratio -0.05` to `Ctrl+Alt+,` and `ratio +0.05` to `Ctrl+Alt+.` (Super
+fallback when the desktop owns Ctrl+Alt), and the reply reports the *applied* share — the weight the
+engine clamped to — not the number that was asked for.
 
-## 2. A cue that reads without a compositor
+The action palette is no longer a fixed list. `palette::state()` asks the daemon for the active
+window and its panel, then the tree, so `items_for()` hides "Float this window" for a window that
+already floats and offers "Fold this window into a tab" instead; the prompt names the window. Ratio
+rows for half / one-third / two-thirds were added. `palette --list` prints the same rows on stdout,
+which is how the e2e checks the state without a menu program: a floating window hides Float and
+shows Fold, a docked one does the reverse, and the half row is present. The nudge chord is asserted
+by measuring the focused window's own width after a real key press (the bound chord is read from
+`pergola keys`, not assumed). Pure parsers (`parse_active`, `state_from_tree`) have unit tests, and
+the palette's label/verb tables are tested for both states.
+
+## 1. A cue that reads without a compositor
 
 **What:** a `dim` key in `config.json` for the overlay's dim strength, and a non-compositor cue for
 the split lines (e.g. a doubled line or a short tick at each boundary) so `overlay on` is legible
@@ -236,7 +242,7 @@ and the 40% strength is a constant (UX-NOTES, the Overlay row).
 `config --check`, and the e2e proves the fallback cue draws with no compositor (root-child count
 and pixel run length), while a stand-in compositor still gets the dim layer.
 
-## 3. Workspaces one key away
+## 2. Workspaces one key away
 
 **What:** opt-in default chords for `tag-view 1`…`tag-view 9` (a `tags` config key, off by default so
 a desktop that never asked for workspaces cannot blank its screen), palette rows for `tag-view` and

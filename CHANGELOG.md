@@ -34,6 +34,22 @@ that tag instead of appearing on the wrong workspace.
   window they must not lose), the escape hatch, a daemon restart and a `tag`
   event. The harvest's **workspace / tag** class was 236 issues.
 
+* **Resize a split from a chord, and a palette built from the focused window.**
+`pergola ratio` now takes a delta as well as an absolute share: `+0.05` / `-0.05`
+read the focused panel's current weight in its split and move it, so one chord
+works at any split size. The default plan binds `ratio -0.05` to `Ctrl+Alt+,`
+and `ratio +0.05` to `Ctrl+Alt+.` (Super fallback when the desktop owns
+Ctrl+Alt), and the reply reports the share that was actually applied — the
+weight the engine clamped to — rather than the number asked for.
+
+  The action palette is built from the focused window instead of a fixed list:
+it asks the daemon for the active window and its panel, then the tree, hides
+"Float this window" for a window that already floats and offers "Fold this
+window into a tab" instead, and names the window in the prompt. Ratio rows for
+half / one-third / two-thirds are new. `pergola palette --list` prints the same
+rows on stdout, so scripts and the e2e can see the state-aware list without a
+menu program; `pergola palette` still opens the menu.
+
 * **Settings rows explain themselves, and a rejection is a notification.**
 Every `pergola settings` row now carries one line of help — what the key
 controls, the range the validator enforces and the compiled default

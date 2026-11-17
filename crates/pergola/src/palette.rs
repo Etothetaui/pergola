@@ -21,12 +21,33 @@ pub struct Item {
     pub argv: &'static [&'static str],
 }
 
-const TABLE: &[(&str, &[&str])] = &[
+/// What the palette knows about the window it would act on. Read from the
+/// daemon so the list is not a fixed advertisement: a row that would do nothing
+/// is left out, and the prompt names the window. The default (no daemon, no
+/// focused window) keeps every row, because a menu that refuses to open is
+/// worse than a row that turns out to be a no-op.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct State {
+    pub title: String,
+    /// The focused window is on the desktop layer: "float" would do nothing and
+    /// folding it into a tile is the action that makes sense.
+    pub floating: bool,
+}
+
+const TILE: &[(&str, &[&str])] = &[
     ("Tile this window left", &["dock", "left"]),
     ("Tile this window right", &["dock", "right"]),
     ("Tile this window above", &["dock", "up"]),
     ("Tile this window below", &["dock", "down"]),
-    ("Float this window", &["float"]),
+];
+
+const RATIOS: &[(&str, &[&str])] = &[
+    ("Split this split half and half", &["ratio", "0.5"]),
+    ("Give this window one third", &["ratio", "0.33"]),
+    ("Give this window two thirds", &["ratio", "0.67"]),
+];
+
+const CAMERA: &[(&str, &[&str])] = &[
     ("Arrange all windows", &["arrange"]),
     ("Float all windows", &["float-all"]),
     ("Zoom out one level", &["zoom-out"]),
@@ -37,19 +58,138 @@ const TABLE: &[(&str, &[&str])] = &[
     ("Undo the last layout change", &["undo"]),
 ];
 
-pub fn items() -> Vec<Item> {
-    TABLE
+/// The rows for one state. Order is deliberate: the four dock edges, then the
+/// one action that changes where the window lives, then the ratios, then the
+/// whole-layout and camera commands.
+pub fn items_for(state: &State) -> Vec<Item> {
+    let mut rows: Vec<Item> = TILE
         .iter()
         .map(|&(label, argv)| Item { label, argv })
+        .collect();
+    if state.floating {
+        rows.push(Item {
+            label: "Fold this window into a tab",
+            argv: &["tab"],
+        });
+    } else {
+        rows.push(Item {
+            label: "Float this window",
+            argv: &["float"],
+        });
+    }
+    rows.extend(
+        RATIOS
+            .iter()
+            .map(|&(label, argv)| Item { label, argv }),
+    );
+    rows.extend(
+        CAMERA
+            .iter()
+            .map(|&(label, argv)| Item { label, argv }),
+    );
+    rows
+}
+
+/// The full list, for a caller with no daemon to ask (tests and `--list` with
+/// no daemon both go through `items_for`).
+#[cfg(test)]
+pub fn items() -> Vec<Item> {
+    items_for(&State::default())
+}
+
+/// The focused window's state, read from the daemon. Two cheap requests: the
+/// active window (and its panel) from `status`, then the tree to see whether
+/// that panel is tiled or floating and what the window is called.
+pub fn state(socket: &Path) -> State {
+    let Ok(status) = crate::ipc::call(socket, &["status".to_string()]) else {
+        return State::default();
+    };
+    if !status.ok {
+        return State::default();
+    }
+    let Some((window, panel)) = parse_active(&status.message) else {
+        return State::default();
+    };
+    let Ok(tree) = crate::ipc::call(socket, &["tree".to_string()]) else {
+        return State::default();
+    };
+    if !tree.ok {
+        return State::default();
+    }
+    state_from_tree(&tree.message, window, panel.as_deref())
+}
+
+/// `active 0x3138538 (p-3138538)` in `status`, or `active none`. The panel is
+/// absent for a window the daemon does not manage.
+fn parse_active(status: &str) -> Option<(u64, Option<String>)> {
+    let tail = status.rsplit_once(" · active ")?.1.trim();
+    if tail == "none" {
+        return None;
+    }
+    let window = u64::from_str_radix(tail.strip_prefix("0x")?.split_whitespace().next()?, 16).ok()?;
+    let panel = tail
+        .split_once('(')
+        .and_then(|(_, rest)| rest.strip_suffix(')'))
+        .filter(|panel| *panel != "unmanaged" && *panel != "floating")
+        .map(str::to_string);
+    Some((window, panel))
+}
+
+/// Whether the panel is in the tree (tiled) or the floating list, plus the
+/// window's title from the seat records.
+fn state_from_tree(tree: &str, window: u64, panel: Option<&str>) -> State {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(tree) else {
+        return State::default();
+    };
+    let title = value
+        .pointer("/pergola/seats")
+        .and_then(|seats| seats.as_array())
+        .and_then(|seats| {
+            seats.iter().find(|seat| {
+                seat.get("window").and_then(|w| w.as_u64()) == Some(window)
+            })
+        })
+        .and_then(|seat| seat.get("title").and_then(|t| t.as_str()))
+        .unwrap_or_default()
+        .to_string();
+    let Some(panel) = panel else {
+        return State {
+            title,
+            floating: false,
+        };
+    };
+    let floating = value
+        .pointer("/doc/floating")
+        .and_then(|f| f.as_array())
+        .map(|list| {
+            list.iter().any(|f| {
+                f.pointer("/panel/id").and_then(|id| id.as_str()) == Some(panel)
+            })
+        })
+        .unwrap_or(false);
+    State { title, floating }
+}
+
+/// Print the rows for the current state, one per line with the argv they stand
+/// for, so a script (or the test suite) can see what the menu would offer
+/// without a menu program.
+pub fn list(socket: &Path) -> Vec<(String, String)> {
+    let state = state(socket);
+    items_for(&state)
+        .into_iter()
+        .map(|item| (item.label.to_string(), item.argv.join(" ")))
         .collect()
 }
 
-pub fn action_for(label: &str) -> Option<&'static [&'static str]> {
-    let wanted = label.trim();
-    items()
-        .into_iter()
-        .find(|item| item.label == wanted)
-        .map(|item| item.argv)
+/// The prompt: `pergola` alone, or the focused window's title when the daemon
+/// answered. It still starts with `pergola`, which is what menu wrapper scripts
+/// key on.
+fn prompt(state: &State) -> String {
+    if state.title.is_empty() {
+        "pergola".to_string()
+    } else {
+        format!("pergola · {}", state.title)
+    }
 }
 
 /// Show the palette in a detached `pergola palette-run` process.
@@ -78,9 +218,9 @@ pub fn open() -> Result<()> {
 
 /// Run the menu and hand the chosen action to `pergola <action>`. Blocking:
 /// this is what `pergola palette-run` does in its own process.
-pub fn run() -> Result<()> {
+pub fn run(socket: &Path) -> Result<()> {
     let menu = find_menu().ok_or_else(missing_menu)?;
-    run_menu(&menu)
+    run_menu(&menu, socket)
 }
 
 /// Show the settings palette in a detached `pergola settings-run` process, so a
@@ -110,7 +250,7 @@ pub fn run_settings() -> Result<()> {
     let report = crate::config::Config::inspect();
     let rows = crate::config::settings_rows(&report.config);
     let labels: Vec<&str> = rows.iter().map(|(label, _)| label.as_str()).collect();
-    let output = show_list(&menu, &labels)?;
+    let output = show_list(&menu, "pergola settings", &labels)?;
     let label = chosen(&output, menu.kind);
     if label.is_empty() {
         return Ok(()); // cancelled
@@ -177,11 +317,14 @@ fn entry(menu: &Menu, prompt: &str, current: &str) -> Result<Output> {
 }
 
 /// The list half of a menu run, shared by the action palette and the settings.
-fn show_list(menu: &Menu, labels: &[&str]) -> Result<Output> {
+fn show_list(menu: &Menu, prompt: &str, labels: &[&str]) -> Result<Output> {
     match menu.kind {
-        Kind::Stdin => run_stdin_menu(&menu.path, &["-dmenu", "-i", "-p", "pergola"], labels),
-        Kind::Dmenu => run_stdin_menu(&menu.path, &["-i", "-p", "pergola"], labels),
-        Kind::Zenity => run_list_menu(&menu.path, &["--list", "--title=Pergola"], labels),
+        Kind::Stdin => run_stdin_menu(&menu.path, &["-dmenu", "-i", "-p", prompt], labels),
+        Kind::Dmenu => run_stdin_menu(&menu.path, &["-i", "-p", prompt], labels),
+        Kind::Zenity => {
+            let title = format!("--title={prompt}");
+            run_list_menu(&menu.path, &["--list", title.as_str()], labels)
+        }
         Kind::Yad => run_list_menu(&menu.path, &["--list", "--no-headers"], labels),
     }
 }
@@ -283,19 +426,21 @@ fn is_executable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn run_menu(menu: &Menu) -> Result<()> {
-    let labels: Vec<&str> = items().iter().map(|item| item.label).collect();
-    let output = show_list(menu, &labels)?;
+fn run_menu(menu: &Menu, socket: &Path) -> Result<()> {
+    let state = state(socket);
+    let items = items_for(&state);
+    let labels: Vec<&str> = items.iter().map(|item| item.label).collect();
+    let output = show_list(menu, &prompt(&state), &labels)?;
 
     let label = chosen(&output, menu.kind);
     if label.is_empty() {
         return Ok(()); // cancelled
     }
-    let Some(argv) = action_for(&label) else {
+    let Some(item) = items.into_iter().find(|item| item.label == label.trim()) else {
         eprintln!("pergola: palette: no action for {label:?}");
         return Ok(());
     };
-    spawn_action(argv)
+    spawn_action(item.argv)
 }
 
 /// rofi and dmenu read the list from stdin and print the chosen line.
@@ -363,7 +508,17 @@ mod tests {
         for item in &all {
             assert!(seen.insert(item.label), "duplicate label {}", item.label);
         }
-        assert_eq!(all.len(), 13);
+        assert_eq!(all.len(), 16);
+        // The floating variant swaps one row for another and adds nothing else.
+        let floating = items_for(&State {
+            title: String::new(),
+            floating: true,
+        });
+        assert_eq!(floating.len(), all.len());
+        let mut seen = HashSet::new();
+        for item in &floating {
+            assert!(seen.insert(item.label), "duplicate label {}", item.label);
+        }
     }
 
     #[test]
@@ -371,6 +526,8 @@ mod tests {
         let verbs = [
             "dock",
             "float",
+            "tab",
+            "ratio",
             "arrange",
             "float-all",
             "zoom-out",
@@ -391,6 +548,61 @@ mod tests {
     }
 
     #[test]
+    fn a_floating_window_is_offered_a_tab_not_a_float() {
+        let docked = items_for(&State::default());
+        let floating = items_for(&State {
+            title: "xterm".into(),
+            floating: true,
+        });
+        assert!(docked.iter().any(|i| i.label == "Float this window"));
+        assert!(floating.iter().all(|i| i.label != "Float this window"));
+        assert!(floating.iter().any(|i| i.label == "Fold this window into a tab"));
+        // The tile edges are always there: docking a floating window is exactly
+        // what they are for.
+        assert_eq!(
+            docked.iter().filter(|i| i.argv.first() == Some(&"dock")).count(),
+            floating.iter().filter(|i| i.argv.first() == Some(&"dock")).count()
+        );
+    }
+
+    #[test]
+    fn the_status_line_yields_the_active_window_and_panel() {
+        let status = "pergola 0.5.0-dev · 1600x874 · 2 panels, 0 floating · depth 1 · framed desktop · gap 6 · overlay off · active 0x60000c (p-60000c)";
+        assert_eq!(
+            parse_active(status),
+            Some((0x60000c, Some("p-60000c".to_string())))
+        );
+        assert_eq!(parse_active("… · active 0x1e (unmanaged)"), Some((0x1e, None)));
+        assert_eq!(parse_active("… · active none"), None);
+        assert_eq!(parse_active("no active field"), None);
+    }
+
+    #[test]
+    fn a_panel_in_the_floating_list_is_floating_and_its_title_is_known() {
+        let tree = r#"{
+            "doc": {
+                "root": {"kind":"split","id":"root","axis":"x","children":[
+                    {"kind":"panel","id":"p-1","views":["s-1"]},
+                    {"kind":"desktop","id":"desktop"}
+                ],"weights":[0.5,0.5]},
+                "floating": [{"panel": {"id": "p-2", "views": ["s-2"]}, "rect": {}}]
+            },
+            "pergola": {"seats": [
+                {"seat":"s-1","panel":"p-1","window":1,"title":"tiled"},
+                {"seat":"s-2","panel":"p-2","window":2,"title":"floating one"}
+            ]}
+        }"#;
+        let floating = state_from_tree(tree, 2, Some("p-2"));
+        assert!(floating.floating);
+        assert_eq!(floating.title, "floating one");
+        let tiled = state_from_tree(tree, 1, Some("p-1"));
+        assert!(!tiled.floating);
+        assert_eq!(tiled.title, "tiled");
+        // No panel (unmanaged) is not floating; the title still comes through.
+        assert!(!state_from_tree(tree, 1, None).floating);
+    }
+
+    #[test]
     fn menu_programs_map_to_their_own_protocol() {
         assert_eq!(kind_of(Path::new("rofi")), Kind::Stdin);
         assert_eq!(kind_of(Path::new("/usr/bin/dmenu")), Kind::Dmenu);
@@ -405,13 +617,20 @@ mod tests {
     }
 
     #[test]
-    fn action_for_round_trips() {
-        for item in items() {
-            assert_eq!(action_for(item.label), Some(item.argv));
-            assert_eq!(action_for(&format!("  {}  ", item.label)), Some(item.argv));
+    fn a_picked_label_finds_its_action() {
+        // `run_menu` maps a menu line back to its argv the same way, with the
+        // trimmed label and the same state the list was built from.
+        let state = State::default();
+        for item in items_for(&state) {
+            let picked = format!("  {}  ", item.label);
+            let found = items_for(&state)
+                .into_iter()
+                .find(|i| i.label == picked.trim())
+                .map(|i| i.argv);
+            assert_eq!(found, Some(item.argv));
         }
-        assert_eq!(action_for("nope"), None);
-        assert_eq!(action_for(""), None);
-        assert_eq!(action_for("   "), None);
+        assert!(items_for(&state)
+            .into_iter()
+            .all(|i| i.label != "nope"));
     }
 }

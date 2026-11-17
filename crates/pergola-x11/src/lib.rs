@@ -1162,6 +1162,10 @@ pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
         ("overlay", vec!["Ctrl+Alt+o", "Super+o"]),
         // A layout change can be undone; the camera's back/forward is not that.
         ("undo", vec!["Ctrl+Alt+z", "Super+z"]),
+        // Nudge the split around the focused panel without a pointer. The value
+        // is a delta, so the same chord works whatever the split's size is.
+        ("ratio -0.05", vec!["Ctrl+Alt+comma", "Super+comma"]),
+        ("ratio +0.05", vec!["Ctrl+Alt+period", "Super+period"]),
         // Mouse-free tiling: the four edges a window can be docked against.
         ("dock left", vec!["Ctrl+Alt+Shift+Left", "Super+Shift+Left"]),
         ("dock right", vec!["Ctrl+Alt+Shift+Right", "Super+Shift+Right"]),

@@ -99,8 +99,8 @@ pergola rects            # every panel's current frame rectangle
 | `arrange` / `float-all` | tile everything / float everything |
 | `split-terminal` | split the focused window with a new terminal |
 | `gap <px>` | gap between tiles |
-| `ratio <0.0-1.0>` | rebalance the split around the focused panel |
-| `palette` | a menu of the tile actions, for the mouse (rofi/zenity/dmenu) |
+| `ratio <0.0-1.0>` / `ratio +0.05` | set the focused panel's share of its split, or nudge it |
+| `palette` / `palette --list` | a menu of the tile actions for the focused window (rofi/zenity/dmenu); `--list` prints the rows |
 | `overlay [on\|off\|toggle]` | draw split lines in the gaps, and dim the tiles when a compositor can render it (off by default) |
 | `bind <command> [chord…]` / `unbind <command>` | change a chord without editing JSON |
 | `tab` / `tab-select` / `tab-next` / `tab-prev` | fold a window into a panel as a tab, switch tabs |
@@ -191,6 +191,7 @@ to `Super` for that command and reports it at startup.
 | `Ctrl+Alt+O` | overlay |
 | `Ctrl+Alt+Z` | **undo the last layout change** |
 | `Ctrl+Alt+Page_Down` / `Page_Up` | next / previous tab in a group |
+| `Ctrl+Alt+,` / `Ctrl+Alt+.` | narrow / widen the split around the focused window |
 
 **You can tile with three keys and no terminal:** focus a window, `Ctrl+Alt+Shift+←`,
 focus the next one, `Ctrl+Alt+Shift+→`. That is two tiles side by side.
@@ -397,8 +398,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 119 unit tests: geometry, tree, camera, commands, document, tags, settings, event diff
-scripts/e2e.sh           # 178 assertions against Xvfb + a real WM + real xterms
+cargo test               # 122 unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
+scripts/e2e.sh           # 186 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)

@@ -356,6 +356,64 @@ else
   ok "ratio refuses a value outside 0..1"
 fi
 check_geometry "after ratio 0.3"
+# The same rebalance is one key away, without a pointer and without knowing the
+# split's current size: the default bindings carry `ratio +0.05` / `ratio -0.05`.
+# A chord's reply goes to the journal, so the window the chord will act on is
+# the assertion — and it is read from `status`, not assumed to be W1: an apply
+# raises each panel in tree order, so the desktop can move focus after a layout
+# change (observed on xfwm4). Pressing the chord does not move focus before it
+# acts, so the active window at press time is the one whose share changes.
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
+NUDGE_WIN=$(P status | sed -n 's/.*active \(0x[0-9a-f]*\).*/\1/p')
+[ -n "$NUDGE_WIN" ] || fail "no active window to nudge"
+eval "$(xdotool getwindowgeometry --shell "$NUDGE_WIN")"; NUDGE_W=$WIDTH
+NUDGE=$(P keys | awk '$NF == "+0.05" {print $1; exit}')
+[ -n "$NUDGE" ] || fail "no chord is bound to ratio +0.05"
+NUDGE_KEY=$(printf '%s' "$NUDGE" | sed -e 's/Ctrl/ctrl/' -e 's/Alt/alt/' -e 's/Shift/shift/' -e 's/Super/super/')
+# No `--clearmodifiers`: it wraps the chord in synthetic modifier traffic, and
+# the other chord assertions press the keys plainly for the same reason.
+xdotool key "$NUDGE_KEY"; sleep 0.6
+eval "$(xdotool getwindowgeometry --shell "$NUDGE_WIN")"
+if [ -n "${NUDGE_W:-}" ] && [ "$WIDTH" -gt "$NUDGE_W" ]; then
+  ok "the ratio nudge chord ($NUDGE) widens the focused split ($NUDGE_W -> $WIDTH)"
+else
+  bad "the ratio nudge chord ($NUDGE) did not widen the split ($NUDGE_W -> ${WIDTH:-?})"
+fi
+# The palette is built from the focused window's state, not a fixed list: a
+# floating window gets "Fold this window into a tab" instead of the no-op
+# "Float this window", and the ratio rows are there. `--list` prints exactly the
+# rows the menu would show, so this needs no menu program.
+P float --window "$W1" >/dev/null; sleep 0.3
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.4
+PAL=$(P palette --list)
+if printf '%s' "$PAL" | grep -c '^Float this window' >/dev/null; then
+  bad "the palette offers Float for a window that is already floating"
+else
+  ok "the palette hides Float for a floating window"
+fi
+if printf '%s' "$PAL" | grep -c '^Fold this window into a tab' >/dev/null; then
+  ok "the palette offers folding a floating window into a tab"
+else
+  bad "no Fold row for a floating window: $(printf '%s' "$PAL" | head -3)"
+fi
+if printf '%s' "$PAL" | grep -c '^Split this split half and half' >/dev/null; then
+  ok "the palette has a half-and-half ratio row"
+else
+  bad "no half ratio row in the palette"
+fi
+P dock left --window "$W1" >/dev/null; sleep 0.4
+xdotool windowactivate "$W1" >/dev/null 2>&1; sleep 0.3
+PAL=$(P palette --list)
+if printf '%s' "$PAL" | grep -c '^Float this window' >/dev/null; then
+  ok "the palette offers Float for a docked window"
+else
+  bad "the palette lost the Float row for a docked window"
+fi
+if printf '%s' "$PAL" | grep -c '^Fold this window into a tab' >/dev/null; then
+  bad "the palette offers Fold for a window that is already tiled"
+else
+  ok "the palette hides Fold for a docked window"
+fi
 P float-all >/dev/null || fail "float-all"
 sleep 0.3
 check_eq "desktop" "$(json_field 'd["doc"]["root"]["id"]')" "float-all returns to the desktop leaf"

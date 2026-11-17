@@ -1511,17 +1511,36 @@ impl Daemon {
     /// proportions, so a two-child split moves the boundary to exactly 30 % —
     /// the same result as dragging the gap by the same amount.
     fn set_ratio(&mut self, args: &[String]) -> Result<String> {
-        let ratio: f64 = args
-            .first()
-            .ok_or_else(|| anyhow!("usage: pergola ratio <0.0-1.0>"))?
-            .parse()
-            .map_err(|_| anyhow!("ratio must be a number"))?;
-        if !(0.0..=1.0).contains(&ratio) {
-            return Err(anyhow!("ratio must be between 0.0 and 1.0"));
-        }
+        let text = args.first().ok_or_else(|| {
+            anyhow!("usage: pergola ratio <0.0-1.0> | +delta | -delta")
+        })?;
+        // A leading sign means "nudge by this much", which is what a chord can
+        // do: the same key widens or narrows whatever split has focus, without
+        // knowing its current size. `+0.05` and `-0.05` are parsed as numbers.
+        let relative = text.starts_with('+') || text.starts_with('-');
+        let amount: f64 = text.parse().map_err(|_| anyhow!("ratio must be a number"))?;
         let focused = self
             .focused_panel()
             .ok_or_else(|| anyhow!("no focused window to rebalance"))?;
+        let ratio = if relative {
+            let parent = self
+                .file
+                .doc
+                .root
+                .parent(&focused)
+                .ok_or_else(|| anyhow!("'{focused}' has no split to rebalance"))?;
+            let index = parent
+                .children
+                .iter()
+                .position(|child| child.id() == focused)
+                .ok_or_else(|| anyhow!("'{focused}' is not in its parent split"))?;
+            parent.weights.get(index).copied().unwrap_or(0.0) + amount
+        } else {
+            amount
+        };
+        if !(0.0..=1.0).contains(&ratio) {
+            return Err(anyhow!("ratio must be between 0.0 and 1.0"));
+        }
         let tree = self
             .engine
             .set_ratio(&focused, ratio, &self.file.doc.root)
@@ -1531,16 +1550,21 @@ impl Daemon {
         self.apply()?;
         self.save()?;
         // Report the resulting weights so the change is observable without a UI.
-        let weights = self
-            .file
-            .doc
-            .root
-            .parent(&focused)
-            .map(|s| s.weights.clone())
-            .unwrap_or_default();
+        // The applied share is the focused panel's own weight, which is what the
+        // engine clamped — not necessarily the number that was asked for.
+        let parent = self.file.doc.root.parent(&focused);
+        let weights = parent.map(|s| s.weights.clone()).unwrap_or_default();
+        let applied = parent
+            .and_then(|s| {
+                s.children
+                    .iter()
+                    .position(|child| child.id() == focused)
+                    .and_then(|index| s.weights.get(index).copied())
+            })
+            .unwrap_or(ratio);
         let shown: Vec<String> = weights.iter().map(|w| format!("{w:.2}")).collect();
         Ok(format!(
-            "ratio {ratio:.2} · split weights [{}]",
+            "ratio {applied:.2} · split weights [{}]",
             shown.join(", ")
         ))
     }
