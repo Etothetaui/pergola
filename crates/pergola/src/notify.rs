@@ -41,12 +41,22 @@ pub fn send(message: &str) {
     };
     // Detached and silent: the notifier's own output is not ours to show, and a
     // CLI that exits before it finishes must not wait for it.
-    let _ = Command::new(program)
+    let Ok(mut child) = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn();
+        .spawn()
+    else {
+        return;
+    };
+    // The daemon lives for days and sends a notification per workspace switch, so
+    // the child has to be reaped or it stays a zombie until the daemon exits. A
+    // thread waiting on it is the cheapest way: it does not block the caller and
+    // a short-lived CLI still exits without waiting.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 #[cfg(test)]

@@ -243,17 +243,32 @@ owner, and `dim 0` leaves no layer and reports `dim off (dim 0)`. `dim 0.6` is 6
 width is also unit-tested. The honest gap that remains: nobody has looked at a 4 px line on a real
 bare-X session yet (UX-NOTES, the Overlay row).
 
-## 1. Workspaces one key away
+### Workspaces one key away (0.5.0-dev)
 
-**What:** opt-in default chords for `tag-view 1`…`tag-view 9` (a `tags` config key, off by default so
-a desktop that never asked for workspaces cannot blank its screen), palette rows for `tag-view` and
-`window-tag`, and a small indicator in the overlay naming the active tag.
-**Why:** tags exist but are commands only — no chord, no menu row, no on-screen state beyond
-`pergola status` (`docs/UX-NOTES.md`, the Workspaces rows). A workspace system nobody can reach
-from the desktop is a demo.
-**Done when:** with the key on, `Super+1`/`Super+2` switch between two tags and `Super+Shift+1`
-moves the focused window (asserted with real key presses in the e2e), the palette lists both verbs,
-and `overlay on` draws the active tag's name/indicator while a tag is active.
+`{"tags": true}` adds the nine workspace chords to the default plan: `Super+1`…`9` (tried as
+`Ctrl+Alt+1`…`9` first, like every command) switch to `tag-view 1`…`9`, and `Super+Shift+n` runs
+`window-tag n` on the focused window. It is opt-in because the first press on a desktop that never
+named a workspace would blank the screen, and because the plan is also what `keys --check`, the
+settings rows and the palette display — `binding_plan_with(overrides, tags)` takes the key as an
+argument rather than reading a file inside the plan builder (DESIGN §4a). `pergola reload` applies
+the change without a restart, and `pergola bind "tag-view 1" …` can still replace one chord.
+
+The palette grows a row per workspace the document actually holds — "Switch to workspace work"
+and "Move this window to workspace work" — and offers none when no workspace exists. Labels became
+owned strings for that (a tag name only exists at run time); the state comes from `doc.tags` and
+`doc.active_tag` in the tree, and both parsers are unit-tested.
+
+A switch is announced by a desktop notification naming the workspace and its window count. The
+item asked for an overlay indicator, and the overlay is the wrong place for it: the x11 crate has
+no text drawing, so the only honest mark would be a strip of unnamed rectangles, which says less
+than the notification and still needs a status bar to be legible. The rejection and the reason are
+recorded in DESIGN §4a and the UX-NOTES Workspaces row, so the gap is named rather than hidden.
+The e2e presses the chords for real: the switch lands and the status names tag 1, a new workspace
+starts empty, the notification is in the `PERGOLA_NOTIFY` log, `Super+Shift+1` puts the focused
+window on tag 1 and back on screen, `tag-view 2` parks it, the same chord returns, and `tags:
+false` releases exactly the workspace chords while `dock left`/`Super+Left` survive. `notify::send`
+also reaps its child now, so a daemon that lives for days does not accumulate one zombie per
+switch.
 
 ## Blocked: Release pipeline, so `pergola-bin` can exist
 

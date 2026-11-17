@@ -7,6 +7,36 @@ All notable changes to Pergola. Format follows the versioning rules in
 
 ### Added
 
+* **Workspaces one key away.** `{"tags": true}` adds the nine workspace chords
+  to the default plan: `Super+1`…`9` (first choice `Ctrl+Alt+1`…`9`) switch to
+  `tag-view 1`…`9`, and `Super+Shift+n` moves the focused window onto workspace
+  `n`. It is opt-in because `Super+1` on a desktop that never named a workspace
+  would blank the screen; with the key off the plan, `pergola keys --check` and
+  the settings rows are unchanged. `pergola reload` applies the change without a
+  restart, and `pergola bind` can replace any single chord by name.
+
+  A workspace switch now also raises a desktop notification naming the workspace
+  and its window count (through `notify-send`, or `PERGOLA_NOTIFY`). The screen
+  changes wholesale and the overlay draws no text, so the words are the only
+  honest indicator; there is deliberately no strip of unnamed rectangles.
+  `pergola palette` offers a row per workspace the document actually holds
+  (switch, and move the focused window), and offers none when no workspace has
+  been started. The e2e presses the real chords: the switch lands, a new
+  workspace starts empty, the move chord brings the window with it, the same
+  chord returns, and `tags: false` releases exactly those chords while the rest
+  of the plan survives. The notification is asserted through the `PERGOLA_NOTIFY`
+  stub the suite already uses for a rejected setting.
+
+### Fixed
+
+* **A window docked beside the desktop leaf is visible, and the desktop keeps its
+  share.** The desktop leaf is a floating layer, not a tile, so `inserting()`
+  now retargets a dock against it to the body beside it. Before this, docking
+  beside a zero-weight desktop split the leaf's weight (zero) and gave the new
+  window zero pixels — a window that opens and never appears; on the other axis
+  the wrap path handed the desktop half the screen. Two engine tests assert the
+  docked window has width and the desktop's configured share survives.
+
 * **Named workspaces (tags).** A tag is a named set of views; the active tag
 decides which views are laid out. `pergola window-tag <name>` moves the focused
 window onto a workspace (creating it), `tag-view <name>` switches to it,

@@ -1137,17 +1137,35 @@ fn make_resize_cursors(conn: &RustConnection) -> Result<(Cursor, Cursor)> {
 /// unbinds it); commands not mentioned keep the defaults, and an override for a
 /// command outside the default plan is appended, so any command the daemon
 /// understands (`view 3`, `gap 12`, `frame-desktop`, …) can be put on a chord.
+///
+/// `tags` adds the named-workspace chords (`tag-view 1`…`9`, `window-tag
+/// 1`…`9`). It is a parameter, not a config read, because the default plan is
+/// also what `keys --check` and the settings rows display, and a desktop that
+/// has not opted into workspaces must not see nine chords it never asked for.
 pub fn binding_plan_with(
     overrides: &std::collections::HashMap<String, Vec<String>>,
+    tags: bool,
 ) -> Vec<(String, Vec<String>)> {
-    let mut plan: Vec<(String, Vec<String>)> = binding_plan()
+    let mut base: Vec<(String, Vec<String>)> = binding_plan()
         .into_iter()
         .map(|(command, defaults)| {
-            let specs = match overrides.get(command) {
+            (
+                command.to_string(),
+                defaults.into_iter().map(str::to_string).collect(),
+            )
+        })
+        .collect();
+    if tags {
+        base.extend(tag_bindings());
+    }
+    let mut plan: Vec<(String, Vec<String>)> = base
+        .into_iter()
+        .map(|(command, defaults)| {
+            let specs = match overrides.get(&command) {
                 Some(user) => user.clone(),
-                None => defaults.into_iter().map(str::to_string).collect(),
+                None => defaults,
             };
-            (command.to_string(), specs)
+            (command, specs)
         })
         .collect();
     // Extra commands the user invented: append in a stable order so
@@ -1159,6 +1177,28 @@ pub fn binding_plan_with(
     extra.sort_by(|a, b| a.0.cmp(b.0));
     plan.extend(extra.into_iter().map(|(c, s)| (c.clone(), s.clone())));
     plan
+}
+
+/// The named-workspace chords, appended only when the `tags` config key is on.
+/// `Ctrl+Alt+<n>` and `Super+<n>` switch to a tag; adding `Shift` moves the
+/// focused window onto it. `Super+1`…`9` is the convention every tiling desktop
+/// shares, so a person who turns workspaces on already knows the chord.
+fn tag_bindings() -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    for n in 1..=9 {
+        out.push((
+            format!("tag-view {n}"),
+            vec![format!("Ctrl+Alt+{n}"), format!("Super+{n}")],
+        ));
+        out.push((
+            format!("window-tag {n}"),
+            vec![
+                format!("Ctrl+Alt+Shift+{n}"),
+                format!("Super+Shift+{n}"),
+            ],
+        ));
+    }
+    out
 }
 
 pub fn binding_plan() -> Vec<(&'static str, Vec<&'static str>)> {
@@ -1539,7 +1579,7 @@ mod tests {
     fn binding_overrides_replace_only_the_named_command() {
         let mut overrides = std::collections::HashMap::new();
         overrides.insert("zoom-out".to_string(), vec!["Super+Page_Up".to_string()]);
-        let plan = binding_plan_with(&overrides);
+        let plan = binding_plan_with(&overrides, false);
         let find = |command: &str| {
             plan.iter()
                 .find(|(c, _)| c == command)
@@ -1562,7 +1602,7 @@ mod tests {
         let mut overrides = std::collections::HashMap::new();
         overrides.insert("view 3".to_string(), vec!["Super+3".to_string()]);
         overrides.insert("overlay".to_string(), Vec::new());
-        let plan = binding_plan_with(&overrides);
+        let plan = binding_plan_with(&overrides, false);
         // An invented command is appended, in a deterministic position.
         let last = plan.last().expect("plan is not empty");
         assert_eq!(last.0, "view 3");

@@ -43,6 +43,13 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
   remembers the window that had the keyboard. Verified on xfwm4 and openbox in
   `scripts/e2e.sh` (disjoint tag sets, only the active tag's panels mapped, the
   parked client area off the work area, a restart, and a `tag` event).
+* Switch workspace with one key: `{"tags": true}` puts `Super+1`…`9` on
+  `tag-view 1`…`9` and `Super+Shift+1`…`9` on moving the focused window, pressed
+  for real in the e2e (the switch lands, the new workspace starts empty, the
+  move chord brings the window with you, the same chord returns, and `tags:
+  false` releases exactly those chords and nothing else). A switch also names
+  itself in a desktop notification, so a screen that changed wholesale says
+  where it changed to.
 * Change a setting from a menu that explains itself: every `pergola settings`
   row carries what the key controls, the range the validator enforces and the
   compiled default, a chord row takes a comma-separated pair, and a rejected
@@ -77,7 +84,7 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
 | Terminal split | `split-terminal` assumes `xfce4-terminal` when `$TERMINAL` is unset, which is wrong on most desktops | Non-XFCE users | 2 | Fall back to the desktop's terminal from `XDG_CURRENT_DESKTOP`, and say which config key to set |
 | Accessibility | No keyboard way to select a tile other than activating its window; the overlay draws no text and exposes no AT-SPI | Keyboard-only / low-vision | 3 | Focus-by-chord across tiles; overlay labels with the tile's size |
 | Tabs | Tab groups work from the command line, from default chords (`tab`, `tab-select`, `tab-next`, `tab-prev`) but there is no palette row for a tab action, no drag-a-window-onto-a-tab gesture and no tab bar | People expecting TrellisWM tabs; the mouse path is missing | 2 | Not scheduled (drag-to-tab is not in BACKLOG.md) |
-| Workspaces | `tag-view` / `window-tag` are only commands: tags have no default chords (pressing `Super+1` on a desktop that has no tag would blank the screen), no palette row and no on-screen indicator beyond `pergola status`. An empty tag shows only the desktop, which is correct but needs the command's reply to explain it | Anyone who expects workspaces to be one key away | 2 | Default chords behind an `opt-in` config key, palette rows for the two verbs, and a small tag indicator in the overlay |
+| Workspaces | Workspaces are one key away (`tags: true` binds `Super+1`…`9` and `Super+Shift+n`; a switch raises a notification naming the workspace), and the palette offers a row per workspace the document holds. What remains: a workspace has no persistent on-screen indicator — the overlay draws no text and a strip of unnamed rectangles would say less than the notification; a status bar can draw a real one from `pergola subscribe` | Anyone who expects a workspace bar | 1 | A text-drawing capability in the x11 crate, then a small tag strip in the overlay (deliberately not a stopgap of blind rectangles) |
 | Workspaces | A parked window is moved below the work area, not unmapped, and the desktop clamps it so it cannot be lost: xfwm4 keeps the 29 px title bar at the bottom edge, openbox keeps 66 px of an 862 px client (measured on a 900 px screen; a larger park offset does not help — `xdotool windowmove` to y=900, 1200 or 3000 all land the client at the same clamped y). So the window is off the workspace but a sliver of it is on screen | Anyone with more than one workspace | 2 | An ICCCM iconify (`WM_CHANGE_STATE`) on park and a pager-style activation on return, tracking only the windows we hid so the user's own minimise is never undone; or unmapping, which needs the host WM's client list to stay honest |
 
 ## Next three
@@ -86,9 +93,10 @@ Severity is "how much does this cost the person who meets it": 1 cosmetic,
    row) — the last place where the desktop does not tell you what happened. The
    overlay cue and the `dim` key are done; what remains is the look-at-it check
    on a real bare-X server.
-2. **Workspaces one key away** (the Workspaces rows): opt-in default chords for
-   `tag-view 1-9`, palette rows for the two verbs, and a small tag indicator in
-   the overlay, so a workspace does not need a terminal to exist.
+2. **A workspace indicator that is not a notification** (the Workspaces row):
+   the chords and palette rows are done; the remaining gap is persistent
+   on-screen state, which needs text drawing in the x11 crate rather than a
+   strip of unnamed rectangles.
 3. **A palette that can be launched without a chord** (the Discoverability and
    Palette-needs-a-menu rows): a panel/applet entry and a `notify-send` naming
    the missing menu program, so the menu is not itself a hidden feature.

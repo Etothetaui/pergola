@@ -94,6 +94,11 @@ pub struct Config {
     pub hotkeys: bool,
     /// Dock a floating window dropped against a screen edge (mouse tiling).
     pub edge_dock: bool,
+    /// Bind default chords for the named workspaces (`tag-view 1`…`9`,
+    /// `window-tag 1`…`9`). Off by default: a desktop that never asked for
+    /// workspaces must not lose its own `Super+1` shortcuts or blank its screen
+    /// when a chord is pressed with no tag defined.
+    pub tags: bool,
     /// Per-command chord overrides: command → candidate chords, tried in order.
     /// A command named here replaces its default candidates entirely (an empty
     /// list unbinds it); commands not mentioned keep the defaults. Any command
@@ -119,6 +124,7 @@ impl Default for Config {
             terminal: std::env::var("TERMINAL").unwrap_or_else(|_| "xfce4-terminal".to_string()),
             hotkeys: true,
             edge_dock: true,
+            tags: false,
             bindings: HashMap::new(),
         }
     }
@@ -135,6 +141,7 @@ pub const KNOWN_KEYS: &[&str] = &[
     "terminal",
     "hotkeys",
     "edge_dock",
+    "tags",
     "bindings",
 ];
 
@@ -209,7 +216,7 @@ impl Config {
     /// applied. Every command the daemon understands can be bound, not only
     /// the ones in the default plan.
     pub fn binding_plan(&self) -> Vec<(String, Vec<String>)> {
-        pergola_x11::binding_plan_with(&self.bindings)
+        pergola_x11::binding_plan_with(&self.bindings, self.tags)
     }
 }
 
@@ -323,11 +330,13 @@ fn parse_value(key: &str, text: &str) -> Result<serde_json::Value> {
                 .map_err(|_| anyhow!("{key} must be a number, got {text:?}"))?;
             serde_json::json!(number)
         }
-        "overlay" | "hotkeys" | "edge_dock" => serde_json::json!(match text.to_ascii_lowercase().as_str() {
-            "on" | "true" | "yes" | "1" => true,
-            "off" | "false" | "no" | "0" => false,
-            _ => anyhow::bail!("{key} must be on or off, got {text:?}"),
-        }),
+        "overlay" | "hotkeys" | "edge_dock" | "tags" => {
+            serde_json::json!(match text.to_ascii_lowercase().as_str() {
+                "on" | "true" | "yes" | "1" => true,
+                "off" | "false" | "no" | "0" => false,
+                _ => anyhow::bail!("{key} must be on or off, got {text:?}"),
+            })
+        }
         "auto_dock" => serde_json::json!(match text.to_ascii_lowercase().as_str() {
             "off" | "false" | "none" | "never" => "off",
             "new" => "new",
@@ -368,6 +377,7 @@ pub fn help_text(key: &str) -> &'static str {
         "terminal" => "program `split-terminal` runs (default $TERMINAL, else xfce4-terminal)",
         "hotkeys" => "grab the default chords at startup; on | off (default on)",
         "edge_dock" => "tile a window dropped on a screen edge; on | off (default on)",
+        "tags" => "bind Super+1…9 to named workspaces; on | off (default off)",
         "bindings" => "per-command chord overrides; change them through the chord rows",
         _ => "a value this build does not explain",
     }
@@ -389,7 +399,7 @@ pub fn settings_rows(config: &Config) -> Vec<(String, Setting)> {
             Setting::Key(key),
         ));
     }
-    for (command, chords) in pergola_x11::binding_plan_with(&config.bindings) {
+    for (command, chords) in pergola_x11::binding_plan_with(&config.bindings, config.tags) {
         let shown = if chords.is_empty() {
             "off".to_string()
         } else {
@@ -419,6 +429,7 @@ pub fn value_text(config: &Config, key: &str) -> String {
         "terminal" => config.terminal.clone(),
         "hotkeys" => config.hotkeys.to_string(),
         "edge_dock" => config.edge_dock.to_string(),
+        "tags" => config.tags.to_string(),
         "bindings" => {
             if config.bindings.is_empty() {
                 "{}".to_string()
@@ -937,7 +948,7 @@ mod tests {
                 "no row for {key}: {labels:#?}"
             );
         }
-        let commands = pergola_x11::binding_plan_with(&config.bindings);
+        let commands = pergola_x11::binding_plan_with(&config.bindings, config.tags);
         assert!(commands.len() > 10);
         for (command, _) in commands {
             assert!(

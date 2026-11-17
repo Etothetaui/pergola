@@ -15,10 +15,12 @@ use std::process::{Command, Output, Stdio};
 use anyhow::{anyhow, Context, Result};
 
 /// One row of the palette: the words a human reads and the argv they stand for.
-#[derive(Debug)]
+/// The label is owned because a workspace row names a tag the document holds,
+/// and a tag name only exists at run time.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
-    pub label: &'static str,
-    pub argv: &'static [&'static str],
+    pub label: String,
+    pub argv: Vec<String>,
 }
 
 /// What the palette knows about the window it would act on. Read from the
@@ -32,6 +34,11 @@ pub struct State {
     /// The focused window is on the desktop layer: "float" would do nothing and
     /// folding it into a tile is the action that makes sense.
     pub floating: bool,
+    /// The tag names the document actually holds. Empty means the person has
+    /// not started a workspace, and the palette stays quiet about them.
+    pub tags: Vec<String>,
+    /// The tag on screen, so its own row is not offered (there is nowhere to go).
+    pub active_tag: Option<String>,
 }
 
 const TILE: &[(&str, &[&str])] = &[
@@ -64,29 +71,50 @@ const CAMERA: &[(&str, &[&str])] = &[
 pub fn items_for(state: &State) -> Vec<Item> {
     let mut rows: Vec<Item> = TILE
         .iter()
-        .map(|&(label, argv)| Item { label, argv })
+        .map(|&(label, argv)| row(label, argv))
         .collect();
     if state.floating {
-        rows.push(Item {
-            label: "Fold this window into a tab",
-            argv: &["tab"],
-        });
+        rows.push(row("Fold this window into a tab", &["tab"]));
     } else {
-        rows.push(Item {
-            label: "Float this window",
-            argv: &["float"],
-        });
+        rows.push(row("Float this window", &["float"]));
     }
-    rows.extend(
-        RATIOS
-            .iter()
-            .map(|&(label, argv)| Item { label, argv }),
-    );
-    rows.extend(
-        CAMERA
-            .iter()
-            .map(|&(label, argv)| Item { label, argv }),
-    );
+    rows.extend(RATIOS.iter().map(|&(label, argv)| row(label, argv)));
+    rows.extend(CAMERA.iter().map(|&(label, argv)| row(label, argv)));
+    rows.extend(workspace_rows(state));
+    rows
+}
+
+/// A row from a static table, copied into owned strings.
+fn row(label: &str, argv: &[&str]) -> Item {
+    Item {
+        label: label.to_string(),
+        argv: argv.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// Workspace rows, built from the tags the document holds: switching to one,
+/// and moving the focused window onto one. A row that would do nothing (the
+/// tag already on screen, or no window to move) is left out. No tags, no rows:
+/// a desktop that never started a workspace sees no workspace menu.
+fn workspace_rows(state: &State) -> Vec<Item> {
+    let mut rows = Vec::new();
+    for tag in &state.tags {
+        if state.active_tag.as_deref() == Some(tag.as_str()) {
+            continue;
+        }
+        rows.push(row(
+            &format!("Switch to workspace {tag}"),
+            &["tag-view", tag],
+        ));
+    }
+    if !state.title.is_empty() {
+        for tag in &state.tags {
+            rows.push(row(
+                &format!("Move this window to workspace {tag}"),
+                &["window-tag", tag],
+            ));
+        }
+    }
     rows
 }
 
@@ -141,6 +169,20 @@ fn state_from_tree(tree: &str, window: u64, panel: Option<&str>) -> State {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(tree) else {
         return State::default();
     };
+    let tags: Vec<String> = value
+        .pointer("/doc/tags")
+        .and_then(|tags| tags.as_array())
+        .map(|tags| {
+            tags.iter()
+                .filter_map(|tag| tag.get("name").and_then(|n| n.as_str()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let active_tag = value
+        .pointer("/doc/active_tag")
+        .and_then(|tag| tag.as_str())
+        .map(str::to_string);
     let title = value
         .pointer("/pergola/seats")
         .and_then(|seats| seats.as_array())
@@ -156,6 +198,8 @@ fn state_from_tree(tree: &str, window: u64, panel: Option<&str>) -> State {
         return State {
             title,
             floating: false,
+            tags,
+            active_tag,
         };
     };
     let floating = value
@@ -167,7 +211,12 @@ fn state_from_tree(tree: &str, window: u64, panel: Option<&str>) -> State {
             })
         })
         .unwrap_or(false);
-    State { title, floating }
+    State {
+        title,
+        floating,
+        tags,
+        active_tag,
+    }
 }
 
 /// Print the rows for the current state, one per line with the argv they stand
@@ -177,7 +226,7 @@ pub fn list(socket: &Path) -> Vec<(String, String)> {
     let state = state(socket);
     items_for(&state)
         .into_iter()
-        .map(|item| (item.label.to_string(), item.argv.join(" ")))
+        .map(|item| (item.label, item.argv.join(" ")))
         .collect()
 }
 
@@ -262,7 +311,7 @@ pub fn run_settings() -> Result<()> {
     let (key, current) = match setting {
         crate::config::Setting::Key(key) => (key.to_string(), crate::config::value_text(&report.config, key)),
         crate::config::Setting::Chord(command) => {
-            let current = pergola_x11::binding_plan_with(&report.config.bindings)
+            let current = pergola_x11::binding_plan_with(&report.config.bindings, report.config.tags)
                 .into_iter()
                 .find(|(name, _)| name == command)
                 .map(|(_, chords)| chords.join(", "))
@@ -429,7 +478,7 @@ fn is_executable(path: &Path) -> bool {
 fn run_menu(menu: &Menu, socket: &Path) -> Result<()> {
     let state = state(socket);
     let items = items_for(&state);
-    let labels: Vec<&str> = items.iter().map(|item| item.label).collect();
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
     let output = show_list(menu, &prompt(&state), &labels)?;
 
     let label = chosen(&output, menu.kind);
@@ -440,7 +489,7 @@ fn run_menu(menu: &Menu, socket: &Path) -> Result<()> {
         eprintln!("pergola: palette: no action for {label:?}");
         return Ok(());
     };
-    spawn_action(item.argv)
+    spawn_action(&item.argv)
 }
 
 /// rofi and dmenu read the list from stdin and print the chosen line.
@@ -481,7 +530,7 @@ fn chosen(output: &Output, kind: Kind) -> String {
     .to_string()
 }
 
-fn spawn_action(argv: &[&str]) -> Result<()> {
+fn spawn_action(argv: &[String]) -> Result<()> {
     let exe = env::current_exe().context("cannot locate the pergola executable")?;
     let status = Command::new(exe)
         .args(argv)
@@ -501,23 +550,85 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    fn first_is(item: &Item, verb: &str) -> bool {
+        item.argv.first().map(String::as_str) == Some(verb)
+    }
+
+    #[test]
+    fn no_workspace_is_offered_until_one_exists() {
+        // A desktop that never started a tag must not see a workspace menu.
+        assert!(items().iter().all(|i| !first_is(i, "tag-view")));
+        assert!(items().iter().all(|i| !first_is(i, "window-tag")));
+    }
+
+    #[test]
+    fn workspace_rows_name_the_tags_the_document_holds() {
+        let state = State {
+            title: "xterm".into(),
+            tags: vec!["work".into(), "mail".into()],
+            active_tag: Some("work".into()),
+            ..State::default()
+        };
+        let rows = items_for(&state);
+        // The tag already on screen has nowhere to go, so it is not offered.
+        assert!(rows.iter().any(|i| i.label == "Switch to workspace mail"));
+        assert!(rows.iter().all(|i| i.label != "Switch to workspace work"));
+        // Moving the focused window is offered for every tag, including its own
+        // (a no-op there, but the menu cannot know where the window came from).
+        for tag in ["work", "mail"] {
+            let label = format!("Move this window to workspace {tag}");
+            let row = rows.iter().find(|i| i.label == label).expect("no move row");
+            assert_eq!(row.argv, vec!["window-tag".to_string(), tag.to_string()]);
+        }
+        // No focused window, no move rows.
+        let bare = items_for(&State {
+            tags: vec!["work".into()],
+            ..State::default()
+        });
+        assert!(bare.iter().all(|i| !first_is(i, "window-tag")));
+    }
+
+    #[test]
+    fn the_tree_yields_the_tags_and_the_active_one() {
+        let tree = r#"{
+            "doc": {
+                "root": {"kind":"panel","id":"p-1","views":["s-1"]},
+                "tags": [{"name":"work","views":["s-1"]},{"name":"mail"}],
+                "active_tag": "work"
+            },
+            "pergola": {"seats":[{"seat":"s-1","panel":"p-1","window":1,"title":"t"}]}
+        }"#;
+        let state = state_from_tree(tree, 1, Some("p-1"));
+        assert_eq!(state.tags, vec!["work".to_string(), "mail".to_string()]);
+        assert_eq!(state.active_tag.as_deref(), Some("work"));
+        // A document without tags loads as no tags at all.
+        let plain = state_from_tree(
+            r#"{"doc":{"root":{"kind":"panel","id":"p-1"}},"pergola":{"seats":[]}}"#,
+            1,
+            Some("p-1"),
+        );
+        assert!(plain.tags.is_empty());
+        assert_eq!(plain.active_tag, None);
+    }
+
     #[test]
     fn labels_are_unique() {
         let all = items();
         let mut seen = HashSet::new();
         for item in &all {
-            assert!(seen.insert(item.label), "duplicate label {}", item.label);
+            assert!(seen.insert(item.label.clone()), "duplicate label {}", item.label);
         }
         assert_eq!(all.len(), 16);
         // The floating variant swaps one row for another and adds nothing else.
         let floating = items_for(&State {
             title: String::new(),
             floating: true,
+            ..State::default()
         });
         assert_eq!(floating.len(), all.len());
         let mut seen = HashSet::new();
         for item in &floating {
-            assert!(seen.insert(item.label), "duplicate label {}", item.label);
+            assert!(seen.insert(item.label.clone()), "duplicate label {}", item.label);
         }
     }
 
@@ -538,9 +649,9 @@ mod tests {
             "undo",
         ];
         for item in items() {
-            let first = *item.argv.first().expect("empty argv");
+            let first = item.argv.first().expect("empty argv");
             assert!(
-                verbs.contains(&first),
+                verbs.contains(&first.as_str()),
                 "{}: unknown verb {first}",
                 item.label
             );
@@ -553,6 +664,7 @@ mod tests {
         let floating = items_for(&State {
             title: "xterm".into(),
             floating: true,
+            ..State::default()
         });
         assert!(docked.iter().any(|i| i.label == "Float this window"));
         assert!(floating.iter().all(|i| i.label != "Float this window"));
@@ -560,8 +672,8 @@ mod tests {
         // The tile edges are always there: docking a floating window is exactly
         // what they are for.
         assert_eq!(
-            docked.iter().filter(|i| i.argv.first() == Some(&"dock")).count(),
-            floating.iter().filter(|i| i.argv.first() == Some(&"dock")).count()
+            docked.iter().filter(|i| first_is(i, "dock")).count(),
+            floating.iter().filter(|i| first_is(i, "dock")).count()
         );
     }
 

@@ -226,7 +226,13 @@ check_geometry() {
     fi
     checked=$((checked+1))
   done < <(P rects)
-  [ "$checked" -gt 0 ] || fail "$label: no panels to check"
+  if [ "$checked" -eq 0 ]; then
+    # An empty `rects` means the active tree has no panel: say what the daemon
+    # and the document actually held, so the failure names its own cause.
+    printf '  DIAG %s: rects=[%s] status=[%s]\n' "$label" "$(P rects)" "$(P status)" >&2
+    P list >&2 2>/dev/null || true
+    fail "$label: no panels to check"
+  fi
   [ "$skipped" -eq 0 ] || say "       ($skipped panel(s) parked outside the framed view)"
 }
 
@@ -674,15 +680,12 @@ P arrange >/dev/null; sleep 0.4
 # times a second, so a bound command would race ("back" held for a second
 # would walk eleven history entries). The daemon latches the chord on press
 # and clears it on release, so a hold is one press.
-chord_for() { # command -> xdotool key spec, from the bindings actually installed
-  local label
-  label=$(P keys | awk -v c="$1" '$2==c {print $1; exit}')
-  [ -n "$label" ] || return 1
+to_xdotool() { # binding label -> xdotool key spec
   # Lowercase only the modifier tokens: xdotool takes "ctrl" or "Ctrl" but
   # needs the key name exactly as X spells it. Lowercasing the whole label
   # turned "Page_Down" into "page_down", which xdotool rejects, so the chord
   # silently never fired.
-  printf '%s' "$label" | awk -F+ '{
+  printf '%s' "$1" | awk -F+ '{
     n = NF; out = "";
     for (i = 1; i < n; i++) out = out tolower($i) "+";
     key = $n;
@@ -690,6 +693,21 @@ chord_for() { # command -> xdotool key spec, from the bindings actually installe
     if (key == "]") key = "bracketright";
     print out key;
   }'
+}
+chord_for() { # command -> xdotool key spec, from the bindings actually installed
+  local label
+  label=$(P keys | awk -v c="$1" '$2==c {print $1; exit}')
+  [ -n "$label" ] || return 1
+  to_xdotool "$label"
+}
+command_chord() { # a multi-word command ("tag-view 1") -> xdotool key spec
+  local label
+  # The daemon pads the label to a column and then prints the command, which
+  # may contain a space, so match the tail of the line instead of a field.
+  label=$(P keys | awk -v c="$1" '
+    { n = length($0); if (substr($0, n - length(c) + 1) == c) { print $1; exit } }')
+  [ -n "$label" ] || return 1
+  to_xdotool "$label"
 }
 build_history() {
   P everything >/dev/null; sleep 0.4
@@ -1477,7 +1495,7 @@ check_geometry "after tag-view all"
 P tag-view work >/dev/null 2>&1; sleep 0.5
 P stop >/dev/null 2>&1
 for _ in $(seq 1 40); do P status >/dev/null 2>&1 || break; sleep 0.1; done
-"$BIN" --socket "$SOCK" daemon >>"$TMP/daemon.log" 2>&1 & PIDS+=($!)
+PERGOLA_DEBUG=1 "$BIN" --socket "$SOCK" daemon >>"$TMP/daemon.log" 2>&1 & PIDS+=($!)
 for _ in $(seq 1 50); do P status >/dev/null 2>&1 && break; sleep 0.1; done
 sleep 0.4
 if P tag-view | grep -c '^\* work' >/dev/null; then
@@ -1516,7 +1534,108 @@ fi
 check_geometry "after tag-remove"
 
 say
-say "14. screenshot"
+say "14. workspaces one key away"
+# `tags: true` puts the nine workspace chords on the default plan, so a person
+# who has used any tiling desktop already knows the keys. The chords are pressed
+# for real: the assertions read the daemon's answer and the screen, not the
+# keymap the config claims.
+printf '%s' '{"tags":true,"hotkeys":true,"auto_dock":"off"}' \
+  > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1; sleep 0.4
+if P keys | grep -c 'tag-view 1$' >/dev/null; then
+  ok "tags: true puts the workspace chords on the plan"
+else
+  bad "no tag-view chord after tags: true: $(P keys | tail -3 | tr '\n' ' ')"
+fi
+if P keys | grep -c 'window-tag 9$' >/dev/null; then
+  ok "every workspace number is bound, not only the first"
+else
+  bad "the ninth workspace has no chord: $(P keys | grep window-tag)"
+fi
+TAG1_CHORD=$(command_chord 'tag-view 1') || fail "no chord installed for tag-view 1"
+MOVETAG1_CHORD=$(command_chord 'window-tag 1') || fail "no chord installed for window-tag 1"
+
+# Every window is shown before the chords run, so the switch has something to
+# park and the numbers mean what the tag report says.
+P tag-view all >/dev/null 2>&1; sleep 0.4
+xdotool windowactivate "$TAG_A" >/dev/null 2>&1; sleep 0.4
+: > "$PERGOLA_NOTIFY_LOG"
+xdotool key "$TAG1_CHORD"; sleep 0.7
+if P status | grep -c '· tag 1' >/dev/null; then
+  ok "the workspace chord switched to tag 1"
+else
+  bad "$TAG1_CHORD did not switch workspaces: $(P status)"
+fi
+if P list | grep -c '^docked' >/dev/null; then
+  bad "the new workspace shows a window it does not own: $(P list | grep '^docked')"
+else
+  ok "a brand-new workspace starts empty"
+fi
+for _ in $(seq 1 20); do [ -s "$PERGOLA_NOTIFY_LOG" ] && break; sleep 0.1; done
+if grep -c 'tag 1 is empty' "$PERGOLA_NOTIFY_LOG" >/dev/null; then
+  ok "the workspace switch names itself in a notification"
+else
+  bad "no notification for the switch: $(cat "$PERGOLA_NOTIFY_LOG" 2>/dev/null)"
+fi
+
+# Moving a window onto the workspace you are on brings it straight back on
+# screen: the same key with Shift is the "take this window with me" form.
+: > "$PERGOLA_NOTIFY_LOG"
+xdotool key "$MOVETAG1_CHORD"; sleep 0.7
+if P list | grep -c "^docked.*$TAG_A.*\[tag 1\]" >/dev/null; then
+  ok "the move chord put the focused window on tag 1"
+else
+  bad "the move chord did not move $TAG_A: $(P list | grep "$TAG_A")"
+fi
+# A keypress is handled asynchronously: the move is committed when the daemon
+# answers `list`, but the *next* query can still race the apply. Give the move
+# a moment to reach the screen; `check_geometry` names its own cause if the
+# active tag still has nothing to measure.
+for _ in $(seq 1 20); do
+  [ -n "$(P rects)" ] && break
+  sleep 0.1
+done
+check_geometry "after moving onto tag 1 by chord"
+
+# And the neighbouring workspace is one key away in both directions.
+xdotool key "$(command_chord 'tag-view 2')"; sleep 0.6
+if P tag-view | grep -c '^\* 2 ' >/dev/null; then
+  ok "the next number is its own workspace"
+else
+  bad "tag 2 is not active: $(P tag-view)"
+fi
+PARK_PCT=$(onscreen_pct "$TAG_A")
+if [ "$PARK_PCT" -le 25 ]; then
+  ok "the window from tag 1 is off screen (${PARK_PCT}% visible)"
+else
+  bad "the window from tag 1 stayed on screen (${PARK_PCT}% visible)"
+fi
+xdotool key "$TAG1_CHORD"; sleep 0.6
+if P list | grep -c "^docked.*$TAG_A" >/dev/null; then
+  ok "the same chord returns to the window that was left"
+else
+  bad "returning to tag 1 lost its window: $(P list | grep "$TAG_A")"
+fi
+
+# Turning the key off releases exactly the workspace chords and nothing else.
+printf '%s' '{"tags":false,"hotkeys":true,"auto_dock":"off"}' \
+  > "$XDG_CONFIG_HOME/pergola/config.json"
+"$BIN" --socket "$SOCK" reload >/dev/null 2>&1; sleep 0.4
+if P keys | grep -c 'tag-view' >/dev/null; then
+  bad "tags: false left a workspace chord bound: $(P keys | grep tag-view)"
+else
+  ok "tags: false releases the workspace chords"
+fi
+if P keys | grep -c 'Super+Left' >/dev/null && P keys | grep -c 'dock left' >/dev/null; then
+  ok "the rest of the plan survives the workspace chords leaving"
+else
+  bad "turning tags off damaged the plan: $(P keys | head -3 | tr '\n' ' ')"
+fi
+P tag-view all >/dev/null 2>&1; sleep 0.4
+check_geometry "after the workspace chords are released"
+
+say
+say "15. screenshot"
 import -window root "$TMP/shot.png" 2>/dev/null && cp "$TMP/shot.png" /tmp/pergola-e2e-shot.png && ok "screenshot at /tmp/pergola-e2e-shot.png"
 
 say

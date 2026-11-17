@@ -145,6 +145,7 @@ the defaults):
 | `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
 | `overlay` | `false` | draw split lines in the gaps and a frame around the viewport, plus a dim layer when a compositor can render it |
 | `dim` | `0.4` | strength of the overlay's dim layer, `0` (off) to `0.9`; only used with a compositor. At `0` the split lines are 4 px wide instead of 2, so the boundary still reads without a dim layer |
+| `tags` | `false` | bind `Super+1`…`9` (`Ctrl+Alt+1`…`9` first) to the nine named workspaces, and `Super+Shift+n` to move the focused window onto one. `on`/`off` |
 | `desktop_share` | `0.0` | share of the screen `arrange` gives the desktop leaf; `0` means the desktop gets no strip |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program launched by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
@@ -297,14 +298,32 @@ returning to it lands where you left off. An empty tag shows only the desktop
 layer; the command says so and names the way back.
 
 The active tag is part of the layout document, so a daemon restart keeps you on
-the workspace you were on. Tags have no default chords — pick the ones you use:
+the workspace you were on.
+
+Making the workspaces one key away is opt-in:
+
+```json
+{"tags": true}
+```
+
+With it on, the default plan binds `Super+1`…`9` to `tag-view 1`…`9` and
+`Super+Shift+1`…`9` to `window-tag 1`…`9` (the `Ctrl+Alt` chord is tried first,
+like every other command). They are behind a key rather than always on because
+`Super+1` on a desktop that never named a workspace would blank the screen, and
+the first press is a surprise a default should not spring. `pergola reload`
+takes the change without a restart, and any chord can be replaced by name:
 
 ```sh
-pergola bind "tag-view 1" Super+1
-pergola bind "tag-view 2" Super+2
-pergola bind "window-tag 1" Super+Shift+1
-pergola keys --check                # confirm what really got bound
+pergola bind "tag-view 1" Super+F1   # a workspace chord of your own
+pergola keys --check                 # confirm what really got bound
 ```
+
+A switch also raises a desktop notification naming the workspace (and how many
+windows it holds), because the screen itself cannot say where you are — the
+overlay draws no text. For the same reason there is no persistent workspace
+bar: a strip of unnamed rectangles would be a worse workspace list than the
+notification and `pergola tag-view` already give you. A status bar can draw a
+real one from `pergola subscribe`.
 
 Two consequences worth knowing: `arrange` and `float-all` rebuild the shared
 tree, so they act on every tag; and a parked window's client area is off-screen
@@ -328,7 +347,8 @@ Everything that tiles a window is reachable without a shell:
 | switch tabs in a group | `Ctrl+Alt+Page_Down` / `Page_Up` |
 | undo the last layout change | `Ctrl+Alt+Z`, or `pergola undo` |
 | focus a window from a taskbar | click its entry — the click is an `_NET_ACTIVE_WINDOW` request, and a hidden tab view is shown first |
-| switch workspace | `pergola tag-view <name>` (bind it: `pergola bind "tag-view 1" Super+1`) |
+| switch workspace | `Super+1`…`9` with `tags: true`, or `pergola tag-view <name>` |
+| move a window to a workspace | `Super+Shift+1`…`9` with `tags: true`, or `pergola window-tag <name>` |
 
 The chords fall back to `Super+…` per command when the desktop owns the
 `Ctrl+Alt` chord — `pergola keys --check` prints what was really bound. The full

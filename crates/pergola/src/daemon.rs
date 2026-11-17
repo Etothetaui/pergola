@@ -354,8 +354,25 @@ impl Daemon {
         // The screen shows the active tag's view of the tree, so a camera
         // pointing at a node on another tag would frame nothing. Reset it to
         // the shown tree's own id, which means "everything".
+        //
+        // A framing on the empty desktop leaf is the same mistake in another
+        // form: when a window joins that tag the desktop becomes one tile
+        // beside it, and "framed desktop" would zoom into the empty tile and
+        // push every window off screen. The desktop leaf is never a useful
+        // thing to frame while there is a panel to show.
         let shown = self.file.doc.active_tree();
-        if self.camera.framed.is_empty() || shown.node(&self.camera.framed).is_none() {
+        let has_panel = shown
+            .flatten()
+            .iter()
+            .any(|n| matches!(n, LayoutNode::Panel(_)));
+        let framed_desktop = matches!(
+            shown.node(&self.camera.framed),
+            Some(LayoutNode::Desktop(_))
+        );
+        if self.camera.framed.is_empty()
+            || shown.node(&self.camera.framed).is_none()
+            || (framed_desktop && has_panel)
+        {
             self.camera.framed = shown.id().to_string();
         }
     }
@@ -492,6 +509,11 @@ impl Daemon {
             return Ok(());
         }
         let world = screen.to_rect();
+        // The camera must point at a node that exists in the tree being drawn.
+        // A command may move the last window off a tag, leaving the camera
+        // framed on the empty desktop leaf; `apply` is the one place every
+        // change passes through, so normalize here as well as in the commands.
+        self.normalize_camera();
         // Only the active tag's views are on screen. With no tag active this is
         // the whole tree, so a user who never names a workspace sees no change.
         let shown = self.file.doc.active_tree();
@@ -957,6 +979,15 @@ impl Daemon {
         } else {
             None
         };
+        if std::env::var_os("PERGOLA_DEBUG").is_some() {
+            eprintln!(
+                "pergola: rects shown={} framed={:?} screen={:?} raw={:?}",
+                shown.id(),
+                framed,
+                screen,
+                rects
+            );
+        }
         let rows: Vec<serde_json::Value> = rects
             .iter()
             .filter(|(id, _)| {
@@ -1630,7 +1661,7 @@ impl Daemon {
             }
         }
         self.save()?;
-        Ok(match self.file.doc.active_tag.clone() {
+        let message = match self.file.doc.active_tag.clone() {
             Some(name) => {
                 let views = self
                     .file
@@ -1651,7 +1682,13 @@ impl Daemon {
                 }
             }
             None => "tag off — every view is shown".to_string(),
-        })
+        };
+        // Switching workspaces changes the whole screen at once, and the screen
+        // itself says nothing about where you are. The desktop's own notifier
+        // names the workspace: a switch is a deliberate keypress, so this is the
+        // one moment the words are worth the pixels.
+        crate::notify::send(&message);
+        Ok(message)
     }
 
     /// Move a window into a tag without switching to it. The tag is created

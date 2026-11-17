@@ -208,6 +208,18 @@ impl LayoutEngine {
         if root.node(target_id).is_none() {
             return Err(LayoutError::NotFound(format!("target '{target_id}'")));
         }
+        // The desktop leaf is a floating layer with its own share, never a
+        // tile. "Dock beside the desktop" therefore means "join the tiles":
+        // retarget to the body beside it, so the new panel takes tile space
+        // and the desktop keeps its share. Splitting the desktop instead gives
+        // a zero-weight leaf a zero-width panel (a window that never appears)
+        // or, on the other axis, hands the desktop half the screen.
+        let target: String = if root.node(target_id).is_some_and(LayoutNode::is_desktop) {
+            self.body_tile(root).unwrap_or_else(|| target_id.to_string())
+        } else {
+            target_id.to_string()
+        };
+        let target_id = target.as_str();
         // Docking beside the whole tree wraps the root in a new split.
         if target_id == root.id() && !root.is_leaf() {
             let pair = if edge.is_negative() {
@@ -309,6 +321,21 @@ impl LayoutEngine {
             );
         }
         (node.clone(), false)
+    }
+
+    /// The largest non-desktop child of the root: the tile area a desktop leaf
+    /// is docked beside, and therefore what "dock beside the desktop" splits.
+    /// `None` when the root is a bare desktop leaf (an empty screen).
+    fn body_tile(&self, root: &LayoutNode) -> Option<String> {
+        let LayoutNode::Split(s) = root else {
+            return None;
+        };
+        s.children
+            .iter()
+            .zip(&s.weights)
+            .filter(|(c, _)| !c.is_desktop())
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(c, _)| c.id().to_string())
     }
 
     fn fresh_split_id(&self, root: &LayoutNode) -> String {
@@ -863,6 +890,54 @@ mod tests {
             .unwrap();
         let LayoutNode::Split(s2) = &out2 else { panic!() };
         assert!((s2.weights[1] - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dock_beside_a_zero_weight_desktop_joins_the_tiles_instead() {
+        // A pruned tag can show a split whose only visible tile is `a` and
+        // whose desktop leaf carries no space (share 0). Docking beside the
+        // desktop must not split the zero-weight leaf: the new window would be
+        // zero pixels wide and never appear.
+        let e = LayoutEngine::default();
+        let root = LayoutNode::Split(Split::with_weights(
+            "root",
+            Axis::X,
+            vec![panel("a"), LayoutNode::desktop()],
+            vec![1.0, 0.0],
+        ));
+        let out = e
+            .inserting(panel("b"), "desktop", Direction::Right, &root)
+            .unwrap();
+        out.validate().unwrap();
+        let r = e.rects(&out, frame());
+        let b = r.iter().find(|(id, _)| id == "p-b").unwrap().1;
+        assert!(b.w > 0.0, "the window docked beside the desktop is invisible");
+        let d = r.iter().find(|(id, _)| id == "desktop").unwrap().1;
+        assert!(d.w.abs() < 1e-9, "the desktop took share it was not given");
+    }
+
+    #[test]
+    fn docking_beside_desktop_keeps_its_configured_share() {
+        let e = LayoutEngine::default().with_desktop_share(0.25);
+        let root = LayoutNode::Split(Split::with_weights(
+            "root",
+            Axis::X,
+            vec![panel("a"), LayoutNode::desktop()],
+            vec![0.75, 0.25],
+        ));
+        let out = e
+            .inserting(panel("b"), "desktop", Direction::Left, &root)
+            .unwrap();
+        out.validate().unwrap();
+        let r = e.rects(&out, frame());
+        let d = r.iter().find(|(id, _)| id == "desktop").unwrap().1;
+        let b = r.iter().find(|(id, _)| id == "p-b").unwrap().1;
+        let a = r.iter().find(|(id, _)| id == "p-a").unwrap().1;
+        assert!(a.w > 0.0 && b.w > 0.0, "a tile lost all its space");
+        // Three visible children leave two gaps of usable width to share.
+        let usable = 1000.0 - 2.0 * 8.0;
+        assert!((d.w - 0.25 * usable).abs() < 1e-9, "desktop share moved: {}", d.w);
+        assert!((a.w + b.w + d.w - usable).abs() < 1e-6, "tiles do not fill the frame");
     }
 
     #[test]

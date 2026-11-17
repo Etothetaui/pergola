@@ -64,6 +64,12 @@ back into world coordinates, so the layout learns the new position instead of
 snapping the window back. When the desktop leaf moves (a dock, an arrange), the
 windows are remapped with it.
 
+The leaf is a floating layer, not a tile, and `inserting()` treats it that way:
+a dock whose target is `desktop` retargets to the body beside it. Splitting the
+leaf instead would divide its own share, and the default share is zero — the new
+window would be zero pixels wide on the same axis, or take half the screen on
+the other. Two engine tests pin both halves of that rule.
+
 ### 4. A tag is a set of views, not a second tree
 
 A named workspace could own its own tree, which is what a full window manager
@@ -89,6 +95,24 @@ describe the same window twice. See the limitations in the README.
 A view on another tag is parked below the work area rather than unmapped: the
 client list stays the desktop's, and `apply()` already parks windows outside a
 zoomed view by the same rule.
+
+### 4a. The workspace chords are a parameter, and the switch names itself
+
+`binding_plan_with(overrides, tags)` takes the `tags` config key as an argument
+rather than reading config inside the plan builder. The plan is also what
+`pergola keys --check`, the settings rows and the palette display; a desktop that
+never opted into workspaces must not see nine chords in a list it is supposed to
+trust, and a test of the default plan must not depend on a file on disk. The
+caller owns the decision, and `binding_plan()` stays the honest default.
+
+A switch is announced by a desktop notification rather than a drawn indicator.
+The x11 crate has no text drawing (bars and cursor fonts only), so the truthful
+alternatives were a strip of unnamed rectangles or growing a text path for one
+label. A notification carries the workspace's name and window count, disappears
+by itself, and works with no compositor; a strip would still need the desktop's
+notification or a status bar to say which rectangle is which. The overlay keeps
+drawing geometry only, and `pergola subscribe` remains the interface for a bar
+that wants a real workspace list.
 
 ## Data flow of one command
 
@@ -223,7 +247,7 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
 
 ## Testing
 
-* `cargo test` — 125 unit tests over geometry, weights, docking, removal, gap
+* `cargo test` — 130 unit tests over geometry, weights, docking, removal, gap
   clamping, ratios, neighbours, camera history, saved views, command URLs,
   document round-trips, named workspaces (disjoint view sets, pruning of the
   active tag's tree, an empty tag, a tag surviving its last window, a tagged
@@ -243,7 +267,7 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
   activation requests and named workspaces (disjoint tag sets, only the active
   tag laid out, a parked window mostly off the work area, the escape
   hatch, a restart and a `tag` record), settings help and a rejected value's
-  notification, and a ratio nudge chord — 193 assertions on xfwm4. Openbox runs
+  notification, a ratio nudge chord and the workspace chords — 208 assertions on xfwm4. Openbox runs
   the same suite and is also green; it skips the drop-frame assertions because
   it coalesces a drag into one `ConfigureNotify` (a WM capability, not a
   tolerance), and its tree can hold one more tile, so the geometry count is not

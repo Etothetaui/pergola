@@ -133,10 +133,19 @@ A view belongs to at most one tag. A window that opens while a tag is shown
 joins that tag; a window whose tag is not shown is moved below the work area
 (parked), never closed. Each tag remembers the window that had the keyboard, so
 returning to it puts you back where you were. The active tag is stored in the
-layout document and survives a restart. Tags have no default chords — bind the
-ones you use: `pergola bind "tag-view 1" Super+1`. The event stream carries a
-`{"type":"tag","name":…}` record and the state snapshot has `tag` + `tags`, so
-a status bar can draw a workspace switcher.
+layout document and survives a restart.
+
+Workspaces are one key away if you want them: `{"tags": true}` in the config
+binds `Super+1`…`9` to `tag-view 1`…`9` and `Super+Shift+1`…`9` to
+`window-tag 1`…`9` (with `Ctrl+Alt` as the first choice, like every other
+command). They are opt-in because pressing `Super+1` on a desktop that never
+named a workspace would blank the screen, and a nine-chord surprise is not a
+feature. A switch sends a desktop notification naming the workspace, so the
+screen change explains itself; the palette lists a row per workspace the
+document actually holds. The event stream carries a `{"type":"tag","name":…}`
+record and the state snapshot has `tag` + `tags`, so a status bar can draw a
+workspace switcher. Any chord can still be replaced: `pergola bind "tag-view 1"
+Super+F1`.
 
 ### Status bars: `pergola subscribe`
 
@@ -244,6 +253,7 @@ the edge behaviour off if a drag should never tile.
 | `auto_dock` | `"off"` | `off`, `new` or `all`: whether a new window is docked (`new` after startup, `all` including the session it found); the old `true`/`false` still parses |
 | `overlay` | `false` | draw the split lines and viewport frame, plus a dim layer under them when a compositor is running |
 | `dim` | `0.4` | strength of the overlay's dim layer, `0` (off) to `0.9`; only used with a compositor. At `0` the split lines are drawn 4 px wide instead of 2, so the boundary still reads without a dim layer |
+| `tags` | `false` | bind `Super+1`…`9` (and `Ctrl+Alt+1`…`9`) to the nine named workspaces, plus `Super+Shift+n` to move the focused window onto one. `on`/`off` |
 | `desktop_share` | `0.0` | desktop strip `arrange` keeps; `0` gives it none |
 | `terminal` | `$TERMINAL`, else `xfce4-terminal` | program used by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
@@ -399,8 +409,8 @@ before Pergola and maps every failure class to the fix that answers it.
 ## Development
 
 ```bash
-cargo test               # 125 unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
-scripts/e2e.sh           # 193 assertions against Xvfb + a real WM + real xterms
+cargo test               # 130 unit tests: geometry, tree, camera, commands, document, tags, settings, palette, event diff
+scripts/e2e.sh           # 208 assertions against Xvfb + a real WM + real xterms
 scripts/e2e.sh --wm openbox   # the same suite under a second WM
 scripts/health.sh        # soak check of a running daemon (cpu, layout, drift, orphans)
 scripts/health.sh --e2e  # the above plus the regression suite (xfwm4)
