@@ -78,7 +78,9 @@ fn main() -> ExitCode {
         "bind" => bind(&socket, &rest[1..]),
         "unbind" => unbind(&socket, &rest[1..]),
         "version" | "--version" | "-V" => {
-            println!("pergola {}", pergola_core::VERSION);
+            // The commit is part of the version so a test run can prove which
+            // tree it measured (see build.rs and scripts/health.sh).
+            println!("pergola {} ({})", pergola_core::VERSION, env!("PERGOLA_COMMIT"));
             Ok(())
         }
         "help" | "--help" | "-h" => {

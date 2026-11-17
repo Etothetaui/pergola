@@ -27,7 +27,16 @@ find_repo() {
   return 1
 }
 ROOT="$(find_repo || printf '%s' "$(pwd)")"
-BIN="${PERGOLA_BIN:-$(command -v pergola || echo "$ROOT/target/release/pergola")}"
+# Measure the tree being tested, not whatever was installed last. 2026-11-17: an e2e run
+# against merged main used ~/.local/bin/pergola built six hours before the merge and
+# reported a tag regression that the merge had already fixed (INC in pergola's TODO).
+if [ -n "${PERGOLA_BIN:-}" ]; then
+  BIN="$PERGOLA_BIN"
+elif [ -x "$ROOT/target/release/pergola" ]; then
+  BIN="$ROOT/target/release/pergola"
+else
+  BIN="$(command -v pergola || echo "$ROOT/target/release/pergola")"
+fi
 LOG="${PERGOLA_HEALTH_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/pergola/health.jsonl}"
 E2E=0
 QUIET=0
@@ -264,14 +273,26 @@ fi
 
 # 6. optional regression suite ----------------------------------------------
 if [ "$E2E" -eq 1 ]; then
+  HEAD="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  # Provenance: the binary's build commit must be the tree's HEAD, or the suite
+  # is judging a different tree than it names. Say which binary and commit ran.
+  BIN_STAMP="$("$BIN" --version 2>/dev/null | sed -n 's/.*(\([^)]*\)).*/\1/p')"
+  STALE=""
+  if [ -z "$BIN_STAMP" ]; then
+    STALE="$BIN carries no build commit"
+  elif [ "$HEAD" != "unknown" ] && [ "$BIN_STAMP" != "$HEAD" ]; then
+    STALE="$BIN is commit $BIN_STAMP, tree is $HEAD"
+  fi
   if [ ! -x "$ROOT/scripts/e2e.sh" ]; then
     fail "e2e suite not found (set PERGOLA_REPO to the checkout)"
+  elif [ -n "$STALE" ]; then
+    fail "e2e refused: $STALE — build the tree under test (cargo build --release) or point PERGOLA_BIN at its build"
   elif PERGOLA_TEST_WM="$WM" PERGOLA_BIN="$BIN" "$ROOT/scripts/e2e.sh" >/tmp/pergola-e2e-health.log 2>&1; then
     SUMMARY="$(grep -E '^e2e:' /tmp/pergola-e2e-health.log | tail -1)"
-    pass "e2e suite ($SUMMARY)"
-    note "  ok   e2e suite ($SUMMARY)"
+    pass "e2e suite ($SUMMARY) on $HEAD with $BIN"
+    note "  ok   e2e suite ($SUMMARY) on $HEAD with $BIN"
   else
-    fail "e2e suite failed (see /tmp/pergola-e2e-health.log)"
+    fail "e2e suite failed on $HEAD with $BIN (see /tmp/pergola-e2e-health.log)"
   fi
 fi
 
