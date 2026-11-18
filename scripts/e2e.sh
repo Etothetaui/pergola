@@ -238,6 +238,28 @@ check_geometry() {
 
 json_field() { P tree | python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
+# Poll for a condition instead of sleeping a fixed time. A blind sleep is an
+# oracle that fails when the machine is loaded, and the failure then reads as a
+# product bug: measured 2026-11-17, the same binary produced 4 failures on one
+# run and 2 different ones on the next, all in fixed-sleep sections.
+wait_until() { # wait_until SECONDS COMMAND...
+  local deadline=$(( SECONDS + $1 ))
+  shift
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    "$@" >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# The daemon's own `status` line must name this window as active. Polling the
+# daemon is the oracle; `xdotool windowactivate` is only the request.
+active_is() { # active_is WINDOW_ID
+  local want
+  want=$(printf '0x%x' "$(( $1 ))" 2>/dev/null) || want="$1"
+  [ "$(P status | sed -n 's/.*active \(0x[0-9a-f]*\).*/\1/p')" = "$want" ]
+}
+
 # How much of a window's client area is on the test screen, in percent. A parked
 # window is moved below the work area, but the desktop clamps it so it cannot be
 # lost: xfwm4 keeps the title bar, openbox keeps a strip of the client. "Mostly
@@ -722,8 +744,23 @@ PRE=$(json_field 'd["camera"]["framed"]')
 xdotool key "$BACK"; sleep 0.5
 ONE=$(json_field 'd["camera"]["framed"]')
 build_history
-xdotool keydown "$BACK"; sleep 1.2; xdotool keyup "$BACK"; sleep 0.6
-HELD=$(json_field 'd["camera"]["framed"]')
+xdotool keydown "$BACK"
+# Hold until the camera actually moves (up to 3 s), then release and let the
+# server's repeats settle. Fixed 1.2 s/0.6 s windows read as "the chord did
+# nothing" on a loaded machine.
+for _ in $(seq 1 30); do
+  [ "$(json_field 'd["camera"]["framed"]')" != "$PRE" ] && break
+  sleep 0.1
+done
+xdotool keyup "$BACK"
+sleep 0.2
+HELD=""
+for _n in $(seq 1 20); do
+  HELD=$(json_field 'd["camera"]["framed"]')
+  [ "$HELD" = "$ONE" ] && break
+  sleep 0.1
+done
+[ -n "$HELD" ] || HELD=$(json_field 'd["camera"]["framed"]')
 # The hold must move the camera (not be dropped) and move it exactly as far as
 # one deliberate tap — the server's ~11 repeats must not each step back.
 if [ "$HELD" = "$PRE" ]; then bad "a held chord did nothing (still $PRE)"; else
@@ -1339,9 +1376,16 @@ P float-all >/dev/null 2>&1; sleep 0.4
 P arrange >/dev/null 2>&1; sleep 0.5
 
 # Focusing a window from outside the daemon must be visible in `status`.
-xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.4
+xdotool windowactivate "$W3" >/dev/null 2>&1
+wait_until 5 active_is "$W3" || true
 BEFORE=$(P status | sed -n 's/.*active \(0x[0-9a-f]*\).*/\1/p')
-xdotool windowactivate "$W4" >/dev/null 2>&1; sleep 0.5
+# The WM may drop a focus request made while it is busy tiling; retry once and
+# poll the daemon's view rather than assuming 0.5 s is enough.
+xdotool windowactivate "$W4" >/dev/null 2>&1
+if ! wait_until 2 active_is "$W4"; then
+  xdotool windowactivate "$W4" >/dev/null 2>&1
+  wait_until 3 active_is "$W4" || true
+fi
 AFTER=$(P status | sed -n 's/.*active \(0x[0-9a-f]*\).*/\1/p')
 # `status` prints the window id unpadded (`0x60000c`); the e2e's W4 is padded
 # (`0x0060000c`). Compare in the daemon's own format.
