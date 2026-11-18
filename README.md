@@ -49,7 +49,8 @@ for the action palette, `xdotool`/`wmctrl` only for the optional test script. No
 permission prompt. `install.sh` installs `pergola` and `pergola-health` into
 `~/.local/bin`, writes `~/.config/pergola/config.json` (only if absent), and
 adds a systemd user unit plus an XDG autostart entry so the daemon starts with
-your session. `./install.sh --no-start` skips the start.
+your session. It also adds **Pergola Actions** to the desktop's application menu
+as a visible way to open the action palette. `./install.sh --no-start` skips the start.
 
 On Arch there is also a `PKGBUILD` in
 [`packaging/aur/`](packaging/aur/README.md) (`pergola-git`) that installs to
@@ -266,7 +267,8 @@ the edge behaviour off if a drag should never tile.
 | `bindings` | `{}` | per-command chord overrides, `command → [chord, …]` |
 
 `pergola reload` re-reads the file and re-grabs the hotkeys, so a `bindings`
-edit takes effect without a restart. `overlay` still applies on daemon restart.
+edit takes effect without a restart. An invalid config leaves the running
+settings and keys in place and reports the error. `overlay` still applies on daemon restart.
 The `gap` and `overlay` commands change the running session only. See
 [docs/SETUP.md](docs/SETUP.md#configuration) for the details.
 

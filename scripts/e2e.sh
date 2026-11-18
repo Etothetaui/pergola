@@ -40,8 +40,11 @@ DISP="${PERGOLA_TEST_DISPLAY:-:99}"
 # 2026-11-15: half the geometry checks failed and blamed the engine, because a
 # previous sandbox still owned :99). Refuse loudly instead.
 x_alive() {
-  if command -v xset >/dev/null; then xset -display "$DISP" q >/dev/null 2>&1; return $?; fi
-  [ -S "/tmp/.X11-unix/X${DISP##*:}" ]
+  # A dead display can leave xset waiting for a connection indefinitely.
+  # Xvfb in this test always creates a local socket when it is ready.
+  [ -S "/tmp/.X11-unix/X${DISP##*:}" ] || return 1
+  if command -v xset >/dev/null; then timeout 3 xset -display "$DISP" q >/dev/null 2>&1; return $?; fi
+  return 0
 }
 if [ -z "${PERGOLA_E2E_KEEP:-}" ] && x_alive; then
   echo "e2e: display $DISP is already in use (a KEPT sandbox?) — clean /tmp/pergola-e2e.*" >&2
@@ -662,6 +665,7 @@ if P list | grep -c "^docked.*$W3" >/dev/null; then ok "the re-docked tile is st
 # The daemon's edge detection exists for a real drag, so the test must be one,
 # starting from wherever the window already floats.
 P float --window "$W3" >/dev/null 2>&1; sleep 0.4
+EDGE_BEFORE=$(P list | awk '{print $1,$2}' | sort)
 eval "$(xdotool getwindowgeometry --shell "$W3")"   # X, Y, WIDTH, HEIGHT
 xdotool windowactivate "$W3" >/dev/null 2>&1; sleep 0.3
 xdotool mousemove $((X + WIDTH / 2)) $((Y + 12)) sleep 0.15 \
@@ -670,6 +674,15 @@ for x in 700 500 300 120 20 2; do xdotool mousemove "$x" $((Y + 12)); sleep 0.08
 xdotool mouseup 1 sleep 0.1 keyup alt
 sleep 1.5
 if P list | grep -q "^docked.*$W3"; then ok "a window dragged to the left edge is docked"; else bad "edge drag did not dock $W3"; fi
+# Undo immediately after a mouse drop must keep the restored layout. A stale
+# movement watch plus the WM's one-pixel apply echo once re-floated another tile.
+P undo >/dev/null; sleep 2.5
+if [ "$EDGE_BEFORE" = "$(P list | awk '{print $1,$2}' | sort)" ]; then
+  ok "undo after an edge drop stays restored"
+else
+  bad "undo after an edge drop changed the restored layout"
+fi
+P dock left --window "$W3" >/dev/null; sleep 0.4
 # Pulling that tile back off the screen edge floats it where it was dropped.
 for x in 320 400 480; do wmctrl -i -r "$W3" -e "0,$x,220,320,240" >/dev/null 2>&1; sleep 0.15; done
 sleep 2.5

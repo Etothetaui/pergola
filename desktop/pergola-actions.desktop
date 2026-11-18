@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Pergola Actions
+Comment=Tile, arrange, and recover windows with Pergola
+Exec=%h/.local/bin/pergola palette
+TryExec=%h/.local/bin/pergola
+Terminal=false
+Categories=Utility;

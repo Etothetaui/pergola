@@ -56,6 +56,10 @@ is commands over that model.
 
 The terminal is only one way in. With a window focused:
 
+* Open **Pergola Actions** from your desktop's application menu to see the
+  available tiling actions without first memorizing a shortcut. This uses the
+  same palette as `Ctrl+Alt+M` and needs `rofi`, `zenity`, `yad`, or `dmenu`.
+
 * `Ctrl+Alt+Shift+←` / `→` / `↑` / `↓` — dock the focused window to that edge.
 * `Ctrl+Alt+Shift+W` — float the focused window back to the desktop.
 * `Ctrl+Alt+M` — the action palette, a menu of the same actions by name.

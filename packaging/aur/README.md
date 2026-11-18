@@ -50,6 +50,7 @@ pergola status
 | `$CONFIG_DIR/config.json` | `/usr/share/doc/pergola-git/config.json` (an example) |
 | `$XDG_CONFIG_HOME/systemd/user/pergola.service` | `/usr/lib/systemd/user/pergola.service` |
 | `$XDG_CONFIG_HOME/autostart/pergola.desktop` | `/usr/share/xdg/autostart/pergola.desktop` |
+| `$XDG_DATA_HOME/applications/pergola-actions.desktop` | `/usr/share/applications/pergola-actions.desktop` |
 | — | `/usr/share/licenses/pergola-git/{LICENSE,NOTICE}` |
 | — | `/usr/share/doc/pergola-git/{README,SETUP,FIRST-RUN,UX-NOTES,HISTORY-LESSONS}.md` |
 

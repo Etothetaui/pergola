@@ -65,7 +65,16 @@ fn main() -> ExitCode {
                 }
                 Ok(())
             } else {
-                palette::open(&socket).map(|()| println!("palette starting"))
+                let opened = palette::open(&socket);
+                if let Err(error) = &opened {
+                    // The application-menu launcher has no terminal to show
+                    // stderr. Hotkey failures are notified by the daemon;
+                    // respect the same user setting for this CLI path.
+                    if config::Config::load().notify {
+                        notify::send(&format!("{error:#}"));
+                    }
+                }
+                opened.map(|()| println!("palette starting"))
             }
         }
         "palette-run" => palette::run(&socket),

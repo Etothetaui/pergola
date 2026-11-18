@@ -214,6 +214,14 @@ impl Config {
         }
     }
 
+    /// A live reload must not turn a typo into the compiled defaults. Keep
+    /// the daemon's current settings until the user's file can be applied.
+    /// A missing *default* terminal is unrelated to the file and does not
+    /// prevent changing another setting on a minimal desktop.
+    pub fn checked_for_reload() -> Result<Self> {
+        checked_for_reload_at(&config_path())
+    }
+
     /// Resolve and validate `config.json` without applying it, for
     /// `pergola config` and `pergola config --check`.
     pub fn inspect() -> Report {
@@ -226,6 +234,25 @@ impl Config {
     pub fn binding_plan(&self) -> Vec<(String, Vec<String>)> {
         pergola_x11::binding_plan_with(&self.bindings, self.tags)
     }
+}
+
+fn checked_for_reload_at(path: &Path) -> Result<Config> {
+    let report = inspect_at(path);
+    let problems: Vec<String> = report
+        .issues
+        .iter()
+        .filter(|issue| {
+            !(issue.message.starts_with("terminal \"") && !report.lines.contains_key("terminal"))
+        })
+        .map(ToString::to_string)
+        .collect();
+    if !problems.is_empty() {
+        anyhow::bail!(
+            "config reload refused; the running settings are unchanged: {}",
+            problems.join("; ")
+        );
+    }
+    Ok(report.config)
 }
 
 /// Write one command's candidate chords into config.json and return the path.
@@ -818,6 +845,25 @@ mod tests {
         assert_eq!(report.config.gap, Config::default().gap);
         assert_eq!(report.line_of("gap"), 0);
         assert_eq!(report.source_of("gap"), "default");
+    }
+
+    #[test]
+    fn live_reload_refuses_a_broken_file_instead_of_returning_defaults() {
+        let path = scratch("reload-broken");
+        std::fs::write(&path, "{\"gap\": 19,\n").unwrap();
+        let err = checked_for_reload_at(&path).unwrap_err();
+        assert!(err.to_string().contains("reload refused"), "{err}");
+        assert!(err.to_string().contains("not valid JSON"), "{err}");
+    }
+
+    #[test]
+    fn live_reload_refuses_an_invalid_value_but_accepts_a_valid_edit() {
+        let path = scratch("reload-values");
+        std::fs::write(&path, "{\"gap\": 900, \"terminal\": \"/bin/sh\"}").unwrap();
+        let err = checked_for_reload_at(&path).unwrap_err();
+        assert!(err.to_string().contains("gap must be"), "{err}");
+        std::fs::write(&path, "{\"gap\": 19, \"terminal\": \"/bin/sh\"}").unwrap();
+        assert_eq!(checked_for_reload_at(&path).unwrap().gap, 19.0);
     }
 
     #[test]
