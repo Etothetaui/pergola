@@ -601,6 +601,13 @@ impl Daemon {
         let Some(previous) = self.undo.pop() else {
             return Ok("nothing to undo".to_string());
         };
+        // The layout we are restoring is a new baseline for mouse movement.
+        // A non-drag watch can survive an earlier drop; otherwise Openbox's
+        // 1px configure echo after this apply can turn that stale watch into
+        // a false drag and immediately undo the restoration.
+        self.moves.clear();
+        self.deferred.clear();
+        self.hide_drop_hint()?;
         let prior_floating: HashMap<String, FloatingWindow> = self
             .file
             .doc
@@ -2024,7 +2031,10 @@ impl Daemon {
     }
 
     fn reload(&mut self) -> Result<String> {
-        self.config = Config::load();
+        // Validate before changing the engine or releasing any key grabs.
+        // X11 re-grab failures are reported separately by reinstall_bindings;
+        // this guard covers invalid user configuration, not X server failure.
+        self.config = Config::checked_for_reload()?;
         self.engine = LayoutEngine::new(self.config.gap, self.config.minimum_share)
             .with_desktop_share(self.config.desktop_share);
         // Re-grab so a `bindings` edit takes effect without a restart. The
@@ -3039,6 +3049,7 @@ impl Daemon {
         self.settle_deferred()?;
         let now = Instant::now();
         let mut ready = Vec::new();
+        let mut stale = Vec::new();
         for (window, watch) in &self.moves {
             if std::env::var_os("PERGOLA_DEBUG").is_some() {
                 eprintln!(
@@ -3051,9 +3062,18 @@ impl Daemon {
                     is_drag(watch),
                 );
             }
-            if now.duration_since(watch.at) >= Duration::from_millis(300) && is_drag(watch) {
-                ready.push((*window, watch.rect));
+            if now.duration_since(watch.at) >= Duration::from_millis(300) {
+                if is_drag(watch) {
+                    ready.push((*window, watch.rect));
+                } else {
+                    // A one-pixel WM echo must not wait indefinitely for a
+                    // future layout change to turn it into a false drag.
+                    stale.push(*window);
+                }
             }
+        }
+        for window in stale {
+            self.moves.remove(&window);
         }
         if ready.is_empty() {
             // No watch counts as a drag any more: a frame still up belongs to

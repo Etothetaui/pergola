@@ -18,8 +18,10 @@
 #                                            -> /usr/lib/systemd/user/pergola.service
 #   $XDG_CONFIG_HOME/autostart/pergola.desktop
 #                                            -> /usr/share/xdg/autostart/pergola.desktop
+#   $XDG_DATA_HOME/applications/pergola-actions.desktop
+#                                            -> /usr/share/applications/pergola-actions.desktop
 #
-# The two session files are rewritten on install: the source copies name
+# The session files and action launcher are rewritten on install: source copies name
 # `%h/.local/bin/pergola`, which is wrong for a package in /usr/bin, and the
 # unit hard-codes DISPLAY=:0, which is wrong for anyone not on :0. The packaged
 # unit inherits DISPLAY from the graphical session instead.
@@ -89,6 +91,9 @@ package() {
   install -Dm644 autostart/pergola.desktop "$pkgdir/usr/share/xdg/autostart/pergola.desktop"
   sed -i 's|%h/\.local/bin/pergola|/usr/bin/pergola|' \
     "$pkgdir/usr/share/xdg/autostart/pergola.desktop"
+  install -Dm644 desktop/pergola-actions.desktop "$pkgdir/usr/share/applications/pergola-actions.desktop"
+  sed -i 's|%h/\.local/bin/pergola|/usr/bin/pergola|g' \
+    "$pkgdir/usr/share/applications/pergola-actions.desktop"
 
   # Documentation and the example config. Pacman must not write into $HOME, so
   # the config the daemon would create on first run ships as an example.

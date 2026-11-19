@@ -43,7 +43,7 @@ REPORTED="$("$BIN" --version 2>/dev/null | awk '{print $2}')"
 NAME="pergola-$VERSION-$TRIPLE"
 STAGE="$OUT/$NAME"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/docs" "$STAGE/systemd" "$STAGE/autostart"
+mkdir -p "$STAGE/docs" "$STAGE/systemd" "$STAGE/autostart" "$STAGE/desktop"
 
 install -m 0755 "$BIN" "$STAGE/pergola"
 install -m 0755 scripts/health.sh "$STAGE/pergola-health"
@@ -52,6 +52,7 @@ install -m 0644 docs/SETUP.md docs/FIRST-RUN.md docs/UX-NOTES.md \
   docs/HISTORY-LESSONS.md "$STAGE/docs/"
 install -m 0644 systemd/pergola.service "$STAGE/systemd/"
 install -m 0644 autostart/pergola.desktop "$STAGE/autostart/"
+install -m 0644 desktop/pergola-actions.desktop "$STAGE/desktop/"
 # The config the daemon would create on first run, as an example: a package must
 # not write into $HOME.
 install -m 0644 packaging/aur/config.json "$STAGE/config.json"

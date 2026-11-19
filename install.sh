@@ -65,6 +65,14 @@ sed "s|%h/.local/bin/pergola|$BINDIR/pergola|" \
   "$ROOT/autostart/pergola.desktop" >"$AUTOSTART/pergola.desktop"
 echo "autostart entry: $AUTOSTART/pergola.desktop"
 
+# A normal launcher entry makes the existing action palette findable through
+# the desktop's application menu. It does not start another daemon.
+APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$APPS"
+sed "s|%h/.local/bin/pergola|$BINDIR/pergola|g" \
+  "$ROOT/desktop/pergola-actions.desktop" >"$APPS/pergola-actions.desktop"
+echo "action launcher: $APPS/pergola-actions.desktop"
+
 if [ "$START" -eq 1 ]; then
   if "$BINDIR/pergola" status >/dev/null 2>&1; then
     echo "daemon already running"
@@ -84,6 +92,7 @@ if [ "$(command -v pergola || true)" != "$BINDIR/pergola" ]; then
   echo "  note: your shell does not resolve 'pergola' to this install; the full commands below use the new binary"
 fi
 echo "  $NEXT_BIN status"
+echo "  open 'Pergola Actions' from your desktop's application menu"
 echo "  $NEXT_BIN keys --check"
 echo "  $NEXT_HEALTH        # soak check: daemon, cpu, layout, drift, orphans"
 echo "  $NEXT_BIN dock left  # dock the focused window"

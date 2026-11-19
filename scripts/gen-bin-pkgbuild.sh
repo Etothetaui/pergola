@@ -87,6 +87,9 @@ package() {
   install -Dm644 autostart/pergola.desktop "$pkgdir/usr/share/xdg/autostart/pergola.desktop"
   sed -i 's|%h/\.local/bin/pergola|/usr/bin/pergola|' \
     "$pkgdir/usr/share/xdg/autostart/pergola.desktop"
+  install -Dm644 desktop/pergola-actions.desktop "$pkgdir/usr/share/applications/pergola-actions.desktop"
+  sed -i 's|%h/\.local/bin/pergola|/usr/bin/pergola|g' \
+    "$pkgdir/usr/share/applications/pergola-actions.desktop"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 NOTICE "$pkgdir/usr/share/licenses/$pkgname/NOTICE"

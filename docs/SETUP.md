@@ -40,7 +40,8 @@ cd pergola
 4. Renders `systemd/pergola.service` with the real binary path and the display
    the install ran on, writes it to `~/.config/systemd/user/`, then
    `systemctl --user enable pergola.service`.
-5. Renders `autostart/pergola.desktop` the same way.
+5. Renders `autostart/pergola.desktop` and a separate **Pergola Actions** entry
+   for the desktop's application menu. The latter opens the action palette.
 6. Starts the daemon and prints `pergola status` — unless `--no-start` is given
    or a daemon already answers on the socket.
 
@@ -79,6 +80,7 @@ is named `pergola-git` rather than `pergola-bin`: [packaging/aur/README.md](../p
 | `${XDG_RUNTIME_DIR:-<state dir>}/pergola.sock` | the Unix socket the CLI talks to |
 | `~/.config/systemd/user/pergola.service` | start at login on systemd desktops |
 | `~/.config/autostart/pergola.desktop` | start at login on non-systemd desktops |
+| `${XDG_DATA_HOME:-~/.local/share}/applications/pergola-actions.desktop` | open the action palette from the application menu |
 
 ### Install by hand
 
@@ -198,7 +200,9 @@ Notes:
 * `pergola reload` re-reads `gap`, `minimum_share`, `desktop_share`,
   `auto_dock`, `terminal` and `bindings`, and re-grabs the hotkeys, so a
   `bindings` or `hotkeys` edit takes effect without a restart. `overlay` is
-  applied when the daemon starts — restart it to change that.
+  applied when the daemon starts — restart it to change that. If the edited
+  config is invalid, reload reports the error and keeps the running settings
+  and key bindings instead of silently switching to defaults.
 * `pergola gap 12` changes the running layout only; put the value in
   `config.json` to keep it across restarts.
 * `pergola overlay on` is likewise a session toggle; the config key is the
