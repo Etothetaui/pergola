@@ -26,3 +26,6 @@ libc = "0.2"
 opt-level = 2
 lto = "thin"
 strip = true
+
+[profile.release.package.x11rb-protocol]
+opt-level = "s"
