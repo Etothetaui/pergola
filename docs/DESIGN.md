@@ -269,8 +269,9 @@ is dropped (i3's `kill_timeout`), so a hung bar cannot pin memory either.
   hatch, a restart and a `tag` record), settings help and a rejected value's
   notification, a ratio nudge chord, the workspace chords, a window on another
   host desktop left where the WM put it, and a failed hotkey's notification —
-  212 assertions on xfwm4 and 212 on openbox. Openbox runs
-  the same suite and is also green; it skips the drop-frame assertions because
+  219 assertions on xfwm4 (green) and 221 on openbox (218 pass, 3 fail — bug
+  #349; the two extra are the drop-frame assertions xfwm4 makes here). Openbox runs
+  the same suite and skips the drop-frame assertions because
   it coalesces a drag into one `ConfigureNotify` (a WM capability, not a
   tolerance), and its tree can hold one more tile, so the geometry count is not
   identical. The event-stream block

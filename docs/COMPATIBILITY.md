@@ -12,8 +12,8 @@ will not work — separately, because the three are not the same claim.
 
 | Window manager | Session | Evidence | Notes |
 |---|---|---|---|
-| **xfwm4** (XFCE) | live, and Xvfb + xfwm4 in isolation | `scripts/e2e.sh`, 212 assertions, green | The default mode of the suite. Continuous `ConfigureNotify` during a drag, so the drop frame is asserted here. Compositor off in the suite; the overlay's dim layer is measured separately with compositing on |
-| **Openbox** | live, and Xvfb + openbox in isolation | `scripts/e2e.sh --wm openbox`, 212 assertions, green | Skips the drop-frame assertions: it reports one `ConfigureNotify` per drag, so there is no mid-drag frame to assert. The drop itself is asserted. Its tree can hold one more tile, so the check list is not identical to xfwm4's |
+| **xfwm4** (XFCE) | live, and Xvfb + xfwm4 in isolation | `scripts/e2e.sh`, 219 assertions, green | The default mode of the suite. Continuous `ConfigureNotify` during a drag, so the drop frame is asserted here. Compositor off in the suite; the overlay's dim layer is measured separately with compositing on |
+| **Openbox** | live, and Xvfb + openbox in isolation | `scripts/e2e.sh --wm openbox`, 221 assertions, **not green**: 3 fail, and which three varies per run (`holding a chord goes back once`, `undo restores the tree`, the tag-return and activation blocks). Filed as bug #349; the count is 221 rather than 219 because xfwm4's two drop-frame assertions are skipped here | Skips the drop-frame assertions: it reports one `ConfigureNotify` per drag, so there is no mid-drag frame to assert. The drop itself is asserted. Its tree can hold one more tile, so the check list is not identical to xfwm4's |
 
 Both runs are the real daemon over a real X server with three real xterms, and
 every assertion is made against geometry the server reports, not against the
