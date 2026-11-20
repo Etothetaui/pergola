@@ -142,15 +142,16 @@ as `NONE`.
 ## Finding the live bindings
 
 ```sh
-pergola keys            # the plan: primary chord per command
-pergola keys --check    # what this session actually grabbed
+pergola keys            # the chords this session grabbed (the plan if no daemon)
+pergola keys --check    # every plan command marked bound / NONE / off
 ```
 
-`--check` asks the running daemon first and prints its live grabs. That output
-is authoritative: if xfwm4 took `Ctrl+Alt+Up`, the daemon bound `Super+Up` and
-`--check` says so, even though the table above lists both. When no daemon is
-running, `--check` probes the server by grabbing each chord and releasing it;
-every chord then reads `free` unless another client owns it.
+`--check` asks the running daemon first and prints, per command, the chord it
+actually acquired. That output is authoritative: if xfwm4 took `Ctrl+Alt+Up`,
+the daemon bound `Super+Up` and `--check` says so, even though the table above
+lists both. When no daemon is running, `--check` probes the server by grabbing
+each chord and releasing it; a chord then reads `free` unless another client
+owns it.
 
 To see what the X server does with a key, use `xev` (start it, press the chord,
 read the `state` and `keysym` fields) and `xmodmap -pm` (which modifier bit is
