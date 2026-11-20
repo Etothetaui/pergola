@@ -2391,6 +2391,7 @@ impl Daemon {
 
         let mut last_reconcile = Instant::now();
         let mut committed: Option<EventSig> = None;
+        let mut focus_deadline: Option<Instant> = None;
         while self.running {
             // One committed snapshot per loop pass: every mutation inside the
             // pass (reconcile, a request, a drag settling) is diffed against
@@ -2403,7 +2404,14 @@ impl Daemon {
             if moving || !watches_root || self.subscribers.iter().any(|c| !c.queue.is_empty()) {
                 timeout = timeout.min(Duration::from_millis(50));
             }
+            if before.is_none() {
+                focus_deadline = None;
+            }
+            if let Some(deadline) = focus_deadline {
+                timeout = timeout.min(deadline.saturating_duration_since(Instant::now()));
+            }
             let event = wait_for_input(&self.x, &mut wake, timeout);
+            refresh |= focus_deadline.is_some_and(|deadline| Instant::now() >= deadline);
             if last_reconcile.elapsed() >= Duration::from_secs(2) {
                 refresh = true;
                 last_reconcile = Instant::now();
@@ -2480,7 +2488,22 @@ impl Daemon {
                     }
                     continue;
                 }
-                if let Some(after) = self.event_sig() {
+                if let Some(mut after) = self.event_sig() {
+                    // Some WMs briefly clear _NET_ACTIVE_WINDOW between two
+                    // clients. Publish a genuine focus loss after one short
+                    // settling interval, without delaying other stream records.
+                    if before.active != 0 && after.active == 0 {
+                        let deadline = focus_deadline.get_or_insert_with(|| {
+                            Instant::now() + Duration::from_millis(50)
+                        });
+                        if Instant::now() < *deadline {
+                            after.active = before.active;
+                        } else {
+                            focus_deadline = None;
+                        }
+                    } else {
+                        focus_deadline = None;
+                    }
                     self.emit_diff(before, &after);
                     if !self.subscribers.is_empty() {
                         committed = Some(after);
