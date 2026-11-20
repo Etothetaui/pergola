@@ -1085,7 +1085,7 @@ impl Daemon {
         let result = self.dispatch(argv);
         if result.is_ok()
             && argv.first().map(String::as_str) != Some("undo")
-            && self.snapshot() != before
+            && (self.file.doc != before.doc || self.engine != before.engine || self.camera != before.camera)
         {
             self.undo.push(before);
         }
