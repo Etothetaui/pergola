@@ -19,6 +19,14 @@ use x11rb::wrapper::ConnectionExt as _;
 
 use pergola_core::{Axis, IRect, Rect};
 
+/// Window-manager flags needed to decide whether and how a client can be tiled.
+pub struct WindowState {
+    pub hidden: bool,
+    pub transient: bool,
+    pub fullscreen: bool,
+    pub maximized: bool,
+}
+
 /// A managed top-level window, as Pergola sees it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowInfo {
@@ -256,8 +264,8 @@ impl X11 {
         value
     }
 
-    /// Describe one window, or `None` when it is not a normal managed window.
-    pub fn info(&self, win: u32) -> Result<Option<WindowInfo>> {
+    /// State of a viewable, managed window.
+    pub fn window_state(&self, win: u32) -> Result<Option<WindowState>> {
         let attrs = self.conn.get_window_attributes(win)?.reply()?;
         if attrs.override_redirect || attrs.map_state != x11rb::protocol::xproto::MapState::VIEWABLE
         {
@@ -280,6 +288,14 @@ impl X11 {
             .map(|r| r.value_len > 0)
             .unwrap_or(false);
 
+        Ok(Some(WindowState { hidden, transient, fullscreen, maximized }))
+    }
+
+    /// Describe one window, or `None` when it is not a normal managed window.
+    pub fn info(&self, win: u32) -> Result<Option<WindowInfo>> {
+        let Some(WindowState { hidden, transient, fullscreen, maximized }) = self.window_state(win)? else {
+            return Ok(None);
+        };
         let geom = self.conn.get_geometry(win)?.reply()?;
         let translated = self
             .conn

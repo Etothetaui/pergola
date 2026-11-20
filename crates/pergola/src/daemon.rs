@@ -771,7 +771,7 @@ impl Daemon {
                 let Some(seat) = self.seats.iter().find(|s| &s.seat == view) else {
                     continue;
                 };
-                let Ok(Some(info)) = self.x.info(seat.window) else {
+                let Ok(Some(state)) = self.x.window_state(seat.window) else {
                     continue;
                 };
                 // A fullscreen window owns its geometry: the WM has taken it
@@ -779,7 +779,7 @@ impl Daemon {
                 // window (dialog, popup) belongs to its parent, and tiling it
                 // lands it wherever the parent happens to be — awesome#22.
                 // Leave both alone until the state clears.
-                if info.fullscreen || info.transient {
+                if state.fullscreen || state.transient {
                     continue;
                 }
                 // On another host desktop the window belongs to the WM there;
@@ -790,13 +790,13 @@ impl Daemon {
                 // A maximized window ignores `_NET_MOVERESIZE_WINDOW`: the
                 // tile would keep the full-screen geometry and the tree would
                 // lie. Drop the state, then move.
-                if info.maximized {
+                if state.maximized {
                     let _ = self.x.unmaximize(seat.window);
                 }
                 // Snap the client area to its own resize grid, so a terminal
                 // lands flush against the tile instead of being clamped by the
                 // WM to an arbitrary shortfall.
-                let target = snap_to_hints(target, self.x.size_hints(seat.window), info.extents);
+                let target = snap_to_hints(target, self.x.size_hints(seat.window), self.x.frame_extents(seat.window));
                 let _ = self.x.move_resize(seat.window, target);
                 self.applied.insert(seat.window, target);
             }
