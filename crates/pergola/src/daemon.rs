@@ -3104,15 +3104,39 @@ impl Daemon {
             None
         };
         let mut marked = false;
+        let mut pushed: Option<Snapshot> = None;
         for (window, rect) in ready {
             self.moves.remove(&window);
             let Some(seat) = self.seat_for_window(window).cloned() else {
                 continue;
             };
+            // A watch records where the gesture last put the window. If the
+            // window has moved since (a layout apply overtook a pending drag),
+            // docking or floating it from the recorded rect would move it
+            // somewhere the user never dropped it — and the undo entry that
+            // gesture pushes would then restore the layout already on screen
+            // (measured 2026-11-19, #231: a chord `dock left` overtook a 0.3 s
+            // `wmctrl` move, the stale watch re-floated the tile, and `undo`
+            // put back the post-dock tree).
+            let live = match self.x.info(window) {
+                Ok(Some(info)) if !info.fullscreen && !info.transient => Some(frame_rect(&info)),
+                _ => None,
+            };
+            if live.is_some_and(|l| watch_overtaken(rect, l)) {
+                if std::env::var_os("PERGOLA_DEBUG").is_some() {
+                    eprintln!(
+                        "pergola: stale watch 0x{window:x} recorded={rect:?} live={:?}, dropped",
+                        live.map(|l| l.to_irect())
+                    );
+                }
+                continue;
+            }
             if !marked {
                 // One snapshot per gesture, taken before the first window is
                 // actually docked or floated.
-                self.undo.push(self.snapshot());
+                let before = self.snapshot();
+                self.undo.push(before.clone());
+                pushed = Some(before);
                 marked = true;
             }
             if self.file.doc.root.node(&seat.panel).is_some() {
@@ -3168,6 +3192,12 @@ impl Daemon {
             if let Err(e) = self.dock_window(window, edge, None) {
                 eprintln!("pergola: edge dock: {e:#}");
             }
+        }
+        // An undo entry that restores the state already on screen is not an
+        // undo: the next `undo` would appear to do nothing. A gesture that was
+        // a no-op (a window already against its edge) must leave none.
+        if pushed.is_some_and(|s| s == self.snapshot()) {
+            let _ = self.undo.pop();
         }
         Ok(())
     }
@@ -3370,6 +3400,23 @@ fn is_drag(watch: &MoveWatch) -> bool {
         .abs()
         .max((watch.rect.y - watch.start.y).abs());
     travel >= DRAG_TRAVEL_PX
+}
+
+/// A movement watch is a gesture only while the window is still where the
+/// gesture left it. If the window has moved since (a layout apply, the WM
+/// re-placing it), the recorded rect is history: docking or floating from it
+/// would move a window the user never dropped there.
+///
+/// Rounding and decoration echoes move a rect by a pixel or two (openbox
+/// reports `y: 452` for a window the daemon placed at 453), so "no longer
+/// there" is a move larger than an edge snap — not an exact comparison.
+fn watch_overtaken(recorded: Rect, live: Rect) -> bool {
+    let travel = (recorded.x - live.x)
+        .abs()
+        .max((recorded.y - live.y).abs())
+        .max((recorded.w - live.w).abs())
+        .max((recorded.h - live.h).abs());
+    travel > EDGE_SNAP_PX
 }
 
 /// How far a single-event move must travel to be a drag rather than placement.
@@ -4057,6 +4104,26 @@ mod tests {
             start: placed,
         };
         assert!(is_drag(&burst));
+    }
+
+    #[test]
+    fn a_watch_overtaken_by_a_layout_apply_is_not_a_gesture() {
+        // #231: a chord `dock left` moved the tile while a wmctrl move's watch
+        // was still pending. The watch's rect is where the drag put it, the
+        // live window is where the dock put it: acting on the former would
+        // float a window the user had just docked.
+        let recorded = Rect::new(400.0, 300.0, 510.0, 434.0);
+        let live = Rect::new(0.0, 0.0, 794.0, 896.0);
+        assert!(watch_overtaken(recorded, live));
+        // A real drop reports the position the window is still at, so the
+        // openbox single-event gesture keeps working.
+        assert!(!watch_overtaken(recorded, recorded));
+        // Rounding and decoration echoes are not moves: openbox reported y=452
+        // for a window placed at 453 and the drop was discarded as stale.
+        let rounded = Rect::new(400.2, 299.0, 510.2, 434.2);
+        assert!(!watch_overtaken(recorded, rounded));
+        // A one-pixel re-place is still the same gesture.
+        assert!(!watch_overtaken(recorded, Rect::new(401.0, 300.0, 510.0, 434.0)));
     }
 
     #[test]

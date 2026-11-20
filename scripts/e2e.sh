@@ -344,9 +344,19 @@ check_near "$H" "$fh" 2 "framed window height"
 # rects seen while zoomed are screen-space and must not be adopted as world
 # positions.
 P zoom-out >/dev/null || fail "zoom-out"
-sleep 0.4
-FLOAT_AFTER=$(P list | awk '$1=="floating"{print $2, $3, $4}' | head -1)
-check_eq "$FLOAT_BEFORE" "$FLOAT_AFTER" "floating window geometry survives a zoom"
+# The restore is applied by the daemon, so poll the daemon's own answer rather
+# than assuming 0.4 s is enough on a loaded machine.
+FLOAT_AFTER=""
+for _ in $(seq 1 30); do
+  FLOAT_AFTER=$(P list | awk '$1=="floating"{print $2, $3, $4}' | head -1)
+  [ -n "$FLOAT_AFTER" ] && break
+  sleep 0.1
+done
+if [ -z "$FLOAT_AFTER" ]; then
+  bad "the floating window is gone after a zoom (placements: $(P list | awk '{print $1}' | sort | uniq -c | tr '\n' ' '))"
+else
+  check_eq "$FLOAT_BEFORE" "$FLOAT_AFTER" "floating window geometry survives a zoom"
+fi
 check_geometry "after zoom-out"
 
 say
@@ -754,8 +764,23 @@ build_history() {
 BACK=$(chord_for back) || fail "back is not bound"
 build_history
 PRE=$(json_field 'd["camera"]["framed"]')
-xdotool key "$BACK"; sleep 0.5
-ONE=$(json_field 'd["camera"]["framed"]')
+xdotool key "$BACK"
+# The hold below is only meaningful if one tap moved the camera: without this
+# precondition a camera history that cannot go back reads as "the held chord
+# did nothing" (measured 2026-11-19, #231).
+ONE=""
+for _ in $(seq 1 40); do
+  ONE=$(json_field 'd["camera"]["framed"]')
+  [ -n "$ONE" ] && [ "$ONE" != "$PRE" ] && break
+  sleep 0.1
+done
+TAP_MOVED=1
+if [ -z "$ONE" ] || [ "$ONE" = "$PRE" ]; then
+  TAP_MOVED=0
+  bad "one back tap did not move the camera (still $PRE), so the hold cannot be measured"
+else
+  ok "one back tap moves the camera ($PRE -> $ONE)"
+fi
 build_history
 xdotool keydown "$BACK"
 # Hold until the camera actually moves (up to 3 s), then release and let the
@@ -776,7 +801,9 @@ done
 [ -n "$HELD" ] || HELD=$(json_field 'd["camera"]["framed"]')
 # The hold must move the camera (not be dropped) and move it exactly as far as
 # one deliberate tap — the server's ~11 repeats must not each step back.
-if [ "$HELD" = "$PRE" ]; then bad "a held chord did nothing (still $PRE)"; else
+if [ "$TAP_MOVED" = 0 ]; then
+  say "       (hold check skipped: the tap it is compared against never moved)"
+elif [ "$HELD" = "$PRE" ]; then bad "a held chord did nothing (still $PRE)"; else
   check_eq "$ONE" "$HELD" "holding a chord goes back once, not eleven times"
 fi
 
@@ -790,7 +817,18 @@ xdotool key ctrl+alt+shift+Left; sleep 0.8
 AFTER_TREE=$(json_field 'json.dumps(d["doc"]["root"], sort_keys=True)')
 if [ "$BEFORE_TREE" = "$AFTER_TREE" ]; then bad "a keyboard dock left the tree unchanged"; else ok "a keyboard dock changed the tree"; fi
 UNDO=$(P undo); echo "       ($UNDO)"
-check_eq "$BEFORE_TREE" "$(json_field 'json.dumps(d["doc"]["root"], sort_keys=True)')" "undo restores the tree"
+GOT_TREE=$(json_field 'json.dumps(d["doc"]["root"], sort_keys=True)')
+# A mismatch has two causes and they are not the same defect: the undo restored
+# the layout the dock produced (an undo entry that undoes nothing), or it
+# restored some third state. Name which one was seen instead of only printing
+# two JSON trees.
+if [ "$GOT_TREE" = "$BEFORE_TREE" ]; then
+  ok "undo restores the tree"
+elif [ "$GOT_TREE" = "$AFTER_TREE" ]; then
+  bad "undo restored the docked tree: the dock left an undo entry that restores the state already on screen (a pending drag watch, or two entries for one action)"
+else
+  bad "undo restored a third tree: $GOT_TREE"
+fi
 check_eq "$BEFORE_FLOAT" "$(json_field 'len(d["doc"]["floating"])')" "undo restores the floating rects"
 check_geometry "after undo"
 for _ in $(seq 1 20); do P undo >/dev/null 2>&1; done
@@ -1379,14 +1417,34 @@ for _ in $(seq 1 50); do P status >/dev/null 2>&1 && break; sleep 0.1; done
 sleep 0.3
 xterm -T pergola-e2e-activate -geometry 60x18+300+260 -e sh -c 'exec sleep 3600' >/dev/null 2>&1 & ACT_PID=$!; XPIDS+=("$ACT_PID")
 W4=""
-for _ in $(seq 1 40); do
-  W4=$(xdotool search --name '^pergola-e2e-activate$' 2>/dev/null | head -1)
-  [ -n "$W4" ] && P list | grep -c "0x$(printf '%08x' "$W4")" >/dev/null && break
+# A pager request for a window the daemon has not adopted yet is ignored (the
+# daemon has no seat to focus), and the assertion below would blame the
+# handler. The window exists in the X server before the daemon has received an
+# event for it, so wait for the daemon's own `list` to name it, not for
+# `xdotool search` alone (measured 2026-11-19: the run sent the activation for
+# a window the daemon had never seen and failed the very assertion the product
+# satisfies).
+for _ in $(seq 1 100); do
+  [ -n "$W4" ] || W4=$(xdotool search --name '^pergola-e2e-activate$' 2>/dev/null | head -1)
+  [ -n "$W4" ] || { sleep 0.1; continue; }
+  P list | grep -q "0x$(printf '%08x' "$W4")" && break
   sleep 0.1
 done
-W4=$(printf '0x%08x' "${W4:-0}")
+if [ -z "$W4" ] || ! P list | grep -q "0x$(printf '%08x' "$W4")"; then
+  fail "the activation test window was never adopted by the daemon: $(P list | tail -2 | tr '\n' ' ')"
+fi
+W4=$(printf '0x%08x' "$W4")
 P float-all >/dev/null 2>&1; sleep 0.4
 P arrange >/dev/null 2>&1; sleep 0.5
+# arrange folds floating windows back into the tree, so the window must have a
+# panel before the request can be handled; poll rather than assume 0.5 s.
+for _ in $(seq 1 30); do
+  P tree | grep -q "p-$(printf '%x' "$((W4))")" && break
+  sleep 0.1
+done
+if ! P tree | grep -q "p-$(printf '%x' "$((W4))")"; then
+  fail "the activation test window is not in the tree after arrange: $(P list | grep "$W4" | tr '\n' ' ')"
+fi
 
 # Focusing a window from outside the daemon must be visible in `status`.
 xdotool windowactivate "$W3" >/dev/null 2>&1
@@ -1678,19 +1736,36 @@ done
 check_geometry "after moving onto tag 1 by chord"
 
 # And the neighbouring workspace is one key away in both directions.
-xdotool key "$(command_chord 'tag-view 2')"; sleep 0.6
+# And the neighbouring workspace is one key away in both directions.
+xdotool key "$(command_chord 'tag-view 2')"
+for _ in $(seq 1 40); do
+  P tag-view | grep -q '^\* 2 ' && break
+  sleep 0.1
+done
 if P tag-view | grep -c '^\* 2 ' >/dev/null; then
   ok "the next number is its own workspace"
 else
   bad "tag 2 is not active: $(P tag-view)"
 fi
-PARK_PCT=$(onscreen_pct "$TAG_A")
+PARK_PCT=""
+for _ in $(seq 1 30); do
+  PARK_PCT=$(onscreen_pct "$TAG_A")
+  [ -n "$PARK_PCT" ] && [ "$PARK_PCT" -le 25 ] && break
+  sleep 0.1
+done
 if [ "$PARK_PCT" -le 25 ]; then
   ok "the window from tag 1 is off screen (${PARK_PCT}% visible)"
 else
   bad "the window from tag 1 stayed on screen (${PARK_PCT}% visible)"
 fi
-xdotool key "$TAG1_CHORD"; sleep 0.6
+xdotool key "$TAG1_CHORD"
+# The chord is handled asynchronously; the window has to be back on screen
+# before `docked` is claimed. Poll the daemon instead of sleeping 0.6 s
+# (measured 2026-11-19, #231: a slow apply read as "the window was lost").
+for _ in $(seq 1 40); do
+  P list | grep -q "^docked.*$TAG_A" && break
+  sleep 0.1
+done
 if P list | grep -c "^docked.*$TAG_A" >/dev/null; then
   ok "the same chord returns to the window that was left"
 else
