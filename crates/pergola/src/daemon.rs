@@ -444,14 +444,17 @@ impl Daemon {
                 continue;
             }
             let seat = format!("s-{:x}", w.id);
-            let panel = format!("p-{:x}", w.id);
-            self.seats.push(SeatRecord {
+            let mut record = SeatRecord {
                 seat: seat.clone(),
-                panel: panel.clone(),
+                panel: format!("p-{:x}", w.id),
                 window: w.id,
                 class: w.class.clone(),
                 title: w.title.clone(),
-            });
+            };
+            // X11 can reuse a closed window's ID while its old tab group still owns the panel.
+            let panel = self.free_panel_id(&record);
+            record.panel = panel.clone();
+            self.seats.push(record);
             changed = true;
             // A new window joins the tag the user is looking at. Without this
             // it would belong to no tag and the active view would prune it
