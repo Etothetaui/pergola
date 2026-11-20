@@ -269,9 +269,15 @@ impl X11 {
         // Queue independent requests together. Reading each reply before
         // issuing the next would cost one server round trip per property.
         let attrs = self.conn.get_window_attributes(win)?;
-        let types = self.conn.get_property(false, win, self.atoms.net_wm_window_type, AtomEnum::ATOM, 0, 64)?;
-        let states = self.conn.get_property(false, win, self.atoms.net_wm_state, AtomEnum::ATOM, 0, 64)?;
-        let transient = self.conn.get_property(false, win, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1);
+        let types = self.conn.get_property(
+            false, win, self.atoms.net_wm_window_type, AtomEnum::ATOM, 0, 64,
+        )?;
+        let states = self.conn.get_property(
+            false, win, self.atoms.net_wm_state, AtomEnum::ATOM, 0, 64,
+        )?;
+        let transient = self.conn.get_property(
+            false, win, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1,
+        );
         let attrs = attrs.reply()?;
         if attrs.override_redirect || attrs.map_state != x11rb::protocol::xproto::MapState::VIEWABLE {
             return Ok(None);
@@ -289,7 +295,12 @@ impl X11 {
         let transient = transient.ok().and_then(|c| c.reply().ok())
             .is_some_and(|r| r.value_len > 0);
 
-        Ok(Some(WindowState { hidden, transient, fullscreen, maximized }))
+        Ok(Some(WindowState {
+            hidden,
+            transient,
+            fullscreen,
+            maximized,
+        }))
     }
 
     /// Describe one window, or `None` when it is not a normal managed window.

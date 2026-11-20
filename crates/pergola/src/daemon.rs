@@ -35,8 +35,16 @@ fn wait_for_input(x: &X11, wake: &mut UnixStream, timeout: Duration) -> Result<O
         return Ok(Some(event));
     }
     let mut fds = [
-        libc::pollfd { fd: x.conn.stream().as_raw_fd(), events: libc::POLLIN, revents: 0 },
-        libc::pollfd { fd: wake.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+        libc::pollfd {
+            fd: x.conn.stream().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: wake.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
     ];
     // Both descriptors outlive the call and poll only writes to this array.
     // Round up: truncating a sub-millisecond remainder would busy-poll
@@ -2205,7 +2213,11 @@ impl Daemon {
     /// Register a status-bar client. The first record is the committed state,
     /// so a bar that connects after startup does not have to poll for what it
     /// missed (bspwm's startup-state gap).
-    fn subscribe_stream(&mut self, stream: &UnixStream) -> Result<()> {
+    fn subscribe_stream(
+        &mut self,
+        stream: &UnixStream,
+        before: &mut Option<EventSig>,
+    ) -> Result<()> {
         if self.subscribers.len() >= SUB_MAX_CLIENTS {
             anyhow::bail!("too many subscribers (limit {SUB_MAX_CLIENTS})");
         }
@@ -2220,20 +2232,25 @@ impl Daemon {
             partial: 0,
             drained: Instant::now(),
         });
-        let state = self.state_record();
+        let active = self.x.active_window().unwrap_or(0);
+        if before.is_none() {
+            // Later requests in this pass can mutate the state we are about to send.
+            *before = self.event_sig(Some(active));
+        }
+        let state = self.state_record(active);
         let last = self.subscribers.len() - 1;
         self.push_record(last, state);
         self.flush_subscribers();
         Ok(())
     }
 
-    fn state_record(&self) -> serde_json::Value {
+    fn state_record(&self, active: u32) -> serde_json::Value {
         serde_json::json!({
             "type": "state",
             "tree": serde_json::to_value(&self.file.doc.root).unwrap_or(serde_json::Value::Null),
             "gap": self.engine.gap,
             "overlay": self.overlay_on,
-            "active": self.x.active_window().unwrap_or(0),
+            "active": active,
             "tag": self.file.doc.active_tag,
             // The full tag list, so a bar can draw every workspace tab from the
             // one snapshot it already reads.
@@ -2309,7 +2326,7 @@ impl Daemon {
 
     /// The committed state, or `None` when nobody is listening — the diff is
     /// only worth computing for a client that will read it.
-    fn event_sig(&self) -> Option<EventSig> {
+    fn event_sig(&self, active: Option<u32>) -> Option<EventSig> {
         if self.subscribers.is_empty() {
             return None;
         }
@@ -2329,7 +2346,7 @@ impl Daemon {
         Some(EventSig {
             root: serde_json::to_string(&self.file.doc.root).ok()?,
             placements,
-            active: self.x.active_window().unwrap_or(0),
+            active: active.unwrap_or_else(|| self.x.active_window().unwrap_or(0)),
             tag: self.file.doc.active_tag.clone(),
         })
     }
@@ -2418,7 +2435,7 @@ impl Daemon {
             // pass (reconcile, a request, a drag settling) is diffed against
             // the state the previous pass left, so a bar sees transitions, not
             // intermediate half-applied trees (i3#3893's phantom focus).
-            let before = committed.take().or_else(|| self.event_sig());
+            let mut before = committed.take().or_else(|| self.event_sig(None));
             let moving = !self.moves.is_empty() || !self.deferred.is_empty();
             let mut timeout = Duration::from_secs(2).saturating_sub(last_reconcile.elapsed());
             if moving || !watches_root || self.subscribers.iter().any(|c| !c.queue.is_empty()) {
@@ -2441,7 +2458,7 @@ impl Daemon {
                 // `subscribe` turns the request/response socket into a stream:
                 // the daemon keeps this client and pushes records to it.
                 if request.argv.first().map(String::as_str) == Some("subscribe") {
-                    if let Err(e) = self.subscribe_stream(&stream) {
+                    if let Err(e) = self.subscribe_stream(&stream, &mut before) {
                         // A refused client must hear why: it is waiting on a
                         // read that would otherwise never return.
                         eprintln!("pergola: subscribe: {e:#}");
@@ -2485,7 +2502,7 @@ impl Daemon {
                 }
             }
             if let Some(before) = before {
-                if let Some(mut after) = self.event_sig() {
+                if let Some(mut after) = self.event_sig(None) {
                     // Some WMs briefly clear _NET_ACTIVE_WINDOW between two
                     // clients. Publish a genuine focus loss after one short
                     // settling interval, without delaying other stream records.
