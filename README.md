@@ -23,6 +23,39 @@ from inside — a lattice you see through, not a grid you sit in.
                    └─ desktop (floating windows) ──────┘
 ```
 
+## Documentation
+
+New to Pergola? Read in this order:
+
+1. **[docs/FIRST-RUN.md](docs/FIRST-RUN.md)** — the five-minute walkthrough:
+   three terminals, three docks, and the glossary every `pergola status` line uses.
+2. **[docs/KEYBINDINGS.md](docs/KEYBINDINGS.md)** — the default plan, why a
+   chord may fall back from `Ctrl+Alt` to `Super`, how to remap one, and how to
+   read `pergola keys --check` (the chords this session actually owns).
+3. **Install** and **Quick start** below, then **Hotkeys**, **Mouse** and
+   **Configuration** in this file.
+
+Reference and background:
+
+* **Install, upgrade, uninstall, configuration file, troubleshooting, host
+  window managers** — [docs/SETUP.md](docs/SETUP.md).
+* **Commands** — the [command list](#commands) below, or `pergola help`; the
+  daemon answers `status`, `tree`, `list`, `rects`, `dock`, `float`, `arrange`,
+  `float-all`, `gap`, `ratio`, `overlay`, `undo`, tabs, tags, `keys`, `reload`,
+  `save`, `stop`, `palette` and the camera commands.
+* **Design and provenance** — [docs/DESIGN.md](docs/DESIGN.md),
+  [docs/RESEARCH.md](docs/RESEARCH.md),
+  [docs/HISTORY-LESSONS.md](docs/HISTORY-LESSONS.md), and
+  [docs/UX-NOTES.md](docs/UX-NOTES.md).
+* **Developing and releasing** — [Development](#development),
+  [docs/VERSIONING.md](docs/VERSIONING.md), [BACKLOG.md](BACKLOG.md),
+  [CHANGELOG.md](CHANGELOG.md).
+* **Packaging** — [packaging/aur/README.md](packaging/aur/README.md).
+
+The Markdown is checked: `scripts/doc-check.py` verifies links, JSON examples,
+command names and that every documentation table lists exactly the configuration
+keys the parser knows. Run it after editing a page; it exits non-zero on drift.
+
 ## What this is (and is not)
 
 * **Is**: a real, installed, tested window manager *layer*. It docks, nests,
@@ -264,6 +297,7 @@ the edge behaviour off if a drag should never tile.
 | `terminal` | `$TERMINAL`, else an installed terminal (`xfce4-terminal` first, `xterm` last) | program used by `split-terminal` |
 | `hotkeys` | `true` | grab the default chords on the root window |
 | `edge_dock` | `true` | dock a window dropped on a screen edge (mouse tiling) |
+| `notify` | `true` | show a desktop notification when a hotkey or palette action fails; best effort, and the failure still reaches the journal |
 | `bindings` | `{}` | per-command chord overrides, `command → [chord, …]` |
 
 `pergola reload` re-reads the file and re-grabs the hotkeys, so a `bindings`
