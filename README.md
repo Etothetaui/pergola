@@ -29,20 +29,29 @@ New to Pergola? Read in this order:
 
 1. **[docs/FIRST-RUN.md](docs/FIRST-RUN.md)** — the five-minute walkthrough:
    three terminals, three docks, and the glossary every `pergola status` line uses.
-2. **[docs/KEYBINDINGS.md](docs/KEYBINDINGS.md)** — the default plan, why a
+2. **[docs/USER-GUIDE.md](docs/USER-GUIDE.md)** — the illustrated tour: what the
+   nesting model is, how the camera moves over it, and every operation in
+   keyboard, mouse and command form.
+3. **[docs/KEYBINDINGS.md](docs/KEYBINDINGS.md)** — the default plan, why a
    chord may fall back from `Ctrl+Alt` to `Super`, how to remap one, and how to
    read `pergola keys --check` (the chords this session actually owns).
-3. **Install** and **Quick start** below, then **Hotkeys**, **Mouse** and
-   **Configuration** in this file.
+4. **Install** and **Quick start** below, then **Hotkeys**, **Mouse** and
+   **Configuration** in this file, and the task-oriented guides in
+   **[docs/tutorials/](docs/tutorials/README.md)**.
 
 Reference and background:
 
+* **Mouse** — [docs/MOUSE.md](docs/MOUSE.md): every gesture, the exact 6/14/70 px
+  geometry, nested-layout targeting, and what the pointer does *not* do.
+* **Configuration** — [docs/CONFIGURATION.md](docs/CONFIGURATION.md): every key
+  with type, default, range and reload behaviour, plus complete example profiles.
+* **Commands** — [docs/COMMANDS.md](docs/COMMANDS.md): syntax, arguments,
+  scope, undoability and errors for every command, or `pergola help`.
+* **Compatibility** — [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): what is
+  measured (xfwm4, Openbox), what is expected but unmeasured, and why tiling
+  window managers may ignore Pergola's moves.
 * **Install, upgrade, uninstall, configuration file, troubleshooting, host
   window managers** — [docs/SETUP.md](docs/SETUP.md).
-* **Commands** — the [command list](#commands) below, or `pergola help`; the
-  daemon answers `status`, `tree`, `list`, `rects`, `dock`, `float`, `arrange`,
-  `float-all`, `gap`, `ratio`, `overlay`, `undo`, tabs, tags, `keys`, `reload`,
-  `save`, `stop`, `palette` and the camera commands.
 * **Design and provenance** — [docs/DESIGN.md](docs/DESIGN.md),
   [docs/RESEARCH.md](docs/RESEARCH.md),
   [docs/HISTORY-LESSONS.md](docs/HISTORY-LESSONS.md), and
