@@ -379,7 +379,16 @@ impl X11 {
     /// is NorthWest (0), so x/y are the frame origin, and the width/height are
     /// client dimensions — hence the frame extents are subtracted here.
     pub fn move_resize(&self, win: u32, frame: IRect) -> Result<()> {
-        let (l, r, t, b) = self.frame_extents(win);
+        self.move_resize_with_extents(win, frame, self.frame_extents(win))
+    }
+
+    /// Place a frame using the same decoration extents used to snap its size.
+    pub fn move_resize_with_extents(
+        &self,
+        win: u32,
+        frame: IRect,
+        (l, r, t, b): (i32, i32, i32, i32),
+    ) -> Result<()> {
         let gravity = 0u32; // NorthWestGravity
         let flags = 0xFu32; // x, y, w, h all present
         let source = 2u32; // pager
