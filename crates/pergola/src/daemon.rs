@@ -39,7 +39,10 @@ fn wait_for_input(x: &X11, wake: &mut UnixStream, timeout: Duration) -> Result<O
         libc::pollfd { fd: wake.as_raw_fd(), events: libc::POLLIN, revents: 0 },
     ];
     // Both descriptors outlive the call and poll only writes to this array.
-    let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout.as_millis() as i32) };
+    // Round up: truncating a sub-millisecond remainder would busy-poll
+    // until the reconciliation or focus deadline.
+    let timeout_ms = timeout.as_nanos().div_ceil(1_000_000) as i32;
+    let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, timeout_ms) };
     if ready < 0 {
         let err = std::io::Error::last_os_error();
         if err.kind() == std::io::ErrorKind::Interrupted {
