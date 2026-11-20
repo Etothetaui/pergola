@@ -2272,11 +2272,8 @@ impl Daemon {
         })
     }
 
-    fn emit_diff(&mut self, before: EventSig) {
-        let Some(after) = self.event_sig() else {
-            return;
-        };
-        for record in diff_events(&before, &after) {
+    fn emit_diff(&mut self, before: EventSig, after: &EventSig) {
+        for record in diff_events(&before, after) {
             self.publish(record);
         }
         self.flush_subscribers();
@@ -2342,12 +2339,13 @@ impl Daemon {
         );
 
         let mut last_reconcile = Instant::now();
+        let mut committed: Option<EventSig> = None;
         while self.running {
             // One committed snapshot per loop pass: every mutation inside the
             // pass (reconcile, a request, a drag settling) is diffed against
             // the state the previous pass left, so a bar sees transitions, not
             // intermediate half-applied trees (i3#3893's phantom focus).
-            let before = self.event_sig();
+            let before = committed.take().or_else(|| self.event_sig());
             if last_reconcile.elapsed() >= Duration::from_secs(2) {
                 last_reconcile = Instant::now();
                 match self.reconcile() {
@@ -2411,7 +2409,12 @@ impl Daemon {
                 }
             }
             if let Some(before) = before {
-                self.emit_diff(before);
+                if let Some(after) = self.event_sig() {
+                    self.emit_diff(before, &after);
+                    if !self.subscribers.is_empty() {
+                        committed = Some(after);
+                    }
+                }
             }
         }
 
