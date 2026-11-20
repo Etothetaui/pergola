@@ -196,9 +196,22 @@ if command -v xdotool >/dev/null && command -v xprop >/dev/null; then
   SCREEN_H="${SCREEN#*x}"
   : "${SCREEN_W:=99999}" "${SCREEN_H:=99999}"
   "$BIN" rects 2>/dev/null > /tmp/pergola-health-rects.$$
+  # A window on another desktop is not placed by the daemon at all — only the
+  # visible desktop is laid out — so its X rect is wherever the WM last left
+  # it, and `rects` still reports the rect its tree would give it. Comparing
+  # the two calls a healthy window drift (measured 2026-11-20: a terminal on
+  # desktop 2 failed the check after a daemon restart, and the failure repeats
+  # on every run until the desktop is shown). The desktop of a window is read
+  # from the X server, not from pergola, so this skip cannot hide drift the
+  # daemon itself invented on the desktop it is laying out.
+  HERE=$(xprop -root _NET_CURRENT_DESKTOP 2>/dev/null | sed -n 's/.*= \([0-9]*\).*/\1/p')
   while read -r id x y w h; do
     [ -z "${id:-}" ] && continue
     win="0x${id#p-}"
+    wd=$(xprop -id "$win" _NET_WM_DESKTOP 2>/dev/null | sed -n 's/.*= \([0-9]*\).*/\1/p')
+    if [ -n "${HERE:-}" ] && [ -n "${wd:-}" ] && [ "$wd" != "$HERE" ]; then
+      continue
+    fi
     pos=$(xdotool getwindowgeometry "$win" 2>/dev/null | sed -n 's/.*Position: \([-0-9]*\),\([-0-9]*\).*/\1 \2/p')
     size=$(xdotool getwindowgeometry "$win" 2>/dev/null | sed -n 's/.*Geometry: \([0-9]*\)x\([0-9]*\).*/\1 \2/p')
     [ -z "$pos" ] && { DRIFT_COUNT=$((DRIFT_COUNT+1)); continue; }
