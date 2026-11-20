@@ -2402,7 +2402,6 @@ impl Daemon {
             // intermediate half-applied trees (i3#3893's phantom focus).
             let before = committed.take().or_else(|| self.event_sig());
             let moving = !self.moves.is_empty() || !self.deferred.is_empty();
-            let mut refresh = !watches_root || moving;
             let mut timeout = Duration::from_secs(2).saturating_sub(last_reconcile.elapsed());
             if moving || !watches_root || self.subscribers.iter().any(|c| !c.queue.is_empty()) {
                 timeout = timeout.min(Duration::from_millis(50));
@@ -2414,9 +2413,7 @@ impl Daemon {
                 timeout = timeout.min(deadline.saturating_duration_since(Instant::now()));
             }
             let event = wait_for_input(&self.x, &mut wake, timeout);
-            refresh |= focus_deadline.is_some_and(|deadline| Instant::now() >= deadline);
             if last_reconcile.elapsed() >= Duration::from_secs(2) {
-                refresh = true;
                 last_reconcile = Instant::now();
                 match self.reconcile() {
                     Ok(true) => {
@@ -2432,7 +2429,6 @@ impl Daemon {
                 }
             }
             while let Ok((request, mut stream)) = rx.try_recv() {
-                refresh = true;
                 // `subscribe` turns the request/response socket into a stream:
                 // the daemon keeps this client and pushes records to it.
                 if request.argv.first().map(String::as_str) == Some("subscribe") {
@@ -2457,7 +2453,6 @@ impl Daemon {
             // and the pointer drag stream must not fall behind).
             match event {
                 Ok(Some(event)) => {
-                    refresh = true;
                     if let Err(e) = self.on_x_event(event) {
                         eprintln!("pergola: event: {e:#}");
                     }
@@ -2481,16 +2476,6 @@ impl Daemon {
                 }
             }
             if let Some(before) = before {
-                // Focus changes arrive as root property events, even when the WM
-                // changes focus without a client message. An idle pass cannot
-                // otherwise change the committed layout. Retry pending writes.
-                if !refresh {
-                    self.flush_subscribers();
-                    if !self.subscribers.is_empty() {
-                        committed = Some(before);
-                    }
-                    continue;
-                }
                 if let Some(mut after) = self.event_sig() {
                     // Some WMs briefly clear _NET_ACTIVE_WINDOW between two
                     // clients. Publish a genuine focus loss after one short
