@@ -874,6 +874,11 @@ impl X11 {
         Ok(())
     }
 
+    /// Root property that signals membership changes in the WM's client list.
+    pub fn is_client_list_atom(&self, atom: u32) -> bool {
+        atom == self.atoms.net_client_list
+    }
+
     /// The `_NET_ACTIVE_WINDOW` atom, for matching an incoming request.
     pub fn net_active_window_atom(&self) -> u32 {
         self.atoms.net_active_window

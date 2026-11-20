@@ -497,6 +497,18 @@ impl Daemon {
         }
     }
 
+    fn reconcile_layout(&mut self) -> Result<()> {
+        if self.reconcile()? {
+            if self.drag.is_some() {
+                let _ = self.end_gap_drag();
+            }
+            self.normalize_camera();
+            let _ = self.apply();
+            let _ = self.save();
+        }
+        Ok(())
+    }
+
     fn push_floating(&mut self, w: &WindowInfo, panel: String, seat: String) {
         let rect = w.frame_rect().to_rect();
         self.file.doc.floating.push(FloatingWindow {
@@ -2415,17 +2427,8 @@ impl Daemon {
             let event = wait_for_input(&self.x, &mut wake, timeout);
             if last_reconcile.elapsed() >= Duration::from_secs(2) {
                 last_reconcile = Instant::now();
-                match self.reconcile() {
-                    Ok(true) => {
-                        if self.drag.is_some() {
-                            let _ = self.end_gap_drag();
-                        }
-                        self.normalize_camera();
-                        let _ = self.apply();
-                        let _ = self.save();
-                    }
-                    Ok(false) => {}
-                    Err(e) => eprintln!("pergola: reconcile: {e:#}"),
+                if let Err(e) = self.reconcile_layout() {
+                    eprintln!("pergola: reconcile: {e:#}");
                 }
             }
             while let Ok((request, mut stream)) = rx.try_recv() {
@@ -2621,7 +2624,12 @@ impl Daemon {
             // without this the tree keeps the name the window had when it was
             // adopted until the next 2 s reconcile — herbstluftwm#35, bspwm#50.
             Event::PropertyNotify(property) => {
-                if self.x.is_title_atom(property.atom) {
+                if property.window == self.x.root
+                    && self.x.is_client_list_atom(property.atom)
+                    && property.state == x11rb::protocol::xproto::Property::NEW_VALUE
+                {
+                    self.reconcile_layout()?;
+                } else if self.x.is_title_atom(property.atom) {
                     if let Ok(Some(info)) = self.x.info(property.window) {
                         if let Some(seat) = self.seats.iter_mut().find(|s| s.window == property.window) {
                             seat.title = info.title;
@@ -2641,14 +2649,7 @@ impl Daemon {
             Event::DestroyNotify(destroy) => {
                 self.watched.remove(&destroy.window);
                 if self.seats.iter().any(|s| s.window == destroy.window) {
-                    if self.reconcile()? {
-                        if self.drag.is_some() {
-                            let _ = self.end_gap_drag();
-                        }
-                        self.normalize_camera();
-                        let _ = self.apply();
-                        let _ = self.save();
-                    }
+                    self.reconcile_layout()?;
                 }
             }
             _ => {}
