@@ -765,7 +765,6 @@ impl Daemon {
         };
         let tf = |r: Rect| transform(r, framed, world);
 
-        let current_desktop = self.x.current_desktop();
         for (id, rect) in &rects {
             let Some(LayoutNode::Panel(panel)) = shown.node(id) else {
                 continue;
@@ -788,7 +787,7 @@ impl Daemon {
                 }
                 // On another host desktop the window belongs to the WM there;
                 // moving it from here is what pulled a parked window back.
-                if on_another_desktop(current_desktop, self.x.desktop_of(seat.window)) {
+                if self.foreign_desktop(seat.window) {
                     continue;
                 }
                 // A maximized window ignores `_NET_MOVERESIZE_WINDOW`: the
@@ -800,9 +799,8 @@ impl Daemon {
                 // Snap the client area to its own resize grid, so a terminal
                 // lands flush against the tile instead of being clamped by the
                 // WM to an arbitrary shortfall.
-                let extents = self.x.frame_extents(seat.window);
-                let target = snap_to_hints(target, self.x.size_hints(seat.window), extents);
-                let _ = self.x.move_resize_with_extents(seat.window, target, extents);
+                let target = snap_to_hints(target, self.x.size_hints(seat.window), self.x.frame_extents(seat.window));
+                let _ = self.x.move_resize(seat.window, target);
                 self.applied.insert(seat.window, target);
             }
             if let Some(visible) = panel.visible() {
@@ -812,7 +810,7 @@ impl Daemon {
                     // desktop (measured 2026-11-17: `arrange` re-docked a
                     // floating window parked on desktop 3 and it came back).
                     // The WM there owns it, so leave it unraised too.
-                    if !on_another_desktop(current_desktop, self.x.desktop_of(seat.window)) {
+                    if !self.foreign_desktop(seat.window) {
                         let _ = self.x.raise(seat.window);
                     }
                 }
