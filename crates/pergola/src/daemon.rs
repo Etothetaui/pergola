@@ -2319,9 +2319,13 @@ impl Daemon {
         // A pager's `_NET_ACTIVE_WINDOW` request arrives only if we select
         // root's substructure events; failure is not fatal, a taskbar click
         // then simply does nothing.
-        if let Err(e) = self.x.watch_root() {
-            eprintln!("pergola: cannot watch activation requests: {e:#}");
-        }
+        let watches_root = match self.x.watch_root() {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("pergola: cannot watch activation requests: {e:#}");
+                false
+            }
+        };
         match self.reinstall_bindings() {
             Ok(notes) => {
                 for note in notes {
@@ -2346,7 +2350,9 @@ impl Daemon {
             // the state the previous pass left, so a bar sees transitions, not
             // intermediate half-applied trees (i3#3893's phantom focus).
             let before = committed.take().or_else(|| self.event_sig());
+            let mut refresh = !watches_root || !self.moves.is_empty() || !self.deferred.is_empty();
             if last_reconcile.elapsed() >= Duration::from_secs(2) {
+                refresh = true;
                 last_reconcile = Instant::now();
                 match self.reconcile() {
                     Ok(true) => {
@@ -2362,6 +2368,7 @@ impl Daemon {
                 }
             }
             while let Ok((request, mut stream)) = rx.try_recv() {
+                refresh = true;
                 // `subscribe` turns the request/response socket into a stream:
                 // the daemon keeps this client and pushes records to it.
                 if request.argv.first().map(String::as_str) == Some("subscribe") {
@@ -2386,6 +2393,7 @@ impl Daemon {
             // and the pointer drag stream must not fall behind).
             match self.x.next_event(50) {
                 Ok(Some(event)) => {
+                    refresh = true;
                     if let Err(e) = self.on_x_event(event) {
                         eprintln!("pergola: event: {e:#}");
                     }
@@ -2409,6 +2417,16 @@ impl Daemon {
                 }
             }
             if let Some(before) = before {
+                // Focus changes arrive as root property events, even when the WM
+                // changes focus without a client message. An idle pass cannot
+                // otherwise change the committed layout. Retry pending writes.
+                if !refresh {
+                    self.flush_subscribers();
+                    if !self.subscribers.is_empty() {
+                        committed = Some(before);
+                    }
+                    continue;
+                }
                 if let Some(after) = self.event_sig() {
                     self.emit_diff(before, &after);
                     if !self.subscribers.is_empty() {

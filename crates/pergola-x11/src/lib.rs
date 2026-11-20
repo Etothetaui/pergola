@@ -850,8 +850,9 @@ impl X11 {
     pub fn watch_root(&self) -> Result<()> {
         self.conn.change_window_attributes(
             self.root,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY),
-        )?;
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE),
+        )?
+        .check()?;
         self.conn.flush()?;
         Ok(())
     }
