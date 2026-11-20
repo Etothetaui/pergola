@@ -2,7 +2,8 @@
 //! applies geometry through the running desktop's window manager.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -26,6 +27,34 @@ use x11rb::protocol::Event;
 
 use crate::config::{self, Config};
 use crate::ipc::{Request, Response};
+
+/// Wait on the X connection and the IPC reader together. X11 may already have
+/// buffered an event while reading a synchronous reply, so check it first.
+fn wait_for_input(x: &X11, wake: &mut UnixStream, timeout: Duration) -> Result<Option<Event>> {
+    if let Some(event) = x.poll_event()? {
+        return Ok(Some(event));
+    }
+    let mut fds = [
+        libc::pollfd { fd: x.conn.stream().as_raw_fd(), events: libc::POLLIN, revents: 0 },
+        libc::pollfd { fd: wake.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+    ];
+    // Both descriptors outlive the call and poll only writes to this array.
+    let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout.as_millis() as i32) };
+    if ready < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::Interrupted {
+            return Ok(None);
+        }
+        return Err(err.into());
+    }
+    if fds[1].revents != 0 {
+        let mut signals = [0; 256];
+        if wake.read(&mut signals)? == 0 {
+            anyhow::bail!("IPC listener stopped");
+        }
+    }
+    x.poll_event()
+}
 
 static NEXT_LAYOUT_WRITE: AtomicU64 = AtomicU64::new(0);
 
@@ -2303,6 +2332,8 @@ impl Daemon {
         let listener = UnixListener::bind(&socket)
             .with_context(|| format!("binding {}", socket.display()))?;
         let (tx, rx) = mpsc::channel::<(Request, UnixStream)>();
+        let (mut wake, mut signal) = UnixStream::pair()?;
+        signal.set_nonblocking(true)?;
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let Ok(clone) = stream.try_clone() else { continue };
@@ -2310,7 +2341,11 @@ impl Daemon {
                 let mut line = String::new();
                 if reader.read_line(&mut line).is_ok() {
                     if let Ok(request) = serde_json::from_str::<Request>(line.trim()) {
-                        let _ = tx.send((request, stream));
+                        if tx.send((request, stream)).is_err() {
+                            break;
+                        }
+                        // A full socket already carries a pending wakeup.
+                        let _ = signal.write_all(&[1]);
                     }
                 }
             }
@@ -2350,7 +2385,13 @@ impl Daemon {
             // the state the previous pass left, so a bar sees transitions, not
             // intermediate half-applied trees (i3#3893's phantom focus).
             let before = committed.take().or_else(|| self.event_sig());
-            let mut refresh = !watches_root || !self.moves.is_empty() || !self.deferred.is_empty();
+            let moving = !self.moves.is_empty() || !self.deferred.is_empty();
+            let mut refresh = !watches_root || moving;
+            let mut timeout = Duration::from_secs(2).saturating_sub(last_reconcile.elapsed());
+            if moving || !watches_root || self.subscribers.iter().any(|c| !c.queue.is_empty()) {
+                timeout = timeout.min(Duration::from_millis(50));
+            }
+            let event = wait_for_input(&self.x, &mut wake, timeout);
             if last_reconcile.elapsed() >= Duration::from_secs(2) {
                 refresh = true;
                 last_reconcile = Instant::now();
@@ -2391,7 +2432,7 @@ impl Daemon {
             // One blocking poll for the idle path, then drain whatever else the
             // server has queued (a window drag produces a burst of configures,
             // and the pointer drag stream must not fall behind).
-            match self.x.next_event(50) {
+            match event {
                 Ok(Some(event)) => {
                     refresh = true;
                     if let Err(e) = self.on_x_event(event) {
