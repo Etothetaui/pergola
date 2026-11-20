@@ -1081,13 +1081,19 @@ impl Daemon {
         // Snapshot before the command so a dock, float, arrange or gap change
         // can be undone. `undo` is exempt: recording the state it replaces
         // would let undo oscillate between two layouts.
-        let before = self.snapshot();
+        let track = !matches!(
+            argv.first().map(String::as_str),
+            Some("undo" | "status" | "tree" | "list" | "rects" | "keys")
+        );
+        let before = track.then(|| self.snapshot());
         let result = self.dispatch(argv);
-        if result.is_ok()
-            && argv.first().map(String::as_str) != Some("undo")
-            && (self.file.doc != before.doc || self.engine != before.engine || self.camera != before.camera)
-        {
-            self.undo.push(before);
+        if let Some(before) = before {
+            let changed = self.file.doc != before.doc
+                || self.engine != before.engine
+                || self.camera != before.camera;
+            if result.is_ok() && changed {
+                self.undo.push(before);
+            }
         }
         if let Some(panel) = self.focused_panel() {
             if self.file.doc.root.node(&panel).is_some() {
