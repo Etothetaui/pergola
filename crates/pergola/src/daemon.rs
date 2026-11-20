@@ -248,6 +248,8 @@ pub struct Daemon {
     bindings: Vec<(KeyBinding, String)>,
     keymap: Vec<(u8, u32)>,
     seats: Vec<SeatRecord>,
+    /// Seated clients with a confirmed property/structure event subscription.
+    watched: HashSet<u32>,
     /// Last focused tiled panel. A newly focused floating window must not
     /// replace the docking target it will be placed beside.
     last_focus: Option<String>,
@@ -338,6 +340,7 @@ impl Daemon {
             bindings,
             keymap,
             seats,
+            watched: HashSet::new(),
             last_focus: None,
             last_desk: None,
             place_floating: true,
@@ -371,13 +374,13 @@ impl Daemon {
     /// Match the tree against the live client list: drop panels whose window is
     /// gone, adopt new windows, refresh titles.
     fn reconcile(&mut self) -> Result<bool> {
-        let windows = self.x.windows()?;
+        let windows = self.x.client_list()?;
         // `_NET_CLIENT_LIST` still contains a minimised window (and windows on
         // the host WM's other desktops) even though it is unmapped. A seat is
         // gone only when its window leaves the client list: dropping it because
         // the window was merely minimised collapses the tile and loses the
         // layout — i3#718, awesome#92.
-        let clients: HashSet<u32> = self.x.client_list()?.into_iter().collect();
+        let clients: HashSet<u32> = windows.iter().copied().collect();
 
         let gone: Vec<SeatRecord> = self
             .seats
@@ -387,6 +390,7 @@ impl Daemon {
             .collect();
         let mut changed = !gone.is_empty();
         for seat in gone {
+            self.watched.remove(&seat.window);
             self.applied.remove(&seat.window);
             self.moves.remove(&seat.window);
             self.deferred.remove(&seat.window);
@@ -401,14 +405,17 @@ impl Daemon {
             self.file.doc.floating.retain(|f| f.panel.id != seat.panel);
         }
 
-        for w in &windows {
+        for win in windows {
+            if self.watched.contains(&win) {
+                continue;
+            }
+            if self.seats.iter().any(|seat| seat.window == win) {
+                self.watch_seat(win);
+                continue;
+            }
+            let Ok(Some(info)) = self.x.info(win) else { continue };
+            let w = &info;
             if w.hidden {
-                // Minimised: keep the seat and its title, but do not treat the
-                // geometry as the user's.
-                if let Some(record) = self.seats.iter_mut().find(|s| s.window == w.id) {
-                    record.title = w.title.clone();
-                    record.class = w.class.clone();
-                }
                 continue;
             }
             // A dialog or popup (`WM_TRANSIENT_FOR`) belongs to its parent and
@@ -421,14 +428,8 @@ impl Daemon {
             // A window on another host desktop is not part of this desktop's
             // layout; adopt it when the user brings it here. Adopting it now
             // would put it in the tree and `apply` would move it back.
-            if self.seats.iter().all(|s| s.window != w.id)
-                && on_another_desktop(self.x.current_desktop(), self.x.desktop_of(w.id))
+            if on_another_desktop(self.x.current_desktop(), self.x.desktop_of(w.id))
             {
-                continue;
-            }
-            if let Some(record) = self.seats.iter_mut().find(|s| s.window == w.id) {
-                record.title = w.title.clone();
-                record.class = w.class.clone();
                 continue;
             }
             let seat = format!("s-{:x}", w.id);
@@ -473,13 +474,24 @@ impl Daemon {
             } else {
                 self.push_floating(w, panel, seat);
             }
-        }
-        // Watch every managed window for the WM's synthetic ConfigureNotify:
-        // that is the only way to see a drag the daemon did not initiate.
-        for seat in &self.seats {
-            let _ = self.x.watch_window(seat.window);
+            self.watch_seat(win);
         }
         Ok(changed)
+    }
+
+    fn watch_seat(&mut self, win: u32) {
+        let subscribed = self.x.watch_window(win).is_ok();
+        // Read after selecting notifications: a change during adoption must
+        // either be reflected in this read or be queued on our connection.
+        if let Ok(Some(info)) = self.x.info(win) {
+            if let Some(seat) = self.seats.iter_mut().find(|s| s.window == win) {
+                seat.title = info.title;
+                seat.class = info.class;
+                if subscribed {
+                    self.watched.insert(win);
+                }
+            }
+        }
     }
 
     fn push_floating(&mut self, w: &WindowInfo, panel: String, seat: String) {
@@ -2604,6 +2616,8 @@ impl Daemon {
                             seat.title = info.title;
                             seat.class = info.class;
                         }
+                    } else {
+                        self.watched.remove(&property.window);
                     }
                 }
             }
@@ -2614,6 +2628,7 @@ impl Daemon {
             // make the daemon mistake the new window for the dead one —
             // updating its title and never adopting it.
             Event::DestroyNotify(destroy) => {
+                self.watched.remove(&destroy.window);
                 if self.seats.iter().any(|s| s.window == destroy.window) {
                     if self.reconcile()? {
                         if self.drag.is_some() {

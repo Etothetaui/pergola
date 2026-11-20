@@ -870,7 +870,8 @@ impl X11 {
             win,
             &ChangeWindowAttributesAux::new()
                 .event_mask(EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE),
-        )?;
+        )?
+        .check()?;
         Ok(())
     }
 
