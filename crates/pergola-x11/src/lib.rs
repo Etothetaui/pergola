@@ -266,27 +266,28 @@ impl X11 {
 
     /// State of a viewable, managed window.
     pub fn window_state(&self, win: u32) -> Result<Option<WindowState>> {
-        let attrs = self.conn.get_window_attributes(win)?.reply()?;
-        if attrs.override_redirect || attrs.map_state != x11rb::protocol::xproto::MapState::VIEWABLE
-        {
+        // Queue independent requests together. Reading each reply before
+        // issuing the next would cost one server round trip per property.
+        let attrs = self.conn.get_window_attributes(win)?;
+        let types = self.conn.get_property(false, win, self.atoms.net_wm_window_type, AtomEnum::ATOM, 0, 64)?;
+        let states = self.conn.get_property(false, win, self.atoms.net_wm_state, AtomEnum::ATOM, 0, 64)?;
+        let transient = self.conn.get_property(false, win, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1);
+        let attrs = attrs.reply()?;
+        if attrs.override_redirect || attrs.map_state != x11rb::protocol::xproto::MapState::VIEWABLE {
             return Ok(None);
         }
-        let types = self.atom_list(win, self.atoms.net_wm_window_type)?;
-        if types.iter().any(|t| self.atoms.type_skip.contains(t)) {
+        let types = types.reply()?;
+        if types.value32().is_some_and(|mut atoms| atoms.any(|t| self.atoms.type_skip.contains(&t))) {
             return Ok(None);
         }
-        let states = self.atom_list(win, self.atoms.net_wm_state)?;
-        let hidden = states.contains(&self.atoms.net_wm_state_hidden);
-        let fullscreen = states.contains(&self.atoms.net_wm_state_fullscreen);
-        let maximized = states.contains(&self.atoms.net_wm_state_maximized_horz)
-            || states.contains(&self.atoms.net_wm_state_maximized_vert);
-        let transient = self
-            .conn
-            .get_property(false, win, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1)
-            .ok()
-            .and_then(|c| c.reply().ok())
-            .map(|r| r.value_len > 0)
-            .unwrap_or(false);
+        let states = states.reply()?;
+        let has_state = |atom| states.value32().is_some_and(|mut values| values.any(|v| v == atom));
+        let hidden = has_state(self.atoms.net_wm_state_hidden);
+        let fullscreen = has_state(self.atoms.net_wm_state_fullscreen);
+        let maximized = has_state(self.atoms.net_wm_state_maximized_horz)
+            || has_state(self.atoms.net_wm_state_maximized_vert);
+        let transient = transient.ok().and_then(|c| c.reply().ok())
+            .is_some_and(|r| r.value_len > 0);
 
         Ok(Some(WindowState { hidden, transient, fullscreen, maximized }))
     }
